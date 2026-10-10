@@ -25,6 +25,8 @@
     "advanced:lsp": "node examples/advanced/advanced-lsp.ts --stdio",
     "strict": "node examples/strict/strict.ts",
     "strict:lsp": "node examples/strict/strict-lsp.ts --stdio",
+    "ur": "node examples/ur/ur.ts",
+    "ur:lsp": "node examples/ur/ur-lsp.ts --stdio",
     "schema": "node examples/schema/schema.ts",
     "schema:lsp": "node examples/schema/schema-lsp.ts --stdio"
   },

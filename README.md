@@ -16,7 +16,7 @@ pnpm typecheck
 pnpm test
 ```
 
-Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, and `schema/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
+Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, `ur/`, and `schema/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
 
 The whole toy language is in **[examples/toy/toy.ts](examples/toy/toy.ts)**, in reading order:
 
@@ -361,6 +361,54 @@ The runtime represents actions as functions taking an empty record. **`compile(s
 
 The standard library also includes the advanced example's `Option`, `Result`, list operations, and function helpers, rewritten in the new syntax. The implementation remains split into [syntax](examples/strict/strict-syntax.ts), [types/kinds](examples/strict/strict-types.ts), and [elaboration](examples/strict/strict.ts). The shared IR needs no new type-class or effect-specific nodes. There are still no FFI, asynchronous effects, mutable references, tail-call optimization, or untrusted-code sandbox. [main.strict](examples/strict/main.strict) is a longer, runnable tour of records, `Functor`, recursive trees, higher-rank functions, `Option` short-circuiting, generic monadic helpers, and printing.
 
+## Ur core: explicit types and disjoint records
+
+**[examples/ur/ur.ts](examples/ur/ur.ts)** is a first runnable **subset of Ur's core ideas**, with a new surface syntax, not an Ur/Web-compatible compiler. It has no web features. The [Ur manual](https://enn.github.io/urweb-doc/manual.html) is the reference for the larger language; this stage concentrates on rigid type parameters and disjoint record rows.
+
+```sh
+pnpm ur                        # runs examples/ur/main.ur
+pnpm ur path/to/program.ur
+pnpm ur:lsp                    # stdio language server
+```
+
+```text
+fn identity<A>(value: A) -> A = value;
+
+fn greet(person: { name: string }) -> string = person.name;
+
+fn merge<A: Row<Type>, B: Row<Type>>(
+  left: Record<A>, right: Record<B>
+) -> Record<A ++ B>
+where disjoint(A, B) = left ++ right;
+
+let main = merge({ name: identity("Ada") }, { age: 37 });
+```
+
+`A` defaults to kind `Type`; `R: Row<Type>` describes a collection of named field types, and `Record<R>` is its runtime record type. `++` concatenates records or rows, **never overwriting fields**. Concrete overlaps are errors. Unknown rows may be concatenated only with a declared `disjoint` proof; calls must discharge every constraint. A generic function's body is checked once with rigid parameters, including unused functions. For example, `fn bad<A>(x: A) -> A = 42;` is rejected, not deferred to a call.
+
+Row annotations can mix known fields and unknown rows:
+
+```text
+fn getValue<R: Row<Type>>(value: Record<{ value: number } ++ R>) -> number
+where disjoint({ value: number }, R) = value.value;
+
+fn makeAdder(amount: number) -> number -> number =
+  fn(value: number) => value + amount;
+
+let main = makeAdder(getValue({ value: 20, label: "reading" }))(22);
+```
+
+- Named functions require parameter and return annotations. Lambdas use `fn(x: number) => expression` and infer their result. Calls have exact arity (`f(a, b)`); functions returning functions can be called as `f(a)(b)`. There is no implicit partial application.
+- Top-level `let name [: type] = expression;` is sequential and non-recursive. Local `let name = expression in body` allows lexical shadowing. Top-level duplicates, duplicate parameters, and duplicate fields are errors. Compilation requires `main`; analysis of a library does not.
+- Primitive types are `number`, `boolean`, and `string`; function annotations use right-associative `a -> b`. There are records, projection, arithmetic, primitive equality, and `if condition then a else b`. Numbers use JavaScript IEEE-754 semantics. Strings use JSON escapes; `//` introduces comments; declarations end in semicolons.
+- Polymorphism is explicit on named functions, with type and row arguments inferred at calls. There is no general Hindley–Milner inference or explicit type-argument call syntax. Higher-rank/impredicative arguments are rejected: wrap a generic function in an annotated monomorphic lambda when passing it to another function.
+- Records are exact, not width-subtyped. Use a row parameter to accept extra fields. Row inference matches arguments left to right and can infer one unknown residual row at a time. A parameter containing two still-unknown rows is ambiguous; supply arguments establishing those rows first. Constraints are read left to right, so a concatenation within a constraint needs its component disjointness established by earlier constraints. Self-disjoint row hypotheses are conservatively rejected, even though the empty row would satisfy them.
+- Checking erases generic parameters and proofs into ordinary closures and null-prototype records. The shared IR's `merge` node preserves left-to-right, once-only evaluation; disjointness belongs to the language checker, not the IR. The CLI evaluates trusted examples under a VM timeout, not a security sandbox.
+
+`compile(source)` returns `{ type, ir, javascript }` in the usual `Result`. `analyze(source)` supplies diagnostics, value hovers/definitions, and lexical highlighting without executing code. Type binders and record labels do not yet have go-to-definition support. Syntax, types/row proofs, and elaboration are split into `ur-syntax.ts`, `ur-types.ts`, and `ur.ts`.
+
+**Deferred:** algebraic datatypes (including the proposed `Option<A>`), pattern matching, recursion, imports, aliases, field-name parameters, higher-kinded/kind-polymorphic constructors, type-level functions and record mapping/folding, constructor classes, signatures, modules, and functors. The next stages are datatype/matching support, richer type-level record computation and traversal, then Ur's module system. This is not full Ur with a syntax makeover; SQL, XML, HTTP, browser support, and the rest of Ur/Web are outside the goal entirely.
+
 ## Functional SQLite schemas
 
 **[examples/schema/schema.ts](examples/schema/schema.ts)** is a schema compiler, not an ORM: field blocks and pure model transformations compile to SQLite DDL. It uses the same parsing, checking, and analysis tools as the expression languages, but its checked representation is a schema rather than the JavaScript expression IR.
@@ -443,7 +491,7 @@ Use `.rows` or `.advanced` for those languages. Paths must start with `./` or `.
 
 ## Editor support
 
-All six languages have small stdio LSP servers:
+All seven languages have small stdio LSP servers:
 
 ```sh
 node examples/toy/toy-lsp.ts --stdio
@@ -452,6 +500,7 @@ node examples/rows/rows-lsp.ts --stdio
 node examples/advanced/advanced-lsp.ts --stdio
 node examples/strict/strict-lsp.ts --stdio
 node examples/schema/schema-lsp.ts --stdio
+node examples/ur/ur-lsp.ts --stdio
 # Also available as pnpm <language>:lsp; use direct node commands in editors.
 ```
 
@@ -488,7 +537,7 @@ This is deliberately an explicit, small integration, not automatic extraction of
 
 ### Neovim 0.11+
 
-[.nvim.lua](.nvim.lua) configures all six servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, `.rows` files as rows, `.advanced` files as advanced, `.strict` files as strict, and `.schema` files as schema, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
+[.nvim.lua](.nvim.lua) configures all seven servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, `.rows` files as rows, `.advanced` files as advanced, `.strict` files as strict, `.schema` files as schema, and `.ur` files as this Ur-core dialect, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
 
 ```lua
 vim.opt.exrc = true

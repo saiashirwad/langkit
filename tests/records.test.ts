@@ -62,11 +62,30 @@ test("scope validation traverses every record, field, and print child", () => {
     code.record("record", [{ name: "x", value: escaped }]),
     code.record("record", [], escaped),
     code.field("number", escaped, "x"),
+    code.merge("record", escaped, code.record("record", [])),
+    code.merge("record", code.record("record", []), escaped),
     code.print("unit", escaped)
   ]) {
     assert.throws(() => validate(body(result)), /Out-of-scope binding: escaped/)
     assert.throws(() => emit(body(result)), /Out-of-scope binding: escaped/)
   }
+})
+
+test("record merge evaluates each side once, left to right, without inherited properties", () => {
+  const seen: unknown[] = []
+  const side = (label: string, key: string, value: number): Value<string> => ({
+    type: "record",
+    node: { kind: "block", body: {
+      declarations: [{ binding: code.binding(label, "unit"), value: code.print("unit", code.literal("string", label)) }],
+      result: code.record("record", [{ name: key, value: code.literal("number", value) }])
+    } }
+  })
+  const result = evaluate(code.merge("record", side("left", "__proto__", 20), side("right", "constructor", 22)), {
+    console: { log: (value: unknown) => seen.push(value) }
+  })
+  assert.deepEqual(seen, ["left", "right"])
+  assert.deepEqual(Object.entries(result), [["__proto__", 20], ["constructor", 22]])
+  assert.equal(Object.getPrototypeOf(result), null)
 })
 
 test("record emission does not capture bindings named like its temporaries", () => {

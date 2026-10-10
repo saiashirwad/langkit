@@ -368,3 +368,25 @@ test("semantic tokens sort, split CRLF lines and count astral characters as UTF-
     { kind: "variable", span: { start: 0, end: 6 } }
   ]), [0, 0, 3, 3, 0, 1, 0, 1, 3, 0, 1, 0, 1, 1, 0])
 })
+
+test("Ur stdio LSP reports rigid generics, definitions, and overlap errors", { timeout: 10000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/ur/ur-lsp.ts", import.meta.url)), "--stdio"])
+  await server.request("initialize", { processId: null, rootUri: null, capabilities: {} })
+  server.notify("initialized", {})
+  const urUri = new URL("../examples/ur/editor.ur", import.meta.url).href
+  const source = "fn identity<A>(value: A) -> A = value;\nlet main = identity(42);"
+  const document = TextDocument.create(urUri, "ur", 1, source)
+  const atOffset = (offset: number) => ({ textDocument: { uri: urUri }, position: document.positionAt(offset) })
+  server.notify("textDocument/didOpen", { textDocument: { uri: urUri, languageId: "ur", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1, urUri)).diagnostics, [])
+  const hover = await server.request<Hover>("textDocument/hover", atOffset(source.lastIndexOf("identity")))
+  assert.equal(hover?.contents.value, "<A>(A) -> A")
+  assert.deepEqual(await server.request("textDocument/definition", atOffset(source.lastIndexOf("identity"))), {
+    uri: urUri, range: { start: document.positionAt(3), end: document.positionAt(11) }
+  })
+  const tokens = await server.request<{ data: number[] }>("textDocument/semanticTokens/full", { textDocument: { uri: urUri } })
+  assert.ok(tokens.data.length > 0)
+  server.notify("textDocument/didChange", { textDocument: { uri: urUri, version: 2 }, contentChanges: [{ text: "let main = { x: 1 } ++ { x: true };" }] })
+  assert.match((await server.diagnostics(2, urUri)).diagnostics[0]!.message, /Overlapping field/)
+  await server.shutdown()
+})

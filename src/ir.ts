@@ -23,6 +23,7 @@ export type Node<T> =
   | { readonly kind: "literal"; readonly value: number | boolean | string }
   | { readonly kind: "record"; readonly fields: readonly { readonly name: string; readonly value: Value<T> }[]; readonly base?: Value<T> }
   | { readonly kind: "field"; readonly record: Value<T>; readonly name: string }
+  | { readonly kind: "merge"; readonly left: Value<T>; readonly right: Value<T> }
   | { readonly kind: "print"; readonly value: Value<T> }
   | { readonly kind: "variant"; readonly tag: string; readonly fields: readonly Value<T>[] }
   | { readonly kind: "match"; readonly value: Value<T>; readonly cases: readonly MatchCase<T>[]; readonly fallback?: MatchFallback<T> }
@@ -100,6 +101,9 @@ export const create = <T>() => {
     // Fields evaluate in source order, followed by the optional base.
     record: (type: T, fields: readonly { readonly name: string; readonly value: Value<T> }[], base?: Value<T>): Value<T> =>
       value(type, base ? { kind: "record", fields, base } : { kind: "record", fields }),
+    // Languages must prove disjointness themselves; the IR only preserves evaluation order.
+    merge: (type: T, left: Value<T>, right: Value<T>): Value<T> =>
+      value(type, { kind: "merge", left, right }),
     field: (type: T, record: Value<T>, name: string): Value<T> => value(type, { kind: "field", record, name }),
     print: (type: T, printed: Value<T>): Value<T> => value(type, { kind: "print", value: printed }),
     binary: (type: T, op: Operator, left: Value<T>, right: Value<T>): Value<T> =>
@@ -165,6 +169,7 @@ export const validate = <T>(root: Body<T>): void => {
       case "ref":
         if (!visible.has(node.binding.id)) throw new Error(`Out-of-scope binding: ${node.binding.name}`)
         return
+      case "merge":
       case "binary":
         visit(node.left, visible)
         visit(node.right, visible)

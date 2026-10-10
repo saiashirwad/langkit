@@ -1077,6 +1077,7 @@ const resolveBody = (body: Body<Type>, solved: ReadonlyMap<symbol, Value<Type>>)
         return solved.get(node.binding.id) ?? value;
       case "literal":
         return value;
+      case "merge":
       case "binary":
         return { ...value, node: { ...node, left: visit(node.left), right: visit(node.right) } };
       case "call":

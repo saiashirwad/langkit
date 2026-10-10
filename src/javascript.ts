@@ -72,6 +72,8 @@ export const emit = <T>(root: Body<T>): string => {
         }
         return `((${params.join(", ")}) => ({ __proto__: null${entries.length ? `, ${entries.join(", ")}` : ""} }))(${args.join(", ")})`
       }
+      case "merge":
+        return `({ __proto__: null, ...(${expr(node.left, depth)}), ...(${expr(node.right, depth)}) })`
       case "field": return `(${expr(node.record, depth)})[${JSON.stringify(node.name)}]`
       case "print": return `(console.log(${expr(node.value, depth)}), { __proto__: null })`
       case "ref": return name(node.binding)
