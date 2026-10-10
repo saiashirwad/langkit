@@ -8,6 +8,8 @@ import {
   type Analysis, type Token
 } from "./analysis.ts"
 import type { Span } from "./diagnostic.ts"
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 
 /** LSP tokens cannot cross line endings; lengths and columns are UTF-16. */
 export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): number[] => {
@@ -37,8 +39,13 @@ export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): 
   return data
 }
 
-/** A synchronous, document-local adapter. No emitted program is executed. */
-export const serve = <T>(analyze: (source: string) => Analysis<T>, show: (type: T) => string): void => {
+export type AnalysisContext = {
+  readonly uri: string
+  readonly read: (uri: string) => string
+}
+
+/** A synchronous adapter with open-buffer import snapshots. No program is executed. */
+export const serve = <T>(analyze: (source: string, context: AnalysisContext) => Analysis<T>, show: (type: T) => string): void => {
   const connection = createConnection(process.stdin, process.stdout)
   const documents = new TextDocuments(TextDocument)
   const analyses = new Map<string, Analysis<T>>()
@@ -54,10 +61,17 @@ export const serve = <T>(analyze: (source: string) => Analysis<T>, show: (type: 
     semanticTokensProvider: { legend: { tokenTypes: [...tokenKinds], tokenModifiers: [] }, full: true }
   } }))
 
-  documents.onDidChangeContent(({ document }) => {
+  const read = (uri: string): string => {
+    const open = documents.get(uri)
+    if (open) return open.getText()
+    const url = new URL(uri)
+    if (url.protocol !== "file:") throw new Error("Only local file imports are supported")
+    return readFileSync(fileURLToPath(url), "utf8")
+  }
+  const update = (document: TextDocument): void => {
     let analysis: Analysis<T>
     try {
-      analysis = analyze(document.getText())
+      analysis = analyze(document.getText(), { uri: document.uri, read })
     } catch (error) {
       connection.console.error(`Analysis failed for ${document.uri}: ${String(error)}`)
       analysis = {
@@ -76,11 +90,17 @@ export const serve = <T>(analyze: (source: string) => Analysis<T>, show: (type: 
         message: error.context.length ? `${error.message}\n${error.context.join(" > ")}` : error.message
       }))
     })
+  }
+  // These examples are small: recomputing all open documents keeps transitive
+  // imports current without a stale dependency graph after malformed edits.
+  documents.onDidChangeContent(() => {
+    for (const document of documents.all()) update(document)
   })
 
   documents.onDidClose(({ document }) => {
     analyses.delete(document.uri)
     void connection.sendDiagnostics({ uri: document.uri, diagnostics: [] })
+    for (const other of documents.all()) if (other.uri !== document.uri) update(other)
   })
 
   connection.onHover(({ textDocument, position }) => {
@@ -99,7 +119,15 @@ export const serve = <T>(analyze: (source: string) => Analysis<T>, show: (type: 
     const analysis = analyses.get(textDocument.uri)
     if (!document || !analysis) return null
     const definition = definitionAt(analysis, document.offsetAt(position))
-    return definition ? { uri: document.uri, range: range(document, definition.span) } : null
+    if (!definition) return null
+    const uri = definition.uri ?? document.uri
+    let target = documents.get(uri)
+    if (!target) {
+      try {
+        target = TextDocument.create(uri, "", 0, analysis.sources?.get(uri) ?? read(uri))
+      } catch { return null }
+    }
+    return { uri, range: range(target, definition.span) }
   })
 
   connection.languages.semanticTokens.on(({ textDocument }) => {

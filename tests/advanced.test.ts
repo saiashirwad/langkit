@@ -5,7 +5,11 @@ import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { create, validate } from "langkit/ir";
 import { definitionAt, typeAt } from "langkit/analysis";
-import { analyze, compile, elaborate, program, show, type Type } from "../examples/advanced.ts";
+import { analyze, compile as compileSource, elaborate, program, show, type Type } from "../examples/advanced/advanced.ts";
+
+const compile = (source: string) => compileSource('import "./stdlib.advanced";\n' + source, {
+  uri: new URL("../examples/advanced/test.advanced", import.meta.url).href,
+});
 
 const compiled = (source: string) => {
   const result = compile(source);
@@ -135,15 +139,15 @@ test("advanced constructor fields and record extension preserve effect order", (
 
 test("advanced sample exercises datatypes, recursion, rows, higher rank, lists and print", () => {
   const output: unknown[] = [];
-  assert.equal(evaluate(readFileSync(new URL("../examples/main.advanced", import.meta.url), "utf8"), value => output.push(value)), 42);
-  assert.deepEqual(output, ["The answer is:", 42]);
+  assert.equal(evaluate(readFileSync(new URL("../examples/advanced/main.advanced", import.meta.url), "utf8"), value => output.push(value)), 49);
+  assert.deepEqual(output, ["The answer is:", 49]);
 });
 
 test("advanced analysis excludes stdlib facts and keeps pattern definitions", () => {
-  const source = "match Some(42) { None => 0, Some(value) => value }";
-  const analysis = analyze(source);
+  const source = 'import "./stdlib.advanced";\nmatch Some(42) { None => 0, Some(value) => value }';
+  const analysis = analyze(source, { uri: new URL("../examples/advanced/test.advanced", import.meta.url).href });
   assert.deepEqual(analysis.diagnostics, []);
-  assert.equal(analysis.definitions.length, 1);
+  assert.equal(analysis.definitions.filter(definition => !definition.uri).length, 1);
   assert.equal(show(typeAt(analysis, source.lastIndexOf("value"))!.type), "number");
   assert.equal(definitionAt(analysis, source.lastIndexOf("value"))?.span.start, source.indexOf("value"));
   assert.deepEqual(analyze('print("hello")').diagnostics, []);

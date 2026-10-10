@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { definitionAt, semanticTokens, typeAt } from "langkit/analysis";
 import { create, validate, type Body, type Value } from "langkit/ir";
-import { analyze, compile, elaborate, program, show, type Type } from "../examples/hm.ts";
+import { analyze, compile, elaborate, program, show, type Type } from "../examples/hm/hm.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
@@ -52,7 +52,7 @@ for (const [source, expected] of [
 }
 
 test("HM sample is separate source and evaluates to 42", () => {
-  const source = readFileSync(new URL("../examples/main.hm", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../examples/hm/main.hm", import.meta.url), "utf8");
   assert.equal(evaluate(source), 42);
 });
 

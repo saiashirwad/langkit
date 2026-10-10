@@ -9,12 +9,13 @@ vim.filetype.add({
     [vim.pesc(root) .. "/.*%.hm"] = "hm",
     [vim.pesc(root) .. "/.*%.rows"] = "rows",
     [vim.pesc(root) .. "/.*%.advanced"] = "advanced",
+    [vim.pesc(root) .. "/.*%.strict"] = "strict",
   },
 })
 
-for _, language in ipairs({ "toy", "hm", "rows", "advanced" }) do
+for _, language in ipairs({ "toy", "hm", "rows", "advanced", "strict" }) do
   vim.lsp.config(language, {
-    cmd = { "node", root .. "/examples/" .. language .. "-lsp.ts", "--stdio" },
+    cmd = { "node", root .. "/examples/" .. language .. "/" .. language .. "-lsp.ts", "--stdio" },
     filetypes = { language },
     workspace_required = true,
     root_dir = function(bufnr, on_dir)

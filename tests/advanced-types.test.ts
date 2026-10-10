@@ -6,7 +6,7 @@ import {
   free, exclude, unify, mono, generalize, instantiate, show, data, generic,
   forall, substitute, instantiateForall, skolemize, subsume,
   type Type, type TypeConstructor,
-} from "../examples/advanced-types.ts";
+} from "../examples/advanced/advanced-types.ts";
 
 const accept = (body: Check<unknown>) => {
   const result = run(body);

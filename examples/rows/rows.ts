@@ -25,6 +25,7 @@ import {
   type Check,
   type Result,
   type Span,
+  type Diagnostic,
 } from "langkit";
 import { create, type Binding, type Body, type Operator, type Value } from "langkit/ir";
 import {
@@ -36,6 +37,9 @@ import {
 import { emit } from "langkit/javascript";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
 
 // Inference belongs to this language, not the IR or the checking runner.
 export type Type =
@@ -56,9 +60,15 @@ const boolean: Type = { kind: "boolean" };
 const string: Type = { kind: "string" };
 const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
 const record = (row: Row): Type => ({ kind: "record", row });
-const row = (fields: ReadonlyMap<string, Type> = new Map(), tail: RowVariable | null = null): Row => ({ fields, tail });
+const row = (
+  fields: ReadonlyMap<string, Type> = new Map(),
+  tail: RowVariable | null = null,
+): Row => ({ fields, tail });
 const fresh = (): Variable => ({ kind: "variable" });
-const freshRow = (lacks: Iterable<string> = []): RowVariable => ({ kind: "row-variable", lacks: new Set(lacks) });
+const freshRow = (lacks: Iterable<string> = []): RowVariable => ({
+  kind: "row-variable",
+  lacks: new Set(lacks),
+});
 const prune = (type: Type): Type => {
   if (type.kind !== "variable" || !type.instance) return type;
   return (type.instance = prune(type.instance));
@@ -81,7 +91,9 @@ export const show = (type: Type): string => {
     if (type.kind === "function") return `(${visit(type.param)} -> ${visit(type.result)})`;
     if (type.kind === "record") {
       const { fields, tail } = flatten(type.row);
-      const labels = [...fields].sort(([a], [b]) => a.localeCompare(b)).map(([name, type]) => `${name}: ${visit(type)}`);
+      const labels = [...fields]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([name, type]) => `${name}: ${visit(type)}`);
       if (tail) {
         if (!rows.has(tail)) rows.set(tail, `r${rows.size || ""}`);
         return `{ ${labels.join(", ")}${labels.length ? " " : ""}| ${rows.get(tail)} }`;
@@ -91,12 +103,17 @@ export const show = (type: Type): string => {
     if (type.kind !== "variable") return type.kind;
     if (!names.has(type)) {
       const index = names.size;
-      names.set(type, String.fromCharCode(97 + index % 26) + (index >= 26 ? Math.floor(index / 26) : ""));
+      names.set(
+        type,
+        String.fromCharCode(97 + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : ""),
+      );
     }
     return names.get(type)!;
   };
   const result = visit(type);
-  const constraints = [...rows].filter(([variable]) => variable.lacks.size).map(([variable, name]) => `${name} lacks ${[...variable.lacks].sort().join(", ")}`);
+  const constraints = [...rows]
+    .filter(([variable]) => variable.lacks.size)
+    .map(([variable, name]) => `${name} lacks ${[...variable.lacks].sort().join(", ")}`);
   return result + (constraints.length ? ` where ${constraints.join("; ")}` : "");
 };
 
@@ -117,69 +134,74 @@ const free = (type: Type, found = new Set<FreeVariable>()): Set<FreeVariable> =>
 
 // Every row tail excludes its explicit fields. Extension adds absence constraints;
 // solving a row variable checks and propagates them, including through aliases.
-const exclude = (input: Row, labels: Iterable<string>): Check<void> => check(function* () {
-  const { fields, tail } = flatten(input);
-  for (const label of labels) {
-    if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
-    tail?.lacks.add(label);
-  }
-});
-const solveRow = (variable: RowVariable, input: Row): Check<void> => check(function* () {
-  const target = flatten(input);
-  if (!target.fields.size && target.tail === variable) return;
-  const variables = new Set<FreeVariable>();
-  freeRow(target, variables);
-  if (variables.has(variable)) return yield* fail("Infinite row");
-  yield* exclude(target, variable.lacks);
-  // Preserve the unique-label invariant even when the target is assembled by unification.
-  if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
-  variable.instance = target;
-});
-const unifyRows = (left: Row, right: Row): Check<void> => check(function* () {
-  let a = flatten(left);
-  let b = flatten(right);
-  const unified = new Set<string>();
-  while (true) {
-    const common = [...a.fields].filter(([label]) => b.fields.has(label) && !unified.has(label));
-    if (!common.length) break;
-    for (const [label, type] of common) {
-      yield* unify(type, b.fields.get(label)!);
-      unified.add(label);
+const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
+  check(function* () {
+    const { fields, tail } = flatten(input);
+    for (const label of labels) {
+      if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
+      tail?.lacks.add(label);
     }
-    // A field's type may share variables with either tail. Solving it can
-    // expose more common fields, whose types must agree before solving tails.
-    a = flatten(left);
-    b = flatten(right);
-  }
-  const onlyA = new Map([...a.fields].filter(([label]) => !b.fields.has(label)));
-  const onlyB = new Map([...b.fields].filter(([label]) => !a.fields.has(label)));
-  if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size))
-    return yield* fail(`Missing field: ${[...(!a.tail ? onlyB : onlyA).keys()].join(", ")}`);
-  if (a.tail === b.tail) {
-    if (onlyA.size || onlyB.size) return yield* fail("Infinite row: incompatible fields share a tail");
-    return;
-  }
-  if (a.tail && b.tail) {
-    const shared = freshRow();
-    yield* solveRow(a.tail, row(onlyB, shared));
-    yield* solveRow(b.tail, row(onlyA, shared));
-  } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
-  else if (b.tail) yield* solveRow(b.tail, row(onlyA));
-});
-const unify = (left: Type, right: Type): Check<void> => check(function* () {
-  const a = prune(left);
-  const b = prune(right);
-  if (a === b) return;
-  if (a.kind === "variable") {
-    if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-    a.instance = b;
-  } else if (b.kind === "variable") yield* unify(b, a);
-  else if (a.kind === "function" && b.kind === "function") {
-    yield* unify(a.param, b.param);
-    yield* unify(a.result, b.result);
-  } else if (a.kind === "record" && b.kind === "record") yield* unifyRows(a.row, b.row);
-  else if (a.kind !== b.kind) return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-});
+  });
+const solveRow = (variable: RowVariable, input: Row): Check<void> =>
+  check(function* () {
+    const target = flatten(input);
+    if (!target.fields.size && target.tail === variable) return;
+    const variables = new Set<FreeVariable>();
+    freeRow(target, variables);
+    if (variables.has(variable)) return yield* fail("Infinite row");
+    yield* exclude(target, variable.lacks);
+    // Preserve the unique-label invariant even when the target is assembled by unification.
+    if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
+    variable.instance = target;
+  });
+const unifyRows = (left: Row, right: Row): Check<void> =>
+  check(function* () {
+    let a = flatten(left);
+    let b = flatten(right);
+    const unified = new Set<string>();
+    while (true) {
+      const common = [...a.fields].filter(([label]) => b.fields.has(label) && !unified.has(label));
+      if (!common.length) break;
+      for (const [label, type] of common) {
+        yield* unify(type, b.fields.get(label)!);
+        unified.add(label);
+      }
+      // A field's type may share variables with either tail. Solving it can
+      // expose more common fields, whose types must agree before solving tails.
+      a = flatten(left);
+      b = flatten(right);
+    }
+    const onlyA = new Map([...a.fields].filter(([label]) => !b.fields.has(label)));
+    const onlyB = new Map([...b.fields].filter(([label]) => !a.fields.has(label)));
+    if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size))
+      return yield* fail(`Missing field: ${[...(!a.tail ? onlyB : onlyA).keys()].join(", ")}`);
+    if (a.tail === b.tail) {
+      if (onlyA.size || onlyB.size)
+        return yield* fail("Infinite row: incompatible fields share a tail");
+      return;
+    }
+    if (a.tail && b.tail) {
+      const shared = freshRow();
+      yield* solveRow(a.tail, row(onlyB, shared));
+      yield* solveRow(b.tail, row(onlyA, shared));
+    } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
+    else if (b.tail) yield* solveRow(b.tail, row(onlyA));
+  });
+const unify = (left: Type, right: Type): Check<void> =>
+  check(function* () {
+    const a = prune(left);
+    const b = prune(right);
+    if (a === b) return;
+    if (a.kind === "variable") {
+      if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
+      a.instance = b;
+    } else if (b.kind === "variable") yield* unify(b, a);
+    else if (a.kind === "function" && b.kind === "function") {
+      yield* unify(a.param, b.param);
+      yield* unify(a.result, b.result);
+    } else if (a.kind === "record" && b.kind === "record") yield* unifyRows(a.row, b.row);
+    else if (a.kind !== b.kind) return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
+  });
 
 const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme => {
@@ -219,7 +241,11 @@ type Syntax =
   | { readonly kind: "number"; readonly value: number }
   | { readonly kind: "boolean"; readonly value: boolean }
   | { readonly kind: "string"; readonly value: string }
-  | { readonly kind: "record"; readonly fields: readonly { name: string; value: Expr }[]; readonly base: Expr | undefined }
+  | {
+      readonly kind: "record";
+      readonly fields: readonly { name: string; value: Expr }[];
+      readonly base: Expr | undefined;
+    }
   | { readonly kind: "field"; readonly record: Expr; readonly name: string }
   | { readonly kind: "name"; readonly name: string }
   | { readonly kind: "binary"; readonly op: Operator; readonly left: Expr; readonly right: Expr }
@@ -246,16 +272,7 @@ const located = (p: Parser<Syntax>): Parser<Expr> =>
 
 const words = /[a-zA-Z_]\w*/;
 const digits = /\d+(?:\.\d+)?/;
-const keywords = [
-  "let",
-  "in",
-  "fn",
-  "if",
-  "then",
-  "else",
-  "true",
-  "false",
-] as const;
+const keywords = ["let", "in", "fn", "if", "then", "else", "true", "false", "import"] as const;
 const reserved: ReadonlySet<string> = new Set(keywords);
 const lex = createLexemes({
   trivia: regex(/\s*/),
@@ -274,7 +291,7 @@ const tokens: readonly TokenRule[] = [
   { pattern: strings, kind: "string" },
   {
     pattern: words,
-    kind: (text) => reserved.has(text) ? "keyword" : "variable",
+    kind: (text) => (reserved.has(text) ? "keyword" : "variable"),
   },
   { pattern: digits, kind: "number" },
   { pattern: /==|=>|->|[+\-*/>=]/, kind: "operator" },
@@ -322,26 +339,37 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
     }),
   );
 
-  const records = located(parser(function* () {
-    yield* symbol("{");
-    yield* commit();
-    const fields = yield* sepBy(parser(function* () {
-      const label = yield* identifier;
-      yield* symbol("=");
-      return { name: label, value: yield* expr };
-    }), symbol(","));
-    const base = yield* optional(parser(function* () {
-      yield* symbol("|");
+  const records = located(
+    parser(function* () {
+      yield* symbol("{");
       yield* commit();
-      return yield* expr;
-    }));
-    yield* symbol("}");
-    return { kind: "record", fields, base };
-  }));
+      const fields = yield* sepBy(
+        parser(function* () {
+          const label = yield* identifier;
+          yield* symbol("=");
+          return { name: label, value: yield* expr };
+        }),
+        symbol(","),
+      );
+      const base = yield* optional(
+        parser(function* () {
+          yield* symbol("|");
+          yield* commit();
+          return yield* expr;
+        }),
+      );
+      yield* symbol("}");
+      return { kind: "record", fields, base };
+    }),
+  );
 
   const atom = choice(
     records,
-    located(lex.token(regex(strings)).map((text) => ({ kind: "string", value: JSON.parse(text) as string }))),
+    located(
+      lex
+        .token(regex(strings))
+        .map((text) => ({ kind: "string", value: JSON.parse(text) as string })),
+    ),
     located(
       lex
         .token(regex(new RegExp(`-?${digits.source}`)))
@@ -353,21 +381,33 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
     between(symbol("("), symbol(")"), expr),
   );
 
-  const calls = postfix(atom, choice(
-    parser(function* () {
-      yield* symbol(".");
-      yield* commit();
-      return yield* name;
-    }).map(({ name, span }) => (record: Expr): Expr => ({
-      kind: "field", record, name, span: { start: record.span.start, end: span.end },
-    })),
-    between(symbol("("), symbol(")"), expr).withSpan(
-      (arg, span) => (callee: Expr): Expr => ({
-        kind: "call", fn: callee, arg,
-        span: { start: callee.span.start, end: span.end },
-      }),
+  const calls = postfix(
+    atom,
+    choice(
+      parser(function* () {
+        yield* symbol(".");
+        yield* commit();
+        return yield* name;
+      }).map(
+        ({ name, span }) =>
+          (record: Expr): Expr => ({
+            kind: "field",
+            record,
+            name,
+            span: { start: record.span.start, end: span.end },
+          }),
+      ),
+      between(symbol("("), symbol(")"), expr).withSpan(
+        (arg, span) =>
+          (callee: Expr): Expr => ({
+            kind: "call",
+            fn: callee,
+            arg,
+            span: { start: callee.span.start, end: span.end },
+          }),
+      ),
     ),
-  ));
+  );
 
   const binary = (op: Operator) => {
     return symbol(op).map(
@@ -457,11 +497,12 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
             const scheme = generalize(initial.type, environment);
             const value = yield* code.declare(expr.name, initial);
             const binding = value.node.binding;
-            if (yield* get(observe)) yield* facts.define(
-              binding,
-              expr.nameSpan,
-              prune(binding.type).kind === "function" ? "function" : "variable",
-            );
+            if (yield* get(observe))
+              yield* facts.define(
+                binding,
+                expr.nameSpan,
+                prune(binding.type).kind === "function" ? "function" : "variable",
+              );
             return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
           }),
         );
@@ -489,10 +530,12 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       }
     }
   })
-    .flatMap((value) => check(function* () {
-      if (yield* get(observe)) yield* facts.typed(value.type, expr.span);
-      return code.at(value, expr.span);
-    }))
+    .flatMap((value) =>
+      check(function* () {
+        if (yield* get(observe)) yield* facts.typed(value.type, expr.span);
+        return code.at(value, expr.span);
+      }),
+    )
     .at(expr.span);
 
 export type Compiled = {
@@ -515,66 +558,100 @@ const parse = (source: string): Result<Expr> => {
       };
 };
 
-// Ordinary source-language functions, checked afresh for each compilation.
-const library = parse(readFileSync(new URL("./stdlib.rows", import.meta.url), "utf8"));
-const withLibrary = (body: Check<Value<Type>>): Check<Value<Type>> => check(function* () {
-  const param = code.binding("value", fresh());
-  const unit = record(row());
-  const print = yield* code.declare("print", code.fn(fn(param.type, unit), param, {
-    declarations: [], result: code.print(unit, code.ref(param)),
-  }));
-  const entries = new Map<string, Entry>([["print", {
-    binding: print.node.binding, scheme: generalize(print.type, new Map()),
-  }]]);
-  if (!library.success) return yield* fail(`Invalid standard library: ${library.error.message}`);
-  const initial = yield* within(observe, false, elaborate(library.value));
-  const helpers = yield* code.declare("stdlib", initial);
-  const type = prune(helpers.type);
-  if (type.kind !== "record") throw new Error("Standard library must be a record");
-  for (const [name, fieldType] of flatten(type.row).fields) {
-    const value = yield* code.declare(name, code.field(fieldType, helpers, name));
-    entries.set(name, { binding: value.node.binding, scheme: generalize(fieldType, new Map()) });
-  }
-  return yield* bind(env, entries, body);
-});
+type Origin = { readonly uri: string; readonly span: Span; readonly name: string };
+type Export = Entry & { readonly identity: symbol; readonly origin: Origin };
 
-export const analyze = (source: string): Analysis<Type> => {
-  const lexical = highlight(source, tokens);
-  const parsed = parse(source);
-  if (!parsed.success)
-    return {
-      diagnostics: [parsed.error],
-      types: [],
-      definitions: [],
-      references: [],
-      tokens: lexical,
-    };
-  return facts.collect(code.body(withLibrary(elaborate(parsed.value))), lexical).analysis;
+// Locate exported record helpers without adding dependency spans to root hovers.
+const exportOrigins = (expr: Expr, source: string): Map<string, Span> => {
+  const locals = new Map<string, Span>();
+  while (expr.kind === "let") { locals.set(expr.name, expr.nameSpan); expr = expr.body; }
+  const result = new Map<string, Span>();
+  if (expr.kind === "record") for (const field of expr.fields) {
+    const local = field.value.kind === "name" ? locals.get(field.value.name) : undefined;
+    const offset = source.lastIndexOf(field.name, field.value.span.start - 1);
+    result.set(field.name, local ?? (offset >= 0 ? { start: offset, end: offset + field.name.length } : field.value.span));
+  }
+  return result;
 };
 
-export const compile = (source: string): Result<Compiled> => {
-  const parsed = parse(source);
-  if (!parsed.success) return parsed;
-  const built = run(code.body(withLibrary(elaborate(parsed.value))));
-  if (!built.success) return built;
-  return {
-    success: true,
-    value: {
-      type: built.value.result.type,
-      ir: built.value,
-      javascript: emit(built.value),
-    },
-  };
+const buildModules = (graph: { root: string; modules: readonly ModuleSource[] }, external: Map<symbol, Export>): Check<Body<Type>> =>
+  code.body(check(function* () {
+    const param = code.binding("value", fresh());
+    const unit = record(row());
+    const printed = yield* code.declare("print", code.fn(fn(param.type, unit), param, {
+      declarations: [], result: code.print(unit, code.ref(param)),
+    }));
+    const primitive: Entry = { binding: printed.node.binding, scheme: generalize(printed.type, new Map()) };
+    const completed = new Map<string, ReadonlyMap<string, Export>>();
+    for (const module of graph.modules) {
+      const imported = new Map<string, Export>();
+      for (const dependency of module.imports) for (const [name, entry] of completed.get(dependency.uri)!) {
+        const previous = imported.get(name);
+        if (previous && previous.identity !== entry.identity)
+          return yield* fail(`Conflicting imported name: ${name}`).at(dependency.span).context(module.uri);
+        imported.set(name, entry);
+      }
+      const environment = new Map<string, Entry>([["print", primitive], ...imported]);
+      const parsed = parse(module.source);
+      if (!parsed.success) return yield* fail(parsed.error.message).at(parsed.error.span).context(module.uri);
+      if (module.uri === graph.root) {
+        for (const entry of imported.values()) external.set(entry.binding.id, entry);
+        return yield* within(env, environment, elaborate(parsed.value));
+      }
+      const initial = yield* within(observe, false, within(env, environment, elaborate(parsed.value))).context(module.uri);
+      const type = prune(initial.type);
+      if (type.kind !== "record") return yield* fail(`Imported module must return a record: ${module.uri}`).context(module.uri);
+      const value = yield* code.declare("module", initial);
+      const entries = new Map(imported);
+      const origins = exportOrigins(parsed.value, module.original);
+      for (const [name, fieldType] of flatten(type.row).fields) {
+        if (entries.has(name)) return yield* fail(`Conflicting exported name: ${name}`).context(module.uri);
+        const reference = yield* code.declare(name, code.field(fieldType, value, name));
+        entries.set(name, { binding: reference.node.binding, scheme: generalize(fieldType, environment),
+          identity: Symbol(name), origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.span } });
+      }
+      completed.set(module.uri, entries);
+    }
+    throw new Error("Module graph has no root");
+  }));
+
+// Dependency diagnostics point at the importing directive in the current file,
+// while their context retains the actual failing module URI.
+const moduleDiagnostic = (error: Diagnostic, graph: { root: string; modules: readonly ModuleSource[] }): Diagnostic => {
+  const byUri = new Map(graph.modules.map(module => [module.uri, module]));
+  const failed = error.context.find(context => byUri.has(context) && context !== graph.root);
+  if (!failed) return error;
+  const reaches = (uri: string): boolean => uri === failed || byUri.get(uri)!.imports.some(dependency => reaches(dependency.uri));
+  const directive = byUri.get(graph.root)!.imports.find(dependency => reaches(dependency.uri));
+  return directive ? { ...error, span: directive.span } : error;
+};
+
+export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
+  const graph = loadModules(source, options, "rows");
+  const lexical = highlight(source, tokens);
+  if (!graph.success) return { diagnostics: [graph.error], types: [], definitions: [], references: [], tokens: lexical };
+  const external = new Map<symbol, Export>();
+  const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
+  return { ...analysis, diagnostics: analysis.diagnostics.map(error => moduleDiagnostic(error, graph.value)), sources: new Map(graph.value.modules.map(module => [module.uri, module.original])),
+    definitions: [...analysis.definitions, ...[...external.values()].filter(entry => analysis.references.some(reference => reference.id === entry.binding.id)).map(entry => ({
+      ...entry.binding, span: entry.origin.span, uri: entry.origin.uri,
+      kind: prune(entry.scheme.type).kind === "function" ? "function" as const : "variable" as const,
+    }))] };
+};
+export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
+  const graph = loadModules(source, options, "rows");
+  if (!graph.success) return graph;
+  const built = run(buildModules(graph.value, new Map()));
+  if (!built.success) return { success: false, error: moduleDiagnostic(built.error, graph.value) };
+  return { success: true, value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) } };
 };
 
 if (import.meta.main) {
-  const file = process.argv[2] ?? new URL("./main.rows", import.meta.url);
+  const file = process.argv[2] ? pathToFileURL(resolve(process.argv[2])) : new URL("./main.rows", import.meta.url);
   const source = readFileSync(file, "utf8");
-  const result = compile(source);
+  const result = compile(source, { uri: file.href });
   if (!result.success) {
     console.error(render(result.error, source));
     process.exitCode = 1;
-  } else {
-    console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
-  }
+  } else console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
 }

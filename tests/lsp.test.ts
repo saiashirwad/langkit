@@ -1,8 +1,11 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { once } from "node:events"
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { test, type TestContext } from "node:test"
-import { fileURLToPath } from "node:url"
+import { fileURLToPath, pathToFileURL } from "node:url"
 import { TextDocument } from "vscode-languageserver-textdocument"
 import { encodeTokens } from "langkit/lsp"
 import { tokenKinds } from "langkit/analysis"
@@ -11,7 +14,7 @@ type Message = { id?: number; method?: string; params?: unknown; result?: unknow
 type Diagnostics = { uri: string; version?: number; diagnostics: { message: string; range: unknown }[] }
 type Hover = { contents: { kind: string; value: string }; range: unknown } | null
 
-const client = (t: TestContext, args = [fileURLToPath(new URL("../examples/toy-lsp.ts", import.meta.url)), "--stdio"]) => {
+const client = (t: TestContext, args = [fileURLToPath(new URL("../examples/toy/toy-lsp.ts", import.meta.url)), "--stdio"]) => {
   const child = spawn(process.execPath, args, {
     cwd: fileURLToPath(new URL("..", import.meta.url)), stdio: ["pipe", "pipe", "pipe"]
   })
@@ -89,7 +92,7 @@ const client = (t: TestContext, args = [fileURLToPath(new URL("../examples/toy-l
   return {
     request,
     notify: (method: string, params: unknown) => send({ method, params }),
-    diagnostics: (version?: number) => notification<Diagnostics>("textDocument/publishDiagnostics", value => value.version === version),
+    diagnostics: (version?: number, uri?: string) => notification<Diagnostics>("textDocument/publishDiagnostics", value => value.version === version && (!uri || value.uri === uri)),
     shutdown: async () => {
       await request("shutdown", null)
       const exited = once(child, "exit")
@@ -100,7 +103,7 @@ const client = (t: TestContext, args = [fileURLToPath(new URL("../examples/toy-l
   }
 }
 
-const uri = "file:///workspace/main.toy"
+const uri = new URL("../examples/editor.toy", import.meta.url).href
 const position = (source: string, offset: number) => TextDocument.create(uri, "toy", 1, source).positionAt(offset)
 const at = (source: string, offset: number) => ({ textDocument: { uri }, position: position(source, offset) })
 
@@ -158,7 +161,7 @@ test("stdio LSP: initialize, analyze, edit, clear and shut down", { timeout: 150
 })
 
 test("HM stdio LSP specializes uses without losing definition identity", { timeout: 10000 }, async t => {
-  const server = client(t, [fileURLToPath(new URL("../examples/hm-lsp.ts", import.meta.url)), "--stdio"])
+  const server = client(t, [fileURLToPath(new URL("../examples/hm/hm-lsp.ts", import.meta.url)), "--stdio"])
   await server.request("initialize", { processId: null, capabilities: {} })
   server.notify("initialized", {})
   const source = "let id = fn(x) => x in if id(true) then id(42) else 0"
@@ -177,7 +180,7 @@ test("HM stdio LSP specializes uses without losing definition identity", { timeo
 })
 
 test("rows stdio LSP exposes row constraints and analyzes print without executing it", { timeout: 10000 }, async t => {
-  const server = client(t, [fileURLToPath(new URL("../examples/rows-lsp.ts", import.meta.url)), "--stdio"])
+  const server = client(t, [fileURLToPath(new URL("../examples/rows/rows-lsp.ts", import.meta.url)), "--stdio"])
   await server.request("initialize", { processId: null, capabilities: {} })
   server.notify("initialized", {})
   const source = 'let get = fn(r) => r.x in print(get({ x = "hello" }))'
@@ -196,18 +199,71 @@ test("rows stdio LSP exposes row constraints and analyzes print without executin
 })
 
 test("advanced stdio LSP exposes higher-rank parameters and exhaustive-match diagnostics", { timeout: 10000 }, async t => {
-  const server = client(t, [fileURLToPath(new URL("../examples/advanced-lsp.ts", import.meta.url)), "--stdio"])
+  const server = client(t, [fileURLToPath(new URL("../examples/advanced/advanced-lsp.ts", import.meta.url)), "--stdio"])
   await server.request("initialize", { processId: null, capabilities: {} })
   server.notify("initialized", {})
-  const source = 'let use = fn(f: forall a. a -> a) => if f(true) then f(42) else 0 in print(use(id))'
+  const prelude = 'import "./advanced/stdlib.advanced";\n'
+  const source = prelude + 'let use = fn(f: forall a. a -> a) => if f(true) then f(42) else 0 in print(use(id))'
   server.notify("textDocument/didOpen", { textDocument: { uri, languageId: "advanced", version: 1, text: source } })
   assert.deepEqual((await server.diagnostics(1)).diagnostics, [])
-  assert.match((await server.request<Hover>("textDocument/hover", at(source, 4)))!.contents.value, /forall/)
+  assert.match((await server.request<Hover>("textDocument/hover", at(source, source.indexOf("use"))))!.contents.value, /forall/)
   assert.equal((await server.request<Hover>("textDocument/hover", at(source, source.indexOf("f(42)"))))?.contents.value, "(number -> number)")
   assert.deepEqual(await server.request("textDocument/definition", at(source, source.lastIndexOf("use"))),
-    { uri, range: { start: { line: 0, character: 4 }, end: { line: 0, character: 7 } } })
-  server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: "match Some(42) { Some(value) => value }" }] })
+    { uri, range: { start: { line: 1, character: 4 }, end: { line: 1, character: 7 } } })
+  server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: prelude + "match Some(42) { Some(value) => value }" }] })
   assert.match((await server.diagnostics(2)).diagnostics[0]!.message, /Non-exhaustive.*None/)
+  await server.shutdown()
+})
+
+test("strict stdio LSP reports inferred constraints and keeps effects inert", { timeout: 10000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/strict/strict-lsp.ts", import.meta.url)), "--stdio"])
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  const prelude = 'import "./strict/stdlib.strict";\n'
+  const source = prelude + 'keep xs = map id xs; main = do { print (keep (Some 42)); pure {}; };'
+  server.notify("textDocument/didOpen", { textDocument: { uri, languageId: "strict", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1)).diagnostics, [])
+  assert.match((await server.request<Hover>("textDocument/hover", at(source, source.indexOf("keep"))))!.contents.value, /Functor/)
+  assert.match((await server.request<Hover>("textDocument/hover", at(source, source.indexOf("main"))))!.contents.value, /Effect/)
+  assert.deepEqual(await server.request("textDocument/definition", at(source, source.lastIndexOf("keep"))),
+    { uri, range: { start: { line: 1, character: 0 }, end: { line: 1, character: 4 } } })
+  server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: prelude + 'main : List -> number; main x = 42;' }] })
+  assert.match((await server.diagnostics(2)).diagnostics[0]!.message, /Kind mismatch/)
+  await server.shutdown()
+})
+
+test("strict stdlib is an editable module with cross-file definitions and dependent diagnostics", { timeout: 15000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/strict/strict-lsp.ts", import.meta.url)), "--stdio"])
+  const rootUri = new URL("../examples/strict/editor.strict", import.meta.url).href
+  const libraryUri = new URL("../examples/strict/stdlib.strict", import.meta.url).href
+  const library = readFileSync(new URL(libraryUri), "utf8")
+  const source = 'import "./stdlib.strict";\nmain = id 42 + 0;'
+  const document = TextDocument.create(rootUri, "strict", 1, source)
+  const query = { textDocument: { uri: rootUri }, position: document.positionAt(source.indexOf("id 42")) }
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  server.notify("textDocument/didOpen", { textDocument: { uri: rootUri, languageId: "strict", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, [])
+  const definitionStart = library.indexOf("id x = x;")
+  assert.ok(definitionStart >= 0)
+  const libraryDocument = TextDocument.create(libraryUri, "strict", 1, library)
+  assert.deepEqual(await server.request("textDocument/definition", query), {
+    uri: libraryUri, range: { start: libraryDocument.positionAt(definitionStart), end: libraryDocument.positionAt(definitionStart + 2) }
+  })
+  server.notify("textDocument/didOpen", { textDocument: { uri: libraryUri, languageId: "strict", version: 1, text: library } })
+  assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, [])
+  assert.deepEqual((await server.diagnostics(1, libraryUri)).diagnostics, [])
+  const libraryQuery = { textDocument: { uri: libraryUri }, position: libraryDocument.positionAt(definitionStart) }
+  assert.equal((await server.request<Hover>("textDocument/hover", libraryQuery))?.contents.value, "(a -> a)")
+  const changed = library.replace("id x = x;", "id x = true;")
+  server.notify("textDocument/didChange", { textDocument: { uri: libraryUri, version: 2 }, contentChanges: [{ text: changed }] })
+  assert.match((await server.diagnostics(1, rootUri)).diagnostics[0]!.message, /Cannot unify/)
+  assert.deepEqual((await server.diagnostics(2, libraryUri)).diagnostics, [])
+  assert.equal((await server.request<Hover>("textDocument/hover", query))?.contents.value, "(number -> boolean)")
+  server.notify("textDocument/didClose", { textDocument: { uri: libraryUri } })
+  await server.diagnostics(undefined, libraryUri)
+  assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, [])
+  assert.equal((await server.request<Hover>("textDocument/hover", query))?.contents.value, "(number -> number)")
   await server.shutdown()
 })
 
@@ -226,6 +282,54 @@ serve(text => {
   server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: "bad" }] })
   assert.match((await server.diagnostics(2)).diagnostics[0]!.message, /Internal analysis error/)
   assert.equal(await server.request("textDocument/hover", at("bad", 0)), null)
+  await server.shutdown()
+})
+
+test("LSP imports use unsaved buffers, refresh dependents, and navigate across files", { timeout: 10000 }, async t => {
+  const directory = mkdtempSync(join(tmpdir(), "langkit-lsp-modules-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  const importedUri = pathToFileURL(join(directory, "dep.mini")).href
+  const rootUri = pathToFileURL(join(directory, "main.mini")).href
+  writeFileSync(join(directory, "dep.mini"), "header\n\nlet value = 42")
+  const script = `import { serve } from "langkit/lsp";
+const dep = ${JSON.stringify(importedUri)};
+serve((source, context) => {
+  if (context.uri === dep) return { diagnostics: [], definitions: [], references: [], tokens: [], types: [] };
+  const imported = context.read(dep);
+  const id = Symbol("value");
+  const start = imported.indexOf("value");
+  return {
+    diagnostics: imported.includes("true") ? [{ message: "Expected number", context: [], span: { start: 0, end: 5 } }] : [],
+    types: [{ span: { start: 0, end: 5 }, type: imported.includes("true") ? "boolean" : "number" }],
+    definitions: [{ id, name: "value", kind: "variable", type: "number", uri: dep, span: { start, end: start + 5 } }],
+    references: [{ id, span: { start: 0, end: 5 } }], tokens: [], sources: new Map([[dep, imported]])
+  };
+}, type => type);`
+  const server = client(t, ["--input-type=module", "--eval", script])
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  server.notify("textDocument/didOpen", { textDocument: { uri: rootUri, languageId: "mini", version: 1, text: "value + 1" } })
+  assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, [])
+  const query = { textDocument: { uri: rootUri }, position: { line: 0, character: 0 } }
+  assert.deepEqual(await server.request("textDocument/definition", query), {
+    uri: importedUri, range: { start: { line: 2, character: 4 }, end: { line: 2, character: 9 } }
+  })
+  server.notify("textDocument/didOpen", { textDocument: { uri: importedUri, languageId: "mini", version: 1, text: "value = true" } })
+  assert.match((await server.diagnostics(1, rootUri)).diagnostics[0]!.message, /Expected number/)
+  assert.equal((await server.request<Hover>("textDocument/hover", query))?.contents.value, "boolean")
+  await server.diagnostics(1, importedUri)
+  server.notify("textDocument/didChange", { textDocument: { uri: importedUri, version: 2 }, contentChanges: [{ text: "\nvalue = 42" }] })
+  assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, [])
+  await server.diagnostics(2, importedUri)
+  assert.deepEqual(await server.request("textDocument/definition", query), {
+    uri: importedUri, range: { start: { line: 1, character: 0 }, end: { line: 1, character: 5 } }
+  })
+  server.notify("textDocument/didClose", { textDocument: { uri: importedUri } })
+  await server.diagnostics(undefined, importedUri)
+  assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, [])
+  assert.deepEqual(await server.request("textDocument/definition", query), {
+    uri: importedUri, range: { start: { line: 2, character: 4 }, end: { line: 2, character: 9 } }
+  })
   await server.shutdown()
 })
 

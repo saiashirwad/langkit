@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { runInNewContext } from "node:vm"
-import { compile, show } from "../examples/toy.ts"
+import { compile, show } from "../examples/toy/toy.ts"
 import { render } from "langkit"
 
 const compiled = (source: string) => {

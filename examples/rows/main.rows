@@ -1,3 +1,5 @@
+import "./stdlib.rows";
+
 let getX = fn(r) => r.x in
 let extend = fn(r) => { flag = true | r } in
 let answer = compose(getX)(extend)({ x = 42 }) in

@@ -1,3 +1,4 @@
+import "./stdlib.advanced";
 type Tree(a) = Leaf(a) | Branch(Tree(a), Tree(a))
 
 let rec sumTree = fn(tree) => match tree {
@@ -22,9 +23,8 @@ let numbers = mapList(fn(n) => n + 1)(Cons(start, Cons(20, Nil))) in
 
 
 let total = foldList(fn(sum) => fn(n) => sum + n)(0)(numbers) in
-
-
-let answer = sumTree(Branch(Leaf(total), Leaf(0))) in
+let a = 2 + 5 in
+let answer = sumTree(Branch(Leaf(total), Leaf(a))) in
 
 
 let ignored = print("The answer is:") in

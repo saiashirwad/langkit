@@ -5,7 +5,11 @@ import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { typeAt, definitionAt } from "langkit/analysis";
 import { create, validate } from "langkit/ir";
-import { analyze, compile, elaborate, program, show, type Type } from "../examples/rows.ts";
+import { analyze, compile as compileSource, elaborate, program, show, type Type } from "../examples/rows/rows.ts";
+
+const compile = (source: string) => compileSource('import "./stdlib.rows";\n' + source, {
+  uri: new URL("../examples/rows/test.rows", import.meta.url).href,
+});
 
 const compiled = (source: string) => {
   const result = compile(source);
@@ -97,7 +101,7 @@ test("rows effect order follows fields before the extension base, once each", ()
 
 test("rows sample evaluates to 42 and prints its answer", () => {
   const output: unknown[] = [];
-  const source = readFileSync(new URL("../examples/main.rows", import.meta.url), "utf8");
+  const source = readFileSync(new URL("../examples/rows/main.rows", import.meta.url), "utf8");
   assert.equal(evaluate(source, x => output.push(x)), 42);
   assert.deepEqual(output, ["The answer is:", 42]);
 });

@@ -10,6 +10,8 @@ export type Definition<T> = Typed<T> & {
   readonly id: symbol
   readonly name: string
   readonly kind: "variable" | "parameter" | "function"
+  /** Present only for definitions outside the analyzed document. */
+  readonly uri?: string
 }
 export type Reference = { readonly id: symbol; readonly span: Span }
 
@@ -20,6 +22,8 @@ export type Analysis<T> = {
   readonly definitions: readonly Definition<T>[]
   readonly references: readonly Reference[]
   readonly tokens: readonly Token[]
+  /** Imported source snapshots for cross-file definition ranges. */
+  readonly sources?: ReadonlyMap<string, string>
 }
 
 /** Ordered lexical rules. Unrecognized characters are skipped, so incomplete input still highlights. */
@@ -109,7 +113,7 @@ export const definitionAt = <T>(analysis: Analysis<T>, offset: number): Definiti
   const reference = analysis.references.find(value => contains(value.span, offset))
   return reference
     ? analysis.definitions.find(value => value.id === reference.id)
-    : analysis.definitions.find(value => contains(value.span, offset))
+    : analysis.definitions.find(value => !value.uri && contains(value.span, offset))
 }
 
 /** Refine lexical tokens without introducing overlapping or duplicate ranges. */
@@ -117,7 +121,7 @@ export const semanticTokens = <T>(analysis: Analysis<T>): readonly Token[] => {
   const definitions = new Map(analysis.definitions.map(value => [value.id, value]))
   const roles = new Map<string, TokenKind>()
   const key = (span: Span) => `${span.start}:${span.end}`
-  for (const definition of analysis.definitions) roles.set(key(definition.span), definition.kind)
+  for (const definition of analysis.definitions) if (!definition.uri) roles.set(key(definition.span), definition.kind)
   for (const reference of analysis.references) {
     const definition = definitions.get(reference.id)
     if (definition) roles.set(key(reference.span), definition.kind)

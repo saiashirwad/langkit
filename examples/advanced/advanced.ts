@@ -1,11 +1,14 @@
 import {
   bind, check, fail, get, lookup, render, run, scoped, within,
-  type Check, type Result,
+  type Check, type Result, type Span, type Diagnostic,
 } from "langkit";
 import { create, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { emit } from "langkit/javascript";
 import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
+import { resolve as resolvePath } from "node:path";
+import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
 import { runInNewContext } from "node:vm";
 import { program, tokens, type DataDecl, type Expr, type Module, type TypeExpr } from "./advanced-syntax.ts";
 import {
@@ -342,50 +345,140 @@ const parse = (source: string): Result<Module> => {
       context: ["parsing", ...(result.error.diagnostic.context ?? [])] },
   };
 };
-const library = parse(readFileSync(new URL("./stdlib.advanced", import.meta.url), "utf8"));
-
-const withLibrary = (body: Check<Value<Type>>): Check<Value<Type>> => check(function* () {
-  if (!library.success) return yield* fail(`Invalid standard library: ${library.error.message}`);
-  const param = code.binding("value", fresh());
-  const unit = record(row());
-  const printed = yield* code.declare("print", code.fn(fn(param.type, unit), param, {
-    declarations: [], result: code.print(unit, code.ref(param)),
-  }));
-  const print = { binding: printed.node.binding, scheme: generalize(printed.type, []) };
-  const observing = yield* get(observe);
-  return yield* bind(env, [["print", print]], within(observe, false, withTypes(library.value.types, check(function* () {
-    const initial = yield* elaborate(library.value.body);
-    const helpers = yield* code.declare("stdlib", initial);
-    const type = prune(helpers.type);
-    if (type.kind !== "record") throw new Error("Standard library must return a record");
-    const entries = new Map<string, Entry>();
-    const environment = yield* get(env);
-    for (const [name, fieldType] of flatten(type.row).fields) {
-      const value = yield* code.declare(name, code.field(fieldType, helpers, name));
-      entries.set(name, { binding: value.node.binding,
-        scheme: generalize(fieldType, [...environment.values()].map(entry => entry.scheme)) });
-    }
-    return yield* within(observe, observing, bind(env, entries, body));
-  }))));
-});
-
-export const analyze = (source: string): Analysis<Type> => {
-  const lexical = highlight(source, tokens);
-  const parsed = parse(source);
-  if (!parsed.success) return { diagnostics: [parsed.error], types: [], definitions: [], references: [], tokens: lexical };
-  return facts.collect(code.body(withLibrary(withTypes(parsed.value.types, elaborate(parsed.value.body)))), lexical).analysis;
+type Origin = { readonly uri: string; readonly span: Span; readonly name: string };
+type Export = Entry & { readonly identity: symbol; readonly origin: Origin };
+type ModuleExports = {
+  readonly values: ReadonlyMap<string, Export>;
+  readonly definitions: ReadonlyMap<string, Definition>;
+  readonly constructors: ReadonlyMap<string, Constructor>;
 };
-export const compile = (source: string): Result<Compiled> => {
-  const parsed = parse(source);
-  if (!parsed.success) return parsed;
-  const built = run(code.body(withLibrary(withTypes(parsed.value.types, elaborate(parsed.value.body)))));
-  if (!built.success) return built;
+const exportOrigins = (expr: Expr, source: string): Map<string, Span> => {
+  const locals = new Map<string, Span>();
+  while (expr.kind === "let") { locals.set(expr.name, expr.nameSpan); expr = expr.body; }
+  const result = new Map<string, Span>();
+  if (expr.kind === "record") for (const field of expr.fields) {
+    const local = field.value.kind === "name" ? locals.get(field.value.name) : undefined;
+    const offset = source.lastIndexOf(field.name, field.value.span.start - 1);
+    result.set(field.name, local ?? (offset >= 0 ? { start: offset, end: offset + field.name.length } : field.value.span));
+  }
+  return result;
+};
+const buildModules = (graph: { root: string; modules: readonly ModuleSource[] }, external: Map<symbol, Export>): Check<Body<Type>> =>
+  code.body(check(function* () {
+    const param = code.binding("value", fresh());
+    const unit = record(row());
+    const printed = yield* code.declare("print", code.fn(fn(param.type, unit), param, {
+      declarations: [], result: code.print(unit, code.ref(param)),
+    }));
+    const primitive: Entry = { binding: printed.node.binding, scheme: generalize(printed.type, []) };
+    const completed = new Map<string, ModuleExports>();
+    for (const module of graph.modules) {
+      const imported = new Map<string, Export>();
+      const importedDefinitions = new Map<string, Definition>();
+      const importedConstructors = new Map<string, Constructor>();
+      for (const dependency of module.imports) {
+        const exports = completed.get(dependency.uri)!;
+        for (const [name, entry] of exports.values) {
+          const previous = imported.get(name);
+          if (previous && previous.identity !== entry.identity)
+            return yield* fail(`Conflicting imported name: ${name}`).at(dependency.span).context(module.uri);
+          imported.set(name, entry);
+        }
+        for (const [name, definition] of exports.definitions) {
+          const previous = importedDefinitions.get(name);
+          if (previous && previous.type.id !== definition.type.id)
+            return yield* fail(`Conflicting imported type: ${name}`).at(dependency.span).context(module.uri);
+          importedDefinitions.set(name, definition);
+        }
+        for (const [name, constructor] of exports.constructors) importedConstructors.set(name, constructor);
+      }
+      const environment = new Map<string, Entry>([["print", primitive], ...imported]);
+      const parsed = parse(module.source);
+      if (!parsed.success) return yield* fail(parsed.error.message).at(parsed.error.span).context(module.uri);
+      const inEnvironment = <A>(body: Check<A>): Check<A> => within(env, environment,
+        within(definitions, importedDefinitions, within(constructors, importedConstructors, body)));
+      if (module.uri === graph.root) {
+        for (const entry of imported.values()) external.set(entry.binding.id, entry);
+        return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body)));
+      }
+      let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
+      let moduleConstructors: ReadonlyMap<string, Constructor> = new Map();
+      const ownConstructors = new Map(parsed.value.types.flatMap(type => type.constructors.map(constructor => [constructor.name, constructor.nameSpan] as const)));
+      const bundled = yield* within(observe, false, inEnvironment(code.scope(withTypes(parsed.value.types, check(function* () {
+        const initial = yield* elaborate(parsed.value.body);
+        if (prune(initial.type).kind !== "record") return yield* fail(`Imported module must return a record: ${module.uri}`);
+        const result = yield* code.declare("exports", initial);
+        moduleDefinitions = yield* get(definitions);
+        moduleConstructors = yield* get(constructors);
+        const fields = [{ name: "@values", value: result as Value<Type> }];
+        for (const name of ownConstructors.keys()) fields.push({ name: `@${name}`, value: code.ref(moduleConstructors.get(name)!.binding) });
+        return code.record(record(row(new Map(fields.map(field => [field.name, field.value.type])))), fields);
+      }))))).context(module.uri);
+      const bundle = yield* code.declare("module", bundled);
+      const bundledType = prune(bundle.type);
+      if (bundledType.kind !== "record") throw new Error("Expected module bundle");
+      const resultType = flatten(bundledType.row).fields.get("@values")!;
+      const type = prune(resultType);
+      if (type.kind !== "record") throw new Error("Expected record exports");
+      const result = code.field(resultType, bundle, "@values");
+      const entries = new Map(imported);
+      const constructorEntries = new Map(importedConstructors);
+      for (const [name, span] of ownConstructors) {
+        if (entries.has(name)) return yield* fail(`Conflicting exported name: ${name}`).at(span).context(module.uri);
+        const original = moduleConstructors.get(name)!;
+        const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
+        const binding = value.node.binding;
+        entries.set(name, { binding, scheme: mono(original.type), identity: original.binding.id, origin: { uri: module.uri, name, span } });
+        constructorEntries.set(name, { ...original, binding });
+      }
+      const origins = exportOrigins(parsed.value.body, module.original);
+      for (const [name, fieldType] of flatten(type.row).fields) {
+        if (entries.has(name)) return yield* fail(`Conflicting exported name: ${name}`).context(module.uri);
+        const reference = yield* code.declare(name, code.field(fieldType, result, name));
+        entries.set(name, { binding: reference.node.binding,
+          scheme: generalize(fieldType, [...environment.values()].map(entry => entry.scheme)),
+          identity: Symbol(name), origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span } });
+      }
+      completed.set(module.uri, { values: entries, definitions: moduleDefinitions, constructors: constructorEntries });
+    }
+    throw new Error("Module graph has no root");
+  }));
+
+// Dependency diagnostics point at the importing directive in the current file,
+// while their context retains the actual failing module URI.
+const moduleDiagnostic = (error: Diagnostic, graph: { root: string; modules: readonly ModuleSource[] }): Diagnostic => {
+  const byUri = new Map(graph.modules.map(module => [module.uri, module]));
+  const failed = error.context.find(context => byUri.has(context) && context !== graph.root);
+  if (!failed) return error;
+  const reaches = (uri: string): boolean => uri === failed || byUri.get(uri)!.imports.some(dependency => reaches(dependency.uri));
+  const directive = byUri.get(graph.root)!.imports.find(dependency => reaches(dependency.uri));
+  return directive ? { ...error, span: directive.span } : error;
+};
+
+export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
+  const graph = loadModules(source, options, "advanced");
+  const lexical = highlight(source, tokens);
+  if (!graph.success) return { diagnostics: [graph.error], types: [], definitions: [], references: [], tokens: lexical };
+  const external = new Map<symbol, Export>();
+  const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
+  return { ...analysis, diagnostics: analysis.diagnostics.map(error => moduleDiagnostic(error, graph.value)), sources: new Map(graph.value.modules.map(module => [module.uri, module.original])),
+    definitions: [...analysis.definitions, ...[...external.values()].filter(entry => analysis.references.some(reference => reference.id === entry.binding.id)).map(entry => ({
+      ...entry.binding, span: entry.origin.span, uri: entry.origin.uri,
+      kind: ["function", "forall"].includes(prune(entry.scheme.type).kind) ? "function" as const : "variable" as const,
+    }))] };
+};
+export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
+  const graph = loadModules(source, options, "advanced");
+  if (!graph.success) return graph;
+  const built = run(buildModules(graph.value, new Map()));
+  if (!built.success) return { success: false, error: moduleDiagnostic(built.error, graph.value) };
   return { success: true, value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) } };
 };
 
 if (import.meta.main) {
-  const source = readFileSync(process.argv[2] ?? new URL("./main.advanced", import.meta.url), "utf8");
-  const result = compile(source);
+  const file = process.argv[2] ? pathToFileURL(resolvePath(process.argv[2])) : new URL("./main.advanced", import.meta.url);
+  const source = readFileSync(file, "utf8");
+  const result = compile(source, { uri: file.href });
   if (!result.success) {
     console.error(render(result.error, source));
     process.exitCode = 1;

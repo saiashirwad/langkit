@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { highlight } from "langkit/analysis";
-import { program, tokens, type Expr } from "../examples/advanced-syntax.ts";
+import { program, tokens, type Expr } from "../examples/advanced/advanced-syntax.ts";
 
 const parsed = (source: string) => {
   const result = program.parse(source);

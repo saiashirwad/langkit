@@ -15,14 +15,16 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
-    "toy": "node examples/toy.ts",
-    "toy:lsp": "node examples/toy-lsp.ts --stdio",
-    "hm": "node examples/hm.ts",
-    "hm:lsp": "node examples/hm-lsp.ts --stdio",
-    "rows": "node examples/rows.ts",
-    "rows:lsp": "node examples/rows-lsp.ts --stdio",
-    "advanced": "node examples/advanced.ts",
-    "advanced:lsp": "node examples/advanced-lsp.ts --stdio"
+    "toy": "node examples/toy/toy.ts",
+    "toy:lsp": "node examples/toy/toy-lsp.ts --stdio",
+    "hm": "node examples/hm/hm.ts",
+    "hm:lsp": "node examples/hm/hm-lsp.ts --stdio",
+    "rows": "node examples/rows/rows.ts",
+    "rows:lsp": "node examples/rows/rows-lsp.ts --stdio",
+    "advanced": "node examples/advanced/advanced.ts",
+    "advanced:lsp": "node examples/advanced/advanced-lsp.ts --stdio",
+    "strict": "node examples/strict/strict.ts",
+    "strict:lsp": "node examples/strict/strict-lsp.ts --stdio"
   },
   "dependencies": {
     "parserator": "0.3.0",

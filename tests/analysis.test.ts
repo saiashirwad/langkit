@@ -3,9 +3,9 @@ import { test } from "node:test"
 import { readFileSync } from "node:fs"
 import { check, fail, pure, run } from "langkit"
 import { create, definitionAt, highlight, semanticTokens, typeAt } from "langkit/analysis"
-import { analyze, compile, show } from "../examples/toy.ts"
+import { analyze, compile, show } from "../examples/toy/toy.ts"
 
-const main = readFileSync(new URL("../examples/main.toy", import.meta.url), "utf8")
+const main = readFileSync(new URL("../examples/toy/main.toy", import.meta.url), "utf8")
 
 test("the example has hover types and definitions without emitting code", () => {
   const analysis = analyze(main)

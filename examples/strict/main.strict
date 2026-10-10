@@ -1,0 +1,122 @@
+import "./stdlib.strict";
+
+data ReadingTree a = Reading a | Group (ReadingTree a) (ReadingTree a);
+
+getValue reading = reading.value;
+addStatus reading = { checked = true | reading };
+readings = Cons { value = 19, sensor = "north" }
+  (Cons { value = 21, sensor = "south" } Nil);
+checkedReading = addStatus { value = 42, sensor = "reference" };
+
+calibrate readings = map (\value -> value + 1) readings;
+calibratedOption = calibrate (Some 41);
+calibratedValues = calibrate (mapList getValue readings);
+total = foldList (\sum value -> sum + value) 0 calibratedValues;
+
+rec sumReadings tree = case tree of {
+  Reading value -> value;
+  Group left right -> sumReadings left + sumReadings right;
+};
+rec countReadings tree = case tree of {
+  Reading _ -> 1;
+  Group left right -> countReadings left + countReadings right;
+};
+workshop = Group (Reading 20) (Group (Reading 10) (Reading 12));
+
+useIdentity = \(identity : forall a. a -> a) -> {
+  answer = identity 42,
+  ready = identity true
+};
+identityReport = useIdentity id;
+
+answer : Option number;
+answer = do {
+  x <- Some 20;
+  y <- Some 22;
+  pure (x + y);
+};
+
+positive value = if value > 0 then Some value else None;
+combineReadings left right = do {
+  x <- positive left;
+  y <- positive right;
+  let combined = x + y;
+  pure combined;
+};
+acceptedReadings = combineReadings 20 22;
+rejectedReadings = combineReadings 20 (-1);
+
+unavailable : Option number;
+unavailable = do {
+  first <- None;
+  second <- Some 22;
+  pure (first + second);
+};
+
+liftM : forall m a b. Monad m => (a -> b) -> m a -> m b;
+liftM transform action = do {
+  value <- action;
+  pure (transform value);
+};
+
+pairM : forall m a b. Monad m => m a -> m b -> m { first: a, second: b };
+pairM firstAction secondAction = do {
+  first <- firstAction;
+  second <- secondAction;
+  pure { first = first, second = second };
+};
+
+manualAnswer : Option number;
+manualAnswer = bind (Some 41) (\value -> pure (value + 1));
+liftedAnswer : Option number;
+liftedAnswer = liftM (\value -> value + 1) (Some 41);
+pairedReadings : Option { first: number, second: number };
+pairedReadings = pairM (Some 20) (Some 22);
+
+validateReading value =
+  if value > 0 then Ok value else Err "A reading must be positive";
+acceptedResult = mapResult (\value -> value + 1) (validateReading 41);
+rejectedResult = andThen validateReading (Ok (-1));
+
+effectAnswer : Effect number;
+effectAnswer = liftM (\value -> value + 1) (pure 41);
+effectPair : Effect { first: number, second: number };
+effectPair = pairM (pure 20) (pure 22);
+
+main : Effect {};
+main = do {
+  print "Workshop: records and Functor";
+  print checkedReading;
+  print calibratedOption;
+  print calibratedValues;
+  print total;
+
+  print "Recursive readings and higher-rank identity";
+  print (sumReadings workshop);
+  print (countReadings workshop);
+  print identityReport;
+
+  print "Option do: success, rejection, and missing input";
+  print answer;
+  print acceptedReadings;
+  print rejectedReadings;
+  print unavailable;
+
+  print "Generic Monad helpers and explicit bind";
+  print manualAnswer;
+  print liftedAnswer;
+  print pairedReadings;
+
+  print "Result validation";
+  print acceptedResult;
+  print rejectedResult;
+
+  print "Effect do: execute actions, bind results, then print";
+  value <- effectAnswer;
+  pair <- effectPair;
+  let combined = pair.first + pair.second;
+  print value;
+  print combined;
+  print "Report complete";
+  pure {};
+};
