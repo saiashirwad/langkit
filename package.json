@@ -24,7 +24,9 @@
     "advanced": "node examples/advanced/advanced.ts",
     "advanced:lsp": "node examples/advanced/advanced-lsp.ts --stdio",
     "strict": "node examples/strict/strict.ts",
-    "strict:lsp": "node examples/strict/strict-lsp.ts --stdio"
+    "strict:lsp": "node examples/strict/strict-lsp.ts --stdio",
+    "schema": "node examples/schema/schema.ts",
+    "schema:lsp": "node examples/schema/schema-lsp.ts --stdio"
   },
   "dependencies": {
     "parserator": "0.3.0",

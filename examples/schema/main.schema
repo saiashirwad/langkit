@@ -1,0 +1,2926 @@
+// 190 models: 19 core, 43 editorial, 43 community, 43 commerce, 42 operations.
+// Sections below are one schema, sharing User, Team, Publication, and Post.
+// A collaborative publishing platform.
+// This file only describes a schema; `pnpm schema` prints its SQLite DDL.
+// Defaults run on insertion. updatedAt does not update itself.
+
+// HELPERS
+
+let timestamps = fn(model) =>
+  model |> extend {
+    createdAt : DateTime |> default now,
+    updatedAt : DateTime |> default now
+  }
+
+// Helpers compose with other helpers, as well as built-in operations.
+let tracked = fn(model) =>
+  model
+    |> timestamps
+    |> index [.createdAt]
+
+// References may point to models declared later in the file.
+let authored = fn(model) =>
+  model
+    |> extend {
+      authorId : Int |> references User.id
+    }
+    |> index [.authorId]
+
+// A nullable timestamp records deletion without removing the row.
+// Filtering deleted rows remains the application's responsibility.
+let softDelete = fn(model) =>
+  model |> extend {
+    deletedAt : DateTime?
+  }
+
+// ENUMS
+
+type Role = User | Admin
+
+type MemberRole = Owner | Editor | Viewer
+
+type Visibility = Public | Unlisted | Private
+
+type PostStatus = Draft | InReview | Published | Archived
+
+type ReactionKind = Like | Celebrate | Insightful
+
+type NotificationKind = Mention | Reply | Invitation | Publication
+
+type SubscriptionStatus = Active | Paused | Cancelled
+
+// PEOPLE AND TEAMS
+
+model User = {
+  id : Int |> primaryKey |> autoIncrement,
+  email : String |> unique,
+  username : String |> unique,
+  name : String?,
+  role : Role |> default Role.User,
+  emailVerified : Bool |> default false,
+  suspended : Bool |> default false
+}
+  |> tracked
+  |> softDelete
+  |> index [.role, .createdAt]
+
+// A unique foreign key makes this a one-profile-per-user relationship.
+model Profile = {
+  id : Int |> primaryKey |> autoIncrement,
+  userId : Int |> unique |> references User.id,
+  bio : String |> default "",
+  website : String?,
+  avatarUrl : String?,
+  location : String?,
+  discoverable : Bool |> default true
+}
+  |> timestamps
+
+model Team = {
+  id : Int |> primaryKey |> autoIncrement,
+  slug : String |> unique,
+  name : String,
+  description : String |> default "",
+  ownerId : Int |> references User.id
+}
+  |> tracked
+  |> index [.ownerId]
+
+// Explicit join models represent many-to-many relationships.
+model TeamMember = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  userId : Int |> references User.id,
+  role : MemberRole |> default MemberRole.Viewer
+}
+  |> timestamps
+  |> unique [.teamId, .userId]
+  |> index [.userId, .role]
+
+model TeamInvitation = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  invitedById : Int |> references User.id,
+  email : String,
+  role : MemberRole |> default MemberRole.Viewer,
+  acceptedById : Int? |> references User.id,
+  acceptedAt : DateTime?,
+  expiresAt : DateTime
+}
+  |> tracked
+  |> index [.teamId, .email]
+  |> index [.invitedById]
+  |> index [.acceptedById]
+
+// PUBLICATIONS
+
+model Publication = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  slug : String |> unique,
+  title : String,
+  description : String |> default "",
+  visibility : Visibility |> default Visibility.Public,
+  acceptingSubmissions : Bool |> default true
+}
+  |> tracked
+  |> index [.teamId]
+
+model Category = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  name : String,
+  slug : String,
+  description : String?,
+  sortOrder : Int |> default 0
+}
+  |> timestamps
+  |> unique [.publicationId, .slug]
+  |> index [.publicationId, .sortOrder]
+
+model Post = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  slug : String,
+  title : String,
+  summary : String |> default "",
+  body : String |> default "",
+  status : PostStatus |> default PostStatus.Draft,
+  visibility : Visibility |> default Visibility.Public,
+  featured : Bool |> default false,
+  commentsEnabled : Bool |> default true,
+  publishedAt : DateTime?,
+  scheduledAt : DateTime?
+}
+  |> authored
+  |> tracked
+  |> softDelete
+  |> unique [.publicationId, .slug]
+  |> index [.publicationId, .status, .publishedAt]
+  |> index [.authorId, .createdAt]
+
+// Join models make category assignment explicit. Requiring the category and
+// post to belong to the same publication is an application-level rule here.
+model PostCategory = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  categoryId : Int |> references Category.id
+}
+  |> timestamps
+  |> unique [.postId, .categoryId]
+  |> index [.categoryId]
+
+// Each post has its own revision-number sequence, enforced with a composite
+// unique constraint. Choosing the next revision number is application logic.
+model PostRevision = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  number : Int,
+  title : String,
+  body : String,
+  changeNote : String |> default ""
+}
+  |> authored
+  |> tracked
+  |> unique [.postId, .number]
+
+model Tag = {
+  id : Int |> primaryKey |> autoIncrement,
+  name : String,
+  slug : String |> unique,
+  description : String?
+}
+  |> timestamps
+
+model PostTag = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  tagId : Int |> references Tag.id
+}
+  |> timestamps
+  |> unique [.postId, .tagId]
+  |> index [.tagId]
+
+// DISCUSSION
+
+// Self-referencing optional foreign keys allow top-level comments and replies.
+// The application must keep replies in the same post and prevent parent cycles.
+model Comment = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  parentId : Int? |> references Comment.id,
+  body : String,
+  edited : Bool |> default false,
+  hidden : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> softDelete
+  |> index [.postId, .createdAt]
+  |> index [.parentId]
+
+model Reaction = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  userId : Int |> references User.id,
+  kind : ReactionKind |> default ReactionKind.Like
+}
+  |> tracked
+  |> unique [.postId, .userId, .kind]
+  |> index [.userId, .createdAt]
+
+model Bookmark = {
+  id : Int |> primaryKey |> autoIncrement,
+  userId : Int |> references User.id,
+  postId : Int |> references Post.id,
+  note : String |> default ""
+}
+  |> tracked
+  |> unique [.userId, .postId]
+  |> index [.postId]
+
+// MEDIA
+
+// Files live outside SQLite; this table stores their metadata.
+model Attachment = {
+  id : Int |> primaryKey |> autoIncrement,
+  uploadedById : Int |> references User.id,
+  postId : Int? |> references Post.id,
+  storageKey : String |> unique,
+  filename : String,
+  contentType : String,
+  sizeBytes : Int,
+  caption : String?,
+  width : Int?,
+  height : Int?,
+  focalX : Float |> default 0.5,
+  focalY : Float |> default 0.5
+}
+  |> tracked
+  |> index [.uploadedById]
+  |> index [.postId]
+
+// READING AND NOTIFICATIONS
+
+model Subscription = {
+  id : Int |> primaryKey |> autoIncrement,
+  userId : Int |> references User.id,
+  publicationId : Int |> references Publication.id,
+  status : SubscriptionStatus |> default SubscriptionStatus.Active,
+  emailEnabled : Bool |> default true,
+  cancelledAt : DateTime?
+}
+  |> tracked
+  |> unique [.userId, .publicationId]
+  |> index [.publicationId, .status]
+
+model ReadingProgress = {
+  id : Int |> primaryKey |> autoIncrement,
+  userId : Int |> references User.id,
+  postId : Int |> references Post.id,
+  progress : Float |> default 0,
+  completed : Bool |> default false,
+  completedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.userId, .postId]
+  |> index [.postId]
+
+// Optional context lets notifications point at a post, a comment, or neither.
+// Matching the context to the notification kind is application validation.
+model Notification = {
+  id : Int |> primaryKey |> autoIncrement,
+  recipientId : Int |> references User.id,
+  actorId : Int? |> references User.id,
+  postId : Int? |> references Post.id,
+  commentId : Int? |> references Comment.id,
+  kind : NotificationKind,
+  message : String,
+  readAt : DateTime?
+}
+  |> tracked
+  |> index [.recipientId, .readAt, .createdAt]
+  |> index [.actorId]
+  |> index [.postId]
+  |> index [.commentId]
+
+// EDITORIAL PRODUCTION
+// This extension describes workflows; permissions, valid state transitions,
+// deadlines, and agreement of publication IDs across related rows are app rules.
+
+type EditorialPitchState = Proposed | Discussing | Accepted | Declined | Withdrawn
+
+type EditorialAssignmentState = Open | InProgress | Delivered | Approved | Cancelled
+
+type EditorialReviewState = Pending | Reviewing | ChangesRequested | Approved | Closed
+
+type EditorialDecisionKind = Approve | RequestChanges | Reject
+
+type EditorialTranslationState = Requested | Translating | Reviewing | Ready | Published
+
+type EditorialIssueState = Planning | Assembling | Scheduled | Published | Cancelled
+
+type EditorialDeliveryState = Queued | Sending | Delivered | Failed | Suppressed
+
+type EditorialChannelKind = Web | Email | Feed | Partner
+
+// DESKS, PITCHES, AND ASSIGNMENTS
+
+model EditorialDesk = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  leadId : Int |> references User.id,
+  slug : String,
+  name : String,
+  description : String |> default "",
+  acceptingPitches : Bool |> default true
+}
+  |> tracked
+  |> unique [.publicationId, .slug]
+  |> index [.leadId]
+
+model EditorialDeskMember = {
+  id : Int |> primaryKey |> autoIncrement,
+  deskId : Int |> references EditorialDesk.id,
+  userId : Int |> references User.id,
+  roleLabel : String |> default "Editor",
+  receivesPitchAlerts : Bool |> default true,
+  weeklyCapacity : Int |> default 5
+}
+  |> timestamps
+  |> unique [.deskId, .userId]
+  |> index [.userId]
+
+model EditorialPitch = {
+  id : Int |> primaryKey |> autoIncrement,
+  deskId : Int |> references EditorialDesk.id,
+  title : String,
+  synopsis : String,
+  state : EditorialPitchState |> default EditorialPitchState.Proposed,
+  proposedDeadline : DateTime?,
+  estimatedWords : Int?,
+  acceptedPostId : Int? |> references Post.id
+}
+  |> authored
+  |> tracked
+  |> index [.deskId, .state]
+  |> index [.acceptedPostId]
+
+model EditorialPitchComment = {
+  id : Int |> primaryKey |> autoIncrement,
+  pitchId : Int |> references EditorialPitch.id,
+  body : String,
+  internalOnly : Bool |> default true,
+  resolved : Bool |> default false,
+  resolvedById : Int? |> references User.id
+}
+  |> authored
+  |> tracked
+  |> index [.pitchId, .createdAt]
+  |> index [.resolvedById]
+
+model EditorialAssignment = {
+  id : Int |> primaryKey |> autoIncrement,
+  deskId : Int |> references EditorialDesk.id,
+  pitchId : Int? |> references EditorialPitch.id,
+  postId : Int? |> references Post.id,
+  editorId : Int |> references User.id,
+  title : String,
+  state : EditorialAssignmentState |> default EditorialAssignmentState.Open,
+  dueAt : DateTime?
+}
+  |> tracked
+  |> index [.deskId, .state]
+  |> index [.pitchId]
+  |> index [.postId]
+  |> index [.editorId, .dueAt]
+
+// The leadContributor flag permits multiple leads; choosing exactly one lead
+// and enforcing contributor capacity requires application-level coordination.
+model EditorialAssignmentContributor = {
+  id : Int |> primaryKey |> autoIncrement,
+  assignmentId : Int |> references EditorialAssignment.id,
+  userId : Int |> references User.id,
+  creditLabel : String |> default "Writer",
+  leadContributor : Bool |> default false,
+  acceptedAt : DateTime?,
+  deliveredAt : DateTime?
+}
+  |> timestamps
+  |> unique [.assignmentId, .userId]
+  |> index [.userId, .deliveredAt]
+
+model EditorialBrief = {
+  id : Int |> primaryKey |> autoIncrement,
+  assignmentId : Int |> unique |> references EditorialAssignment.id,
+  audience : String,
+  angle : String,
+  targetWords : Int |> default 1000,
+  requiredSections : String |> default "",
+  legalNotes : String |> default ""
+}
+  |> authored
+  |> tracked
+
+model EditorialBriefSource = {
+  id : Int |> primaryKey |> autoIncrement,
+  briefId : Int |> references EditorialBrief.id,
+  attachmentId : Int? |> references Attachment.id,
+  title : String,
+  url : String?,
+  citation : String |> default "",
+  verifiedAt : DateTime?,
+  sortOrder : Int |> default 0
+}
+  |> timestamps
+  |> index [.briefId, .sortOrder]
+  |> index [.attachmentId]
+
+// REVIEW ROUNDS
+// The application keeps comments and decisions attached to the round's post.
+// Nullable revision anchors do not enforce a particular version of a post.
+
+model EditorialReviewRound = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  revisionId : Int |> references PostRevision.id,
+  coordinatorId : Int |> references User.id,
+  roundNumber : Int,
+  state : EditorialReviewState |> default EditorialReviewState.Pending,
+  dueAt : DateTime?,
+  closedAt : DateTime?
+}
+  |> tracked
+  |> unique [.postId, .roundNumber]
+  |> index [.revisionId]
+  |> index [.coordinatorId, .state]
+
+model EditorialReviewReviewer = {
+  id : Int |> primaryKey |> autoIncrement,
+  roundId : Int |> references EditorialReviewRound.id,
+  reviewerId : Int |> references User.id,
+  focusArea : String |> default "General",
+  requiredApproval : Bool |> default true,
+  invitedAt : DateTime |> default now,
+  completedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.roundId, .reviewerId]
+  |> index [.reviewerId, .completedAt]
+
+model EditorialReviewComment = {
+  id : Int |> primaryKey |> autoIncrement,
+  roundId : Int |> references EditorialReviewRound.id,
+  parentId : Int? |> references EditorialReviewComment.id,
+  body : String,
+  quotedText : String?,
+  blockAnchor : String?,
+  resolved : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> index [.roundId, .resolved]
+  |> index [.parentId]
+
+// One current decision is stored per reviewer assignment. A changed decision
+// updates this row; a new review round creates a separate reviewer assignment.
+model EditorialReviewDecision = {
+  id : Int |> primaryKey |> autoIncrement,
+  reviewerAssignmentId : Int |> unique |> references EditorialReviewReviewer.id,
+  decision : EditorialDecisionKind,
+  rationale : String |> default "",
+  decidedAt : DateTime |> default now,
+  supersededAt : DateTime?
+}
+  |> timestamps
+  |> index [.decision, .decidedAt]
+
+// REUSABLE CHECKLISTS
+// Templates may evolve; instantiated items retain their own instruction text.
+
+model EditorialChecklistTemplate = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  name : String,
+  version : Int |> default 1,
+  description : String |> default "",
+  active : Bool |> default true
+}
+  |> authored
+  |> tracked
+  |> unique [.publicationId, .name, .version]
+
+model EditorialChecklistTemplateItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  templateId : Int |> references EditorialChecklistTemplate.id,
+  itemKey : String,
+  instruction : String,
+  required : Bool |> default true,
+  sortOrder : Int |> default 0,
+  helpUrl : String?
+}
+  |> timestamps
+  |> unique [.templateId, .itemKey]
+  |> index [.templateId, .sortOrder]
+
+model EditorialChecklist = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  templateId : Int |> references EditorialChecklistTemplate.id,
+  ownerId : Int |> references User.id,
+  title : String,
+  completedAt : DateTime?,
+  waivedReason : String?
+}
+  |> tracked
+  |> unique [.postId, .templateId]
+  |> index [.ownerId, .completedAt]
+  |> index [.templateId]
+
+// checked, checkedAt, and checkedById are separate fields. The application
+// updates them together and verifies that the item belongs to this template.
+model EditorialChecklistItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  checklistId : Int |> references EditorialChecklist.id,
+  templateItemId : Int |> references EditorialChecklistTemplateItem.id,
+  instruction : String,
+  checked : Bool |> default false,
+  checkedById : Int? |> references User.id,
+  checkedAt : DateTime?,
+  evidence : String |> default ""
+}
+  |> timestamps
+  |> unique [.checklistId, .templateItemId]
+  |> index [.templateItemId]
+  |> index [.checkedById]
+
+// STYLE GUIDES
+
+model EditorialStyleGuide = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  slug : String,
+  title : String,
+  introduction : String |> default "",
+  version : Int |> default 1,
+  active : Bool |> default true
+}
+  |> authored
+  |> tracked
+  |> unique [.publicationId, .slug, .version]
+
+model EditorialStyleRule = {
+  id : Int |> primaryKey |> autoIncrement,
+  guideId : Int |> references EditorialStyleGuide.id,
+  ruleKey : String,
+  title : String,
+  explanation : String,
+  preferredExample : String?,
+  avoidedExample : String?,
+  sortOrder : Int |> default 0
+}
+  |> timestamps
+  |> unique [.guideId, .ruleKey]
+  |> index [.guideId, .sortOrder]
+
+model EditorialStyleException = {
+  id : Int |> primaryKey |> autoIncrement,
+  ruleId : Int |> references EditorialStyleRule.id,
+  postId : Int |> references Post.id,
+  approvedById : Int |> references User.id,
+  rationale : String,
+  expiresAt : DateTime?
+}
+  |> tracked
+  |> unique [.ruleId, .postId]
+  |> index [.postId]
+  |> index [.approvedById]
+
+// LOCALIZATION
+// Locale codes and translated text are data; the compiler does not implement
+// language-tag validation, translation quality checks, or locale fallbacks.
+
+model EditorialLocale = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  code : String,
+  displayName : String,
+  rightToLeft : Bool |> default false,
+  enabled : Bool |> default true,
+  fallbackId : Int? |> references EditorialLocale.id
+}
+  |> timestamps
+  |> unique [.publicationId, .code]
+  |> index [.fallbackId]
+
+model EditorialTranslation = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id,
+  localeId : Int |> references EditorialLocale.id,
+  translatorId : Int? |> references User.id,
+  sourceRevisionId : Int |> references PostRevision.id,
+  state : EditorialTranslationState |> default EditorialTranslationState.Requested,
+  title : String,
+  body : String |> default ""
+}
+  |> tracked
+  |> unique [.postId, .localeId]
+  |> index [.localeId, .state]
+  |> index [.translatorId]
+  |> index [.sourceRevisionId]
+
+model EditorialTranslationRevision = {
+  id : Int |> primaryKey |> autoIncrement,
+  translationId : Int |> references EditorialTranslation.id,
+  number : Int,
+  title : String,
+  body : String,
+  changeNote : String |> default "",
+  reviewedAt : DateTime?
+}
+  |> authored
+  |> tracked
+  |> unique [.translationId, .number]
+
+model EditorialGlossary = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  name : String,
+  sourceLocaleId : Int |> references EditorialLocale.id,
+  targetLocaleId : Int |> references EditorialLocale.id,
+  description : String |> default "",
+  active : Bool |> default true
+}
+  |> timestamps
+  |> unique [.publicationId, .name]
+  |> index [.sourceLocaleId]
+  |> index [.targetLocaleId]
+
+// Term uniqueness uses SQLite's default text comparison, even when the
+// caseSensitive flag tells a translation tool to perform case-folded matching.
+model EditorialGlossaryTerm = {
+  id : Int |> primaryKey |> autoIncrement,
+  glossaryId : Int |> references EditorialGlossary.id,
+  sourceTerm : String,
+  translatedTerm : String,
+  context : String |> default "",
+  caseSensitive : Bool |> default false,
+  approvedById : Int? |> references User.id
+}
+  |> timestamps
+  |> unique [.glossaryId, .sourceTerm]
+  |> index [.approvedById]
+
+// COLLECTIONS AND SERIAL PUBLICATION
+
+model EditorialCollection = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  curatorId : Int |> references User.id,
+  slug : String,
+  title : String,
+  introduction : String |> default "",
+  public : Bool |> default false
+}
+  |> tracked
+  |> unique [.publicationId, .slug]
+  |> index [.curatorId]
+
+model EditorialCollectionPost = {
+  id : Int |> primaryKey |> autoIncrement,
+  collectionId : Int |> references EditorialCollection.id,
+  postId : Int |> references Post.id,
+  sortOrder : Int |> default 0,
+  editorNote : String |> default "",
+  addedById : Int |> references User.id
+}
+  |> timestamps
+  |> unique [.collectionId, .postId]
+  |> index [.collectionId, .sortOrder]
+  |> index [.postId]
+  |> index [.addedById]
+
+model EditorialSeries = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  slug : String,
+  title : String,
+  synopsis : String |> default "",
+  plannedParts : Int?,
+  complete : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> unique [.publicationId, .slug]
+
+// Each post appears once per series and each part number is unique within it.
+// The application supplies positive part numbers and may intentionally leave gaps.
+model EditorialSeriesPart = {
+  id : Int |> primaryKey |> autoIncrement,
+  seriesId : Int |> references EditorialSeries.id,
+  postId : Int |> references Post.id,
+  partNumber : Int,
+  displayTitle : String?,
+  optionalReading : Bool |> default false
+}
+  |> timestamps
+  |> unique [.seriesId, .postId]
+  |> unique [.seriesId, .partNumber]
+  |> index [.postId]
+
+// NEWSLETTERS
+// Consent and email validation belong to the sending application. Delivery
+// records are audit data, not a promise of exactly-once message delivery.
+
+model EditorialNewsletter = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  slug : String,
+  title : String,
+  senderName : String,
+  replyToEmail : String,
+  description : String |> default "",
+  active : Bool |> default true
+}
+  |> tracked
+  |> unique [.publicationId, .slug]
+
+// Email uniqueness is scoped to one newsletter. Normalize email addresses
+// before insertion if subscriptions should use case-insensitive matching.
+model EditorialNewsletterSubscriber = {
+  id : Int |> primaryKey |> autoIncrement,
+  newsletterId : Int |> references EditorialNewsletter.id,
+  userId : Int? |> references User.id,
+  email : String,
+  confirmedAt : DateTime?,
+  unsubscribedAt : DateTime?,
+  consentSource : String
+}
+  |> tracked
+  |> unique [.newsletterId, .email]
+  |> index [.userId]
+  |> index [.newsletterId, .unsubscribedAt]
+
+model EditorialNewsletterIssue = {
+  id : Int |> primaryKey |> autoIncrement,
+  newsletterId : Int |> references EditorialNewsletter.id,
+  issueNumber : Int,
+  subject : String,
+  previewText : String |> default "",
+  introduction : String |> default "",
+  state : EditorialIssueState |> default EditorialIssueState.Planning,
+  scheduledAt : DateTime?
+}
+  |> authored
+  |> tracked
+  |> unique [.newsletterId, .issueNumber]
+  |> index [.state, .scheduledAt]
+
+model EditorialNewsletterIssuePost = {
+  id : Int |> primaryKey |> autoIncrement,
+  issueId : Int |> references EditorialNewsletterIssue.id,
+  postId : Int |> references Post.id,
+  sortOrder : Int |> default 0,
+  headlineOverride : String?,
+  excerptOverride : String?
+}
+  |> timestamps
+  |> unique [.issueId, .postId]
+  |> index [.issueId, .sortOrder]
+  |> index [.postId]
+
+model EditorialNewsletterDelivery = {
+  id : Int |> primaryKey |> autoIncrement,
+  issueId : Int |> references EditorialNewsletterIssue.id,
+  subscriberId : Int |> references EditorialNewsletterSubscriber.id,
+  state : EditorialDeliveryState |> default EditorialDeliveryState.Queued,
+  providerMessageId : String?,
+  attemptedAt : DateTime?,
+  deliveredAt : DateTime?,
+  failureReason : String?
+}
+  |> tracked
+  |> unique [.issueId, .subscriberId]
+  |> index [.subscriberId]
+  |> index [.state, .attemptedAt]
+
+// CALENDARS AND MAGAZINE ISSUES
+// Scheduling conflicts and date ordering require application validation.
+
+model EditorialCalendar = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  name : String,
+  timezone : String |> default "UTC",
+  description : String |> default "",
+  ownerId : Int |> references User.id,
+  archived : Bool |> default false
+}
+  |> timestamps
+  |> unique [.publicationId, .name]
+  |> index [.ownerId]
+
+model EditorialCalendarSlot = {
+  id : Int |> primaryKey |> autoIncrement,
+  calendarId : Int |> references EditorialCalendar.id,
+  assignmentId : Int? |> references EditorialAssignment.id,
+  postId : Int? |> references Post.id,
+  title : String,
+  startsAt : DateTime,
+  endsAt : DateTime?,
+  locked : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> index [.calendarId, .startsAt]
+  |> index [.assignmentId]
+  |> index [.postId]
+
+model EditorialIssue = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  issueCode : String,
+  title : String,
+  introduction : String |> default "",
+  coverAttachmentId : Int? |> references Attachment.id,
+  state : EditorialIssueState |> default EditorialIssueState.Planning,
+  releaseAt : DateTime?
+}
+  |> authored
+  |> tracked
+  |> unique [.publicationId, .issueCode]
+  |> index [.coverAttachmentId]
+  |> index [.state, .releaseAt]
+
+model EditorialIssueSection = {
+  id : Int |> primaryKey |> autoIncrement,
+  issueId : Int |> references EditorialIssue.id,
+  slug : String,
+  title : String,
+  introduction : String |> default "",
+  sortOrder : Int |> default 0
+}
+  |> timestamps
+  |> unique [.issueId, .slug]
+  |> index [.issueId, .sortOrder]
+
+model EditorialIssueEntry = {
+  id : Int |> primaryKey |> autoIncrement,
+  sectionId : Int |> references EditorialIssueSection.id,
+  postId : Int |> references Post.id,
+  headlineOverride : String?,
+  sortOrder : Int |> default 0,
+  startingPage : Int?,
+  pageCount : Int?
+}
+  |> timestamps
+  |> unique [.sectionId, .postId]
+  |> index [.sectionId, .sortOrder]
+  |> index [.postId]
+
+// DISTRIBUTION AND SEARCH PRESENTATION
+// Channel credentials are external secret references, never credential values.
+// URL safety, redirect loops, and allowed HTTP statuses are application checks.
+
+model EditorialDistributionChannel = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  slug : String,
+  name : String,
+  kind : EditorialChannelKind |> default EditorialChannelKind.Web,
+  destinationUrl : String,
+  credentialReference : String?,
+  active : Bool |> default true
+}
+  |> tracked
+  |> unique [.publicationId, .slug]
+
+// A unique idempotency key deduplicates job records, not external side effects.
+// Workers must still coordinate retries with the destination service.
+model EditorialDistributionJob = {
+  id : Int |> primaryKey |> autoIncrement,
+  channelId : Int |> references EditorialDistributionChannel.id,
+  postId : Int |> references Post.id,
+  revisionId : Int |> references PostRevision.id,
+  state : EditorialDeliveryState |> default EditorialDeliveryState.Queued,
+  scheduledAt : DateTime?,
+  completedAt : DateTime?,
+  idempotencyKey : String |> unique
+}
+  |> tracked
+  |> index [.channelId, .state]
+  |> index [.postId]
+  |> index [.revisionId]
+  |> index [.state, .scheduledAt]
+
+model EditorialDistributionAttempt = {
+  id : Int |> primaryKey |> autoIncrement,
+  jobId : Int |> references EditorialDistributionJob.id,
+  attemptNumber : Int,
+  startedAt : DateTime |> default now,
+  finishedAt : DateTime?,
+  responseStatus : Int?,
+  remoteUrl : String?,
+  errorMessage : String?
+}
+  |> timestamps
+  |> unique [.jobId, .attemptNumber]
+  |> index [.startedAt]
+
+model EditorialSeoProfile = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> unique |> references Post.id,
+  title : String,
+  description : String,
+  canonicalUrl : String?,
+  socialImageId : Int? |> references Attachment.id,
+  noIndex : Bool |> default false,
+  noFollow : Bool |> default false
+}
+  |> timestamps
+  |> index [.socialImageId]
+
+model EditorialRedirect = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  sourcePath : String,
+  destinationUrl : String,
+  statusCode : Int |> default 301,
+  active : Bool |> default true,
+  expiresAt : DateTime?,
+  reason : String |> default ""
+}
+  |> authored
+  |> tracked
+  |> unique [.publicationId, .sourcePath]
+  |> index [.active, .expiresAt]
+
+// COMMUNITY: SPACES, PARTICIPATION, AND TRUST
+// Space/publication consistency, permissions, quotas, and lifecycle transitions
+// are application rules. Foreign keys enforce existence, not authorization.
+
+type CommunitySpaceAccess = Open | Approval | Invitation
+
+type CommunityMemberRole = Member | Contributor | Moderator
+
+type CommunityMemberState = Pending | Active | Left
+
+type CommunityDiscussionState = Open | Locked | Archived
+
+type CommunityReportReason = Spam | Harassment | Misinformation | Other
+
+type CommunityCaseState = New | Investigating | Resolved | Dismissed
+
+type CommunityActionKind = Warning | HideContent | SuspendMember | RestoreContent
+
+type CommunityAppealOutcome = Upheld | Reversed | Modified
+
+type CommunityEventFormat = Online | InPerson | Hybrid
+
+type CommunityRegistrationState = Reserved | Confirmed | Cancelled
+
+type CommunityQuestionKind = Text | SingleChoice | MultipleChoice | Rating
+
+type CommunityDeliveryState = Pending | Sent | Failed | Skipped
+
+type CommunityDigestFrequency = Daily | Weekly | Monthly | Disabled
+
+// SPACES
+
+model CommunitySpace = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  slug : String,
+  title : String,
+  description : String |> default "",
+  access : CommunitySpaceAccess |> default CommunitySpaceAccess.Open,
+  archived : Bool |> default false
+}
+  |> tracked
+  |> unique [.publicationId, .slug]
+  |> index [.publicationId, .archived]
+
+model CommunitySpaceMember = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  userId : Int |> references User.id,
+  role : CommunityMemberRole |> default CommunityMemberRole.Member,
+  state : CommunityMemberState |> default CommunityMemberState.Pending,
+  approvedAt : DateTime?,
+  lastVisitedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.spaceId, .userId]
+  |> index [.userId, .state]
+
+model CommunitySpaceInvitation = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  inviterId : Int |> references User.id,
+  email : String,
+  tokenHash : String |> unique,
+  expiresAt : DateTime,
+  acceptedAt : DateTime?,
+  acceptedById : Int? |> references User.id
+}
+  |> tracked
+  |> index [.spaceId, .email]
+  |> index [.acceptedById]
+  |> index [.inviterId]
+  |> index [.expiresAt]
+
+model CommunitySpaceRule = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  code : String,
+  title : String,
+  explanation : String,
+  sortOrder : Int |> default 0,
+  active : Bool |> default true
+}
+  |> timestamps
+  |> unique [.spaceId, .code]
+  |> index [.spaceId, .sortOrder]
+
+model CommunitySpaceModerator = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  userId : Int |> references User.id,
+  appointedById : Int |> references User.id,
+  canReviewAppeals : Bool |> default false,
+  startsAt : DateTime |> default now,
+  endsAt : DateTime?
+}
+  |> timestamps
+  |> unique [.spaceId, .userId]
+  |> index [.userId]
+
+// A ban's temporal overlap and active membership changes are application rules.
+model CommunitySpaceBan = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  userId : Int |> references User.id,
+  issuedById : Int |> references User.id,
+  reason : String,
+  startsAt : DateTime |> default now,
+  expiresAt : DateTime?,
+  revokedAt : DateTime?
+}
+  |> tracked
+  |> index [.spaceId, .userId]
+  |> index [.userId, .expiresAt]
+  |> index [.issuedById]
+
+// DISCUSSIONS
+
+model CommunityDiscussion = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  relatedPostId : Int? |> references Post.id,
+  title : String,
+  slug : String,
+  state : CommunityDiscussionState |> default CommunityDiscussionState.Open,
+  lastActivityAt : DateTime |> default now
+}
+  |> authored
+  |> tracked
+  |> unique [.spaceId, .slug]
+  |> index [.spaceId, .lastActivityAt]
+  |> index [.relatedPostId]
+
+// The application keeps parent replies in the same discussion and rejects cycles.
+model CommunityDiscussionPost = {
+  id : Int |> primaryKey |> autoIncrement,
+  discussionId : Int |> references CommunityDiscussion.id,
+  parentId : Int? |> references CommunityDiscussionPost.id,
+  body : String,
+  editedAt : DateTime?,
+  hidden : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> softDelete
+  |> index [.discussionId, .createdAt]
+  |> index [.parentId]
+
+model CommunityDiscussionSubscription = {
+  id : Int |> primaryKey |> autoIncrement,
+  discussionId : Int |> references CommunityDiscussion.id,
+  userId : Int |> references User.id,
+  emailEnabled : Bool |> default true,
+  mutedUntil : DateTime?,
+  lastReadAt : DateTime?
+}
+  |> timestamps
+  |> unique [.discussionId, .userId]
+  |> index [.userId, .mutedUntil]
+
+model CommunityDiscussionPin = {
+  id : Int |> primaryKey |> autoIncrement,
+  discussionId : Int |> unique |> references CommunityDiscussion.id,
+  pinnedById : Int |> references User.id,
+  reason : String |> default "",
+  sortOrder : Int |> default 0,
+  expiresAt : DateTime?
+}
+  |> timestamps
+  |> index [.pinnedById]
+  |> index [.expiresAt]
+
+// REPORTS AND MODERATION
+// Exactly one report target (discussionPostId, commentId, or subjectUserId)
+// is required by application validation; this DSL has no XOR check expression.
+
+model CommunityReport = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  reporterId : Int |> references User.id,
+  discussionPostId : Int? |> references CommunityDiscussionPost.id,
+  commentId : Int? |> references Comment.id,
+  subjectUserId : Int? |> references User.id,
+  reason : CommunityReportReason,
+  details : String |> default ""
+}
+  |> tracked
+  |> index [.spaceId, .createdAt]
+  |> index [.reporterId]
+  |> index [.discussionPostId]
+  |> index [.commentId]
+  |> index [.subjectUserId]
+
+model CommunityReportEvidence = {
+  id : Int |> primaryKey |> autoIncrement,
+  reportId : Int |> references CommunityReport.id,
+  attachmentId : Int? |> references Attachment.id,
+  submittedById : Int |> references User.id,
+  description : String,
+  sourceUrl : String?,
+  capturedAt : DateTime?
+}
+  |> tracked
+  |> index [.reportId]
+  |> index [.attachmentId]
+  |> index [.submittedById]
+
+model CommunityModerationCase = {
+  id : Int |> primaryKey |> autoIncrement,
+  reportId : Int |> unique |> references CommunityReport.id,
+  assignedToId : Int? |> references User.id,
+  state : CommunityCaseState |> default CommunityCaseState.New,
+  priority : Int |> default 0,
+  internalSummary : String |> default "",
+  resolvedAt : DateTime?
+}
+  |> tracked
+  |> index [.assignedToId, .state, .priority]
+
+model CommunityModerationAction = {
+  id : Int |> primaryKey |> autoIncrement,
+  caseId : Int |> references CommunityModerationCase.id,
+  performedById : Int |> references User.id,
+  kind : CommunityActionKind,
+  explanation : String,
+  effectiveAt : DateTime |> default now,
+  expiresAt : DateTime?,
+  reversedAt : DateTime?
+}
+  |> tracked
+  |> index [.caseId, .effectiveAt]
+  |> index [.performedById]
+  |> index [.expiresAt]
+
+model CommunityAppeal = {
+  id : Int |> primaryKey |> autoIncrement,
+  actionId : Int |> references CommunityModerationAction.id,
+  appellantId : Int |> references User.id,
+  statement : String,
+  supportingUrl : String?,
+  withdrawnAt : DateTime?
+}
+  |> tracked
+  |> unique [.actionId, .appellantId]
+  |> index [.appellantId]
+
+model CommunityAppealDecision = {
+  id : Int |> primaryKey |> autoIncrement,
+  appealId : Int |> unique |> references CommunityAppeal.id,
+  reviewerId : Int |> references User.id,
+  outcome : CommunityAppealOutcome,
+  explanation : String,
+  decidedAt : DateTime |> default now,
+  notifiedAt : DateTime?
+}
+  |> timestamps
+  |> index [.reviewerId, .decidedAt]
+  |> index [.notifiedAt]
+
+// EVENTS
+// Capacity, start/end ordering, scheduling conflicts, and attendance eligibility
+// are checked by the application, including transaction-safe waitlist promotion.
+
+model CommunityEvent = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  slug : String,
+  title : String,
+  format : CommunityEventFormat |> default CommunityEventFormat.Online,
+  startsAt : DateTime,
+  endsAt : DateTime,
+  capacity : Int?,
+  cancelledAt : DateTime?
+}
+  |> tracked
+  |> unique [.spaceId, .slug]
+  |> index [.spaceId, .startsAt]
+
+model CommunityEventSession = {
+  id : Int |> primaryKey |> autoIncrement,
+  eventId : Int |> references CommunityEvent.id,
+  title : String,
+  description : String |> default "",
+  startsAt : DateTime,
+  endsAt : DateTime,
+  room : String?,
+  meetingUrl : String?
+}
+  |> timestamps
+  |> index [.eventId, .startsAt]
+
+model CommunityEventSpeaker = {
+  id : Int |> primaryKey |> autoIncrement,
+  sessionId : Int |> references CommunityEventSession.id,
+  userId : Int |> references User.id,
+  displayName : String,
+  biography : String |> default "",
+  sortOrder : Int |> default 0,
+  confirmedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.sessionId, .userId]
+  |> index [.userId]
+  |> index [.sessionId, .sortOrder]
+
+model CommunityEventRegistration = {
+  id : Int |> primaryKey |> autoIncrement,
+  eventId : Int |> references CommunityEvent.id,
+  userId : Int |> references User.id,
+  state : CommunityRegistrationState |> default CommunityRegistrationState.Reserved,
+  accessibilityNotes : String?,
+  reminderEnabled : Bool |> default true,
+  confirmedAt : DateTime?
+}
+  |> tracked
+  |> unique [.eventId, .userId]
+  |> index [.userId, .state]
+  |> index [.eventId, .state]
+
+model CommunityEventCheckIn = {
+  id : Int |> primaryKey |> autoIncrement,
+  registrationId : Int |> unique |> references CommunityEventRegistration.id,
+  verifiedById : Int? |> references User.id,
+  checkedInAt : DateTime |> default now,
+  checkedOutAt : DateTime?,
+  verificationNote : String |> default ""
+}
+  |> timestamps
+  |> index [.verifiedById]
+  |> index [.checkedInAt]
+  |> index [.checkedOutAt]
+
+model CommunityEventWaitlist = {
+  id : Int |> primaryKey |> autoIncrement,
+  eventId : Int |> references CommunityEvent.id,
+  userId : Int |> references User.id,
+  joinedAt : DateTime |> default now,
+  offeredAt : DateTime?,
+  offerExpiresAt : DateTime?,
+  removedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.eventId, .userId]
+  |> index [.eventId, .joinedAt]
+  |> index [.userId]
+  |> index [.offerExpiresAt]
+
+// POLLS
+// Ballot selections must belong to their ballot's poll. The application enforces
+// that relationship, closing times, eligibility, and each poll's choice limit.
+
+model CommunityPoll = {
+  id : Int |> primaryKey |> autoIncrement,
+  discussionId : Int |> references CommunityDiscussion.id,
+  question : String,
+  opensAt : DateTime |> default now,
+  closesAt : DateTime?,
+  maxChoices : Int |> default 1,
+  resultsVisible : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> index [.discussionId]
+  |> index [.closesAt]
+
+model CommunityPollOption = {
+  id : Int |> primaryKey |> autoIncrement,
+  pollId : Int |> references CommunityPoll.id,
+  code : String,
+  label : String,
+  description : String |> default "",
+  sortOrder : Int |> default 0
+}
+  |> timestamps
+  |> unique [.pollId, .code]
+  |> index [.pollId, .sortOrder]
+
+model CommunityPollBallot = {
+  id : Int |> primaryKey |> autoIncrement,
+  pollId : Int |> references CommunityPoll.id,
+  userId : Int |> references User.id,
+  submittedAt : DateTime |> default now,
+  withdrawnAt : DateTime?,
+  revision : Int |> default 1
+}
+  |> timestamps
+  |> unique [.pollId, .userId]
+  |> index [.userId]
+  |> index [.pollId, .submittedAt]
+
+model CommunityPollSelection = {
+  id : Int |> primaryKey |> autoIncrement,
+  ballotId : Int |> references CommunityPollBallot.id,
+  optionId : Int |> references CommunityPollOption.id,
+  rank : Int?,
+  selectedAt : DateTime |> default now
+}
+  |> timestamps
+  |> unique [.ballotId, .optionId]
+  |> index [.optionId]
+  |> index [.ballotId, .rank]
+
+// SURVEYS
+// Answers use nullable payloads; the question kind determines which payload is
+// valid. Multi-choice answers use one row per selected option. The application
+// rejects duplicate option answers and verifies survey/question consistency.
+
+model CommunitySurvey = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  slug : String,
+  title : String,
+  introduction : String |> default "",
+  opensAt : DateTime |> default now,
+  closesAt : DateTime?,
+  published : Bool |> default false
+}
+  |> authored
+  |> tracked
+  |> unique [.spaceId, .slug]
+
+model CommunitySurveyQuestion = {
+  id : Int |> primaryKey |> autoIncrement,
+  surveyId : Int |> references CommunitySurvey.id,
+  code : String,
+  prompt : String,
+  kind : CommunityQuestionKind |> default CommunityQuestionKind.Text,
+  required : Bool |> default false,
+  sortOrder : Int |> default 0,
+  helpText : String?
+}
+  |> timestamps
+  |> unique [.surveyId, .code]
+  |> index [.surveyId, .sortOrder]
+
+model CommunitySurveyOption = {
+  id : Int |> primaryKey |> autoIncrement,
+  questionId : Int |> references CommunitySurveyQuestion.id,
+  code : String,
+  label : String,
+  sortOrder : Int |> default 0,
+  enabled : Bool |> default true
+}
+  |> timestamps
+  |> unique [.questionId, .code]
+  |> index [.questionId, .sortOrder]
+
+model CommunitySurveyResponse = {
+  id : Int |> primaryKey |> autoIncrement,
+  surveyId : Int |> references CommunitySurvey.id,
+  userId : Int |> references User.id,
+  startedAt : DateTime |> default now,
+  submittedAt : DateTime?,
+  withdrawnAt : DateTime?,
+  locale : String |> default "en"
+}
+  |> timestamps
+  |> unique [.surveyId, .userId]
+  |> index [.surveyId, .submittedAt]
+  |> index [.userId]
+
+model CommunitySurveyAnswer = {
+  id : Int |> primaryKey |> autoIncrement,
+  responseId : Int |> references CommunitySurveyResponse.id,
+  questionId : Int |> references CommunitySurveyQuestion.id,
+  optionId : Int? |> references CommunitySurveyOption.id,
+  textValue : String?,
+  numberValue : Float?,
+  answeredAt : DateTime |> default now
+}
+  |> timestamps
+  |> index [.responseId, .questionId]
+  |> index [.optionId]
+  |> index [.questionId]
+
+// BADGES AND REPUTATION
+// Reputation is an append-oriented ledger. Score totals, rule applicability,
+// numeric ranges, and protection against edits are application responsibilities.
+
+model CommunityBadge = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  code : String,
+  title : String,
+  description : String,
+  iconAttachmentId : Int? |> references Attachment.id,
+  active : Bool |> default true
+}
+  |> timestamps
+  |> unique [.spaceId, .code]
+  |> index [.iconAttachmentId]
+
+model CommunityBadgeAward = {
+  id : Int |> primaryKey |> autoIncrement,
+  badgeId : Int |> references CommunityBadge.id,
+  userId : Int |> references User.id,
+  awardedById : Int? |> references User.id,
+  reason : String |> default "",
+  awardedAt : DateTime |> default now,
+  revokedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.badgeId, .userId]
+  |> index [.userId, .awardedAt]
+  |> index [.awardedById]
+
+model CommunityReputationRule = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  code : String,
+  description : String,
+  points : Int,
+  dailyLimit : Int?,
+  active : Bool |> default true
+}
+  |> timestamps
+  |> unique [.spaceId, .code]
+
+model CommunityReputationEntry = {
+  id : Int |> primaryKey |> autoIncrement,
+  ruleId : Int |> references CommunityReputationRule.id,
+  userId : Int |> references User.id,
+  discussionPostId : Int? |> references CommunityDiscussionPost.id,
+  eventKey : String |> unique,
+  points : Int,
+  reason : String |> default "",
+  reversedByEntryId : Int? |> references CommunityReputationEntry.id
+}
+  |> tracked
+  |> index [.userId, .createdAt]
+  |> index [.ruleId]
+  |> index [.discussionPostId]
+  |> index [.reversedByEntryId]
+
+// MESSAGING
+// Conversation membership gates access in application code. Reply targets,
+// receipts, and attached files must be authorized for the same conversation.
+
+model CommunityConversation = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int? |> references CommunitySpace.id,
+  startedById : Int |> references User.id,
+  subject : String |> default "",
+  groupConversation : Bool |> default false,
+  closedAt : DateTime?
+}
+  |> tracked
+  |> index [.spaceId]
+  |> index [.startedById]
+  |> index [.closedAt]
+
+model CommunityConversationMember = {
+  id : Int |> primaryKey |> autoIncrement,
+  conversationId : Int |> references CommunityConversation.id,
+  userId : Int |> references User.id,
+  joinedAt : DateTime |> default now,
+  leftAt : DateTime?,
+  muted : Bool |> default false,
+  lastReadAt : DateTime?
+}
+  |> timestamps
+  |> unique [.conversationId, .userId]
+  |> index [.userId, .leftAt]
+
+model CommunityMessage = {
+  id : Int |> primaryKey |> autoIncrement,
+  conversationId : Int |> references CommunityConversation.id,
+  senderId : Int |> references User.id,
+  replyToId : Int? |> references CommunityMessage.id,
+  body : String,
+  editedAt : DateTime?,
+  sentAt : DateTime |> default now
+}
+  |> tracked
+  |> softDelete
+  |> index [.conversationId, .sentAt]
+  |> index [.senderId]
+  |> index [.replyToId]
+
+model CommunityMessageReceipt = {
+  id : Int |> primaryKey |> autoIncrement,
+  messageId : Int |> references CommunityMessage.id,
+  userId : Int |> references User.id,
+  deliveredAt : DateTime?,
+  readAt : DateTime?
+}
+  |> timestamps
+  |> unique [.messageId, .userId]
+  |> index [.userId, .readAt]
+
+model CommunityMessageAttachment = {
+  id : Int |> primaryKey |> autoIncrement,
+  messageId : Int |> references CommunityMessage.id,
+  attachmentId : Int |> references Attachment.id,
+  caption : String |> default "",
+  sortOrder : Int |> default 0,
+  downloadEnabled : Bool |> default true
+}
+  |> timestamps
+  |> unique [.messageId, .attachmentId]
+  |> index [.attachmentId]
+  |> index [.messageId, .sortOrder]
+
+// DIGESTS
+// Timezone names, local delivery hours, recipient consent, and content selection
+// are application-validated. Delivery rows track a logical send, not each retry.
+
+model CommunityDigestPreference = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  userId : Int |> references User.id,
+  frequency : CommunityDigestFrequency |> default CommunityDigestFrequency.Weekly,
+  timezone : String |> default "UTC",
+  localHour : Int |> default 9,
+  includeEvents : Bool |> default true,
+  pausedUntil : DateTime?
+}
+  |> timestamps
+  |> unique [.spaceId, .userId]
+  |> index [.userId]
+
+model CommunityDigestIssue = {
+  id : Int |> primaryKey |> autoIncrement,
+  spaceId : Int |> references CommunitySpace.id,
+  issueKey : String,
+  subject : String,
+  body : String,
+  periodStartsAt : DateTime,
+  periodEndsAt : DateTime,
+  scheduledAt : DateTime?
+}
+  |> tracked
+  |> unique [.spaceId, .issueKey]
+  |> index [.scheduledAt]
+
+model CommunityDigestDelivery = {
+  id : Int |> primaryKey |> autoIncrement,
+  issueId : Int |> references CommunityDigestIssue.id,
+  userId : Int |> references User.id,
+  state : CommunityDeliveryState |> default CommunityDeliveryState.Pending,
+  attemptCount : Int |> default 0,
+  providerMessageId : String?,
+  sentAt : DateTime?,
+  lastError : String?
+}
+  |> tracked
+  |> unique [.issueId, .userId]
+  |> index [.state, .createdAt]
+  |> index [.userId, .sentAt]
+  |> index [.providerMessageId]
+
+// COMMERCE: CATALOG, BILLING, ENTITLEMENTS AND FULFILLMENT
+// All monetary values are integer minor units of the accompanying currency.
+// Currency agreement, positive quantities, tax arithmetic, stock balances,
+// tenant ownership and state transitions require application validation.
+// Provider identifiers below are opaque references, never card numbers or CVCs.
+
+type CommerceProductKind = Digital | Physical | Membership
+
+type CommerceProductStatus = Draft | Active | Retired
+
+type CommerceCartStatus = Open | Converted | Abandoned
+
+type CommerceOrderStatus = Pending | Confirmed | Fulfilled | Cancelled
+
+type CommercePaymentStatus = Pending | Authorized | Captured | Failed | Cancelled
+
+type CommerceAttemptStatus = Started | Succeeded | Failed
+
+type CommerceRefundStatus = Requested | Approved | Settled | Rejected
+
+type CommerceInvoiceStatus = Draft | Issued | Paid | Void
+
+type CommerceDiscountKind = FixedAmount | Percentage
+
+type CommerceBillingInterval = Month | Year
+
+type CommerceSubscriptionState = Trial | Active | PastDue | Paused | Cancelled
+
+type CommerceBillingCycleState = Open | Invoiced | Paid | Skipped
+
+type CommerceGrantSource = Purchase | Subscription | Manual
+
+type CommerceMovementKind = Receipt | Reservation | Release | Shipment | Adjustment
+
+type CommerceFulfillmentStatus = Pending | Picking | Packed | Shipped | Cancelled
+
+type CommerceShipmentStatus = Prepared | InTransit | Delivered | Exception | Returned
+
+type CommercePayoutStatus = Pending | Processing | Paid | Failed
+
+// CATALOG OWNERSHIP
+
+model CommerceVendor = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  slug : String |> unique,
+  displayName : String,
+  supportEmail : String,
+  providerAccountId : String? |> unique,
+  active : Bool |> default true,
+  suspendedAt : DateTime?
+}
+  |> tracked
+  |> index [.teamId]
+
+model CommerceStore = {
+  id : Int |> primaryKey |> autoIncrement,
+  vendorId : Int |> references CommerceVendor.id,
+  publicationId : Int? |> references Publication.id,
+  slug : String |> unique,
+  name : String,
+  defaultCurrency : String |> default "USD",
+  checkoutEnabled : Bool |> default false,
+  termsUrl : String?
+}
+  |> tracked
+  |> index [.vendorId]
+  |> index [.publicationId]
+
+model CommerceProduct = {
+  id : Int |> primaryKey |> autoIncrement,
+  storeId : Int |> references CommerceStore.id,
+  taxCategoryId : Int? |> references CommerceTaxCategory.id,
+  slug : String,
+  title : String,
+  description : String |> default "",
+  kind : CommerceProductKind |> default CommerceProductKind.Digital,
+  status : CommerceProductStatus |> default CommerceProductStatus.Draft
+}
+  |> tracked
+  |> softDelete
+  |> unique [.storeId, .slug]
+  |> index [.storeId, .status]
+  |> index [.taxCategoryId]
+
+model CommerceVariant = {
+  id : Int |> primaryKey |> autoIncrement,
+  productId : Int |> references CommerceProduct.id,
+  sku : String |> unique,
+  title : String,
+  optionLabel : String?,
+  weightGrams : Int?,
+  inventoryTracked : Bool |> default false,
+  active : Bool |> default true
+}
+  |> timestamps
+  |> index [.productId, .active]
+
+model CommerceProductAsset = {
+  id : Int |> primaryKey |> autoIncrement,
+  productId : Int |> references CommerceProduct.id,
+  attachmentId : Int |> references Attachment.id,
+  caption : String |> default "",
+  altText : String |> default "",
+  sortOrder : Int |> default 0,
+  isPrimary : Bool |> default false
+}
+  |> timestamps
+  |> unique [.productId, .attachmentId]
+  |> index [.productId, .sortOrder]
+  |> index [.attachmentId]
+
+model CommerceCollection = {
+  id : Int |> primaryKey |> autoIncrement,
+  storeId : Int |> references CommerceStore.id,
+  slug : String,
+  title : String,
+  description : String |> default "",
+  featured : Bool |> default false,
+  publishedAt : DateTime?
+}
+  |> tracked
+  |> unique [.storeId, .slug]
+
+model CommerceCollectionProduct = {
+  id : Int |> primaryKey |> autoIncrement,
+  collectionId : Int |> references CommerceCollection.id,
+  productId : Int |> references CommerceProduct.id,
+  addedById : Int |> references User.id,
+  sortOrder : Int |> default 0,
+  highlighted : Bool |> default false
+}
+  |> timestamps
+  |> unique [.collectionId, .productId]
+  |> index [.productId]
+  |> index [.addedById]
+
+// Historical prices are separate rows; preventing overlapping effective
+// intervals and choosing a price for checkout are application responsibilities.
+model CommercePrice = {
+  id : Int |> primaryKey |> autoIncrement,
+  variantId : Int |> references CommerceVariant.id,
+  currency : String,
+  amountMinor : Int,
+  compareAtMinor : Int?,
+  taxInclusive : Bool |> default false,
+  validFrom : DateTime |> default now,
+  validUntil : DateTime?
+}
+  |> timestamps
+  |> index [.variantId, .currency, .validFrom]
+
+// CUSTOMERS AND CHECKOUT
+
+model CommerceCustomer = {
+  id : Int |> primaryKey |> autoIncrement,
+  storeId : Int |> references CommerceStore.id,
+  userId : Int |> references User.id,
+  providerCustomerId : String?,
+  billingEmail : String,
+  displayName : String,
+  taxExempt : Bool |> default false,
+  locale : String |> default "en"
+}
+  |> tracked
+  |> unique [.storeId, .userId]
+  |> index [.userId]
+
+model CommerceAddress = {
+  id : Int |> primaryKey |> autoIncrement,
+  customerId : Int |> references CommerceCustomer.id,
+  recipient : String,
+  line1 : String,
+  line2 : String?,
+  city : String,
+  region : String?,
+  postalCode : String?,
+  countryCode : String
+}
+  |> timestamps
+  |> index [.customerId]
+
+model CommerceCart = {
+  id : Int |> primaryKey |> autoIncrement,
+  customerId : Int |> references CommerceCustomer.id,
+  currency : String,
+  status : CommerceCartStatus |> default CommerceCartStatus.Open,
+  checkoutKey : String |> unique,
+  shippingAddressId : Int? |> references CommerceAddress.id,
+  expiresAt : DateTime?,
+  convertedAt : DateTime?
+}
+  |> tracked
+  |> index [.customerId, .status]
+  |> index [.shippingAddressId]
+
+model CommerceCartItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  cartId : Int |> references CommerceCart.id,
+  variantId : Int |> references CommerceVariant.id,
+  priceId : Int |> references CommercePrice.id,
+  quantity : Int |> default 1,
+  quotedUnitMinor : Int,
+  giftMessage : String?
+}
+  |> timestamps
+  |> unique [.cartId, .variantId]
+  |> index [.variantId]
+  |> index [.priceId]
+
+// ORDER SNAPSHOTS
+// Totals and item snapshots are recorded explicitly. The compiler does not
+// calculate totals or ensure a price belongs to an item's variant.
+
+model CommerceOrder = {
+  id : Int |> primaryKey |> autoIncrement,
+  customerId : Int |> references CommerceCustomer.id,
+  cartId : Int? |> unique |> references CommerceCart.id,
+  number : String |> unique,
+  currency : String,
+  status : CommerceOrderStatus |> default CommerceOrderStatus.Pending,
+  subtotalMinor : Int,
+  taxMinor : Int |> default 0,
+  totalMinor : Int
+}
+  |> tracked
+  |> index [.customerId, .status]
+
+model CommerceOrderItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  orderId : Int |> references CommerceOrder.id,
+  variantId : Int |> references CommerceVariant.id,
+  lineNumber : Int,
+  title : String,
+  quantity : Int,
+  unitPriceMinor : Int,
+  discountMinor : Int |> default 0,
+  taxMinor : Int |> default 0
+}
+  |> timestamps
+  |> unique [.orderId, .lineNumber]
+  |> index [.variantId]
+
+// Immutable shipping snapshots avoid changing old orders when an address changes.
+model CommerceOrderAddress = {
+  id : Int |> primaryKey |> autoIncrement,
+  orderId : Int |> unique |> references CommerceOrder.id,
+  recipient : String,
+  line1 : String,
+  line2 : String?,
+  city : String,
+  region : String?,
+  postalCode : String?,
+  countryCode : String
+}
+  |> timestamps
+
+// PAYMENTS AND REFUNDS
+
+model CommercePayment = {
+  id : Int |> primaryKey |> autoIncrement,
+  orderId : Int |> references CommerceOrder.id,
+  provider : String,
+  providerPaymentId : String?,
+  idempotencyKey : String |> unique,
+  currency : String,
+  amountMinor : Int,
+  status : CommercePaymentStatus |> default CommercePaymentStatus.Pending,
+  capturedAt : DateTime?
+}
+  |> tracked
+  |> unique [.provider, .providerPaymentId]
+  |> index [.orderId, .status]
+
+model CommercePaymentAttempt = {
+  id : Int |> primaryKey |> autoIncrement,
+  paymentId : Int |> references CommercePayment.id,
+  attemptNumber : Int,
+  status : CommerceAttemptStatus |> default CommerceAttemptStatus.Started,
+  providerRequestId : String?,
+  failureCode : String?,
+  startedAt : DateTime |> default now,
+  completedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.paymentId, .attemptNumber]
+
+model CommerceRefund = {
+  id : Int |> primaryKey |> autoIncrement,
+  paymentId : Int |> references CommercePayment.id,
+  requestedById : Int |> references User.id,
+  providerRefundId : String?,
+  idempotencyKey : String |> unique,
+  amountMinor : Int,
+  reason : String,
+  status : CommerceRefundStatus |> default CommerceRefundStatus.Requested,
+  settledAt : DateTime?
+}
+  |> tracked
+  |> index [.paymentId, .status]
+  |> index [.requestedById]
+
+// Refund amounts and quantities must not exceed the corresponding captured
+// payment and fulfilled order quantities; these are cross-row checks.
+model CommerceRefundItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  refundId : Int |> references CommerceRefund.id,
+  orderItemId : Int |> references CommerceOrderItem.id,
+  quantity : Int,
+  amountMinor : Int,
+  taxMinor : Int |> default 0,
+  restock : Bool |> default false
+}
+  |> timestamps
+  |> unique [.refundId, .orderItemId]
+  |> index [.orderItemId]
+
+// INVOICES AND TAX
+
+model CommerceInvoice = {
+  id : Int |> primaryKey |> autoIncrement,
+  customerId : Int |> references CommerceCustomer.id,
+  orderId : Int? |> references CommerceOrder.id,
+  number : String |> unique,
+  currency : String,
+  status : CommerceInvoiceStatus |> default CommerceInvoiceStatus.Draft,
+  totalMinor : Int,
+  issuedAt : DateTime?,
+  dueAt : DateTime?
+}
+  |> tracked
+  |> index [.customerId, .status]
+  |> index [.orderId]
+
+model CommerceInvoiceLine = {
+  id : Int |> primaryKey |> autoIncrement,
+  invoiceId : Int |> references CommerceInvoice.id,
+  orderItemId : Int? |> references CommerceOrderItem.id,
+  lineNumber : Int,
+  description : String,
+  quantity : Int |> default 1,
+  unitAmountMinor : Int,
+  taxMinor : Int |> default 0,
+  totalMinor : Int
+}
+  |> timestamps
+  |> unique [.invoiceId, .lineNumber]
+  |> index [.orderItemId]
+
+model CommerceTaxCategory = {
+  id : Int |> primaryKey |> autoIncrement,
+  code : String |> unique,
+  name : String,
+  description : String |> default "",
+  digitalGoods : Bool |> default false,
+  active : Bool |> default true
+}
+  |> timestamps
+
+// Rates are integer parts per million, not floating-point currency amounts.
+// Jurisdiction selection, interval overlap and rounding are application logic.
+model CommerceTaxRate = {
+  id : Int |> primaryKey |> autoIncrement,
+  categoryId : Int |> references CommerceTaxCategory.id,
+  countryCode : String,
+  regionCode : String |> default "",
+  ratePartsPerMillion : Int,
+  label : String,
+  validFrom : DateTime,
+  validUntil : DateTime?
+}
+  |> timestamps
+  |> unique [.categoryId, .countryCode, .regionCode, .validFrom]
+
+model CommerceTaxRegistration = {
+  id : Int |> primaryKey |> autoIncrement,
+  vendorId : Int |> references CommerceVendor.id,
+  countryCode : String,
+  regionCode : String |> default "",
+  registrationReference : String,
+  validFrom : DateTime,
+  validUntil : DateTime?,
+  verified : Bool |> default false
+}
+  |> timestamps
+  |> unique [.vendorId, .countryCode, .regionCode, .registrationReference]
+
+// DISCOUNTS
+// The discount kind determines which amount fields apply. The application
+// validates that exactly the appropriate amount and currency are provided.
+
+model CommerceDiscount = {
+  id : Int |> primaryKey |> autoIncrement,
+  storeId : Int |> references CommerceStore.id,
+  name : String,
+  kind : CommerceDiscountKind,
+  amountMinor : Int?,
+  percentageBasisPoints : Int?,
+  currency : String?,
+  startsAt : DateTime,
+  endsAt : DateTime?
+}
+  |> tracked
+  |> index [.storeId, .startsAt]
+
+model CommerceDiscountCode = {
+  id : Int |> primaryKey |> autoIncrement,
+  discountId : Int |> references CommerceDiscount.id,
+  code : String |> unique,
+  redemptionLimit : Int?,
+  perCustomerLimit : Int |> default 1,
+  active : Bool |> default true,
+  expiresAt : DateTime?
+}
+  |> timestamps
+  |> index [.discountId]
+
+model CommerceDiscountProduct = {
+  id : Int |> primaryKey |> autoIncrement,
+  discountId : Int |> references CommerceDiscount.id,
+  productId : Int |> references CommerceProduct.id,
+  minimumQuantity : Int |> default 1,
+  maximumQuantity : Int?,
+  included : Bool |> default true
+}
+  |> timestamps
+  |> unique [.discountId, .productId]
+  |> index [.productId]
+
+model CommerceDiscountRedemption = {
+  id : Int |> primaryKey |> autoIncrement,
+  codeId : Int |> references CommerceDiscountCode.id,
+  customerId : Int |> references CommerceCustomer.id,
+  orderId : Int |> references CommerceOrder.id,
+  amountMinor : Int,
+  currency : String,
+  redeemedAt : DateTime |> default now
+}
+  |> timestamps
+  |> unique [.codeId, .orderId]
+  |> index [.customerId]
+  |> index [.orderId]
+
+// RECURRING BILLING AND ACCESS
+
+model CommerceSubscriptionPlan = {
+  id : Int |> primaryKey |> autoIncrement,
+  productId : Int |> references CommerceProduct.id,
+  code : String |> unique,
+  title : String,
+  interval : CommerceBillingInterval |> default CommerceBillingInterval.Month,
+  intervalCount : Int |> default 1,
+  trialDays : Int |> default 0,
+  active : Bool |> default true
+}
+  |> tracked
+  |> index [.productId]
+
+model CommerceBillingSubscription = {
+  id : Int |> primaryKey |> autoIncrement,
+  customerId : Int |> references CommerceCustomer.id,
+  planId : Int |> references CommerceSubscriptionPlan.id,
+  providerSubscriptionId : String? |> unique,
+  state : CommerceSubscriptionState |> default CommerceSubscriptionState.Trial,
+  startsAt : DateTime,
+  currentPeriodEnd : DateTime,
+  cancelAtPeriodEnd : Bool |> default false,
+  cancelledAt : DateTime?
+}
+  |> tracked
+  |> index [.customerId, .state]
+  |> index [.planId]
+
+model CommerceSubscriptionItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  subscriptionId : Int |> references CommerceBillingSubscription.id,
+  variantId : Int |> references CommerceVariant.id,
+  priceId : Int |> references CommercePrice.id,
+  quantity : Int |> default 1,
+  unitAmountMinor : Int,
+  currency : String
+}
+  |> timestamps
+  |> unique [.subscriptionId, .variantId]
+  |> index [.variantId]
+  |> index [.priceId]
+
+model CommerceBillingCycle = {
+  id : Int |> primaryKey |> autoIncrement,
+  subscriptionId : Int |> references CommerceBillingSubscription.id,
+  invoiceId : Int? |> unique |> references CommerceInvoice.id,
+  cycleNumber : Int,
+  periodStart : DateTime,
+  periodEnd : DateTime,
+  state : CommerceBillingCycleState |> default CommerceBillingCycleState.Open,
+  nextAttemptAt : DateTime?
+}
+  |> tracked
+  |> unique [.subscriptionId, .cycleNumber]
+  |> index [.state, .nextAttemptAt]
+
+// Entitlements can unlock a publication or a downloadable asset. The choice
+// of resource and enforcement of access are application responsibilities.
+model CommerceEntitlement = {
+  id : Int |> primaryKey |> autoIncrement,
+  productId : Int |> references CommerceProduct.id,
+  publicationId : Int? |> references Publication.id,
+  attachmentId : Int? |> references Attachment.id,
+  code : String |> unique,
+  name : String,
+  durationDays : Int?,
+  active : Bool |> default true
+}
+  |> timestamps
+  |> index [.productId]
+  |> index [.publicationId]
+  |> index [.attachmentId]
+
+model CommerceEntitlementGrant = {
+  id : Int |> primaryKey |> autoIncrement,
+  entitlementId : Int |> references CommerceEntitlement.id,
+  userId : Int |> references User.id,
+  orderItemId : Int? |> references CommerceOrderItem.id,
+  subscriptionId : Int? |> references CommerceBillingSubscription.id,
+  source : CommerceGrantSource,
+  startsAt : DateTime |> default now,
+  expiresAt : DateTime?,
+  revokedAt : DateTime?
+}
+  |> tracked
+  |> index [.userId, .entitlementId]
+  |> index [.orderItemId]
+  |> index [.subscriptionId]
+
+// INVENTORY AND FULFILLMENT
+
+model CommerceWarehouse = {
+  id : Int |> primaryKey |> autoIncrement,
+  vendorId : Int |> references CommerceVendor.id,
+  code : String |> unique,
+  name : String,
+  countryCode : String,
+  timezone : String,
+  externalLocationId : String?,
+  active : Bool |> default true
+}
+  |> timestamps
+  |> index [.vendorId]
+
+// Balance updates and the movement ledger must be written atomically by the
+// application. This schema does not provide inventory reservation logic.
+model CommerceInventory = {
+  id : Int |> primaryKey |> autoIncrement,
+  warehouseId : Int |> references CommerceWarehouse.id,
+  variantId : Int |> references CommerceVariant.id,
+  onHand : Int |> default 0,
+  reserved : Int |> default 0,
+  reorderPoint : Int |> default 0,
+  lastCountedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.warehouseId, .variantId]
+  |> index [.variantId]
+
+model CommerceInventoryMovement = {
+  id : Int |> primaryKey |> autoIncrement,
+  inventoryId : Int |> references CommerceInventory.id,
+  orderItemId : Int? |> references CommerceOrderItem.id,
+  recordedById : Int |> references User.id,
+  kind : CommerceMovementKind,
+  quantityDelta : Int,
+  reference : String |> unique,
+  note : String |> default ""
+}
+  |> tracked
+  |> index [.inventoryId, .createdAt]
+  |> index [.orderItemId]
+  |> index [.recordedById]
+
+model CommerceFulfillment = {
+  id : Int |> primaryKey |> autoIncrement,
+  orderId : Int |> references CommerceOrder.id,
+  warehouseId : Int |> references CommerceWarehouse.id,
+  reference : String |> unique,
+  status : CommerceFulfillmentStatus |> default CommerceFulfillmentStatus.Pending,
+  requestedAt : DateTime |> default now,
+  packedAt : DateTime?,
+  shippedAt : DateTime?
+}
+  |> tracked
+  |> index [.orderId]
+  |> index [.warehouseId, .status]
+
+model CommerceFulfillmentItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  fulfillmentId : Int |> references CommerceFulfillment.id,
+  orderItemId : Int |> references CommerceOrderItem.id,
+  inventoryId : Int |> references CommerceInventory.id,
+  quantity : Int,
+  pickedAt : DateTime?,
+  packedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.fulfillmentId, .orderItemId]
+  |> index [.orderItemId]
+  |> index [.inventoryId]
+
+model CommerceShipment = {
+  id : Int |> primaryKey |> autoIncrement,
+  fulfillmentId : Int |> references CommerceFulfillment.id,
+  carrier : String,
+  trackingNumber : String,
+  trackingUrl : String?,
+  status : CommerceShipmentStatus |> default CommerceShipmentStatus.Prepared,
+  shippingCostMinor : Int,
+  currency : String,
+  deliveredAt : DateTime?
+}
+  |> tracked
+  |> unique [.carrier, .trackingNumber]
+  |> index [.fulfillmentId]
+
+model CommerceShipmentEvent = {
+  id : Int |> primaryKey |> autoIncrement,
+  shipmentId : Int |> references CommerceShipment.id,
+  providerEventId : String,
+  status : CommerceShipmentStatus,
+  occurredAt : DateTime,
+  location : String?,
+  message : String |> default ""
+}
+  |> timestamps
+  |> unique [.shipmentId, .providerEventId]
+  |> index [.shipmentId, .occurredAt]
+
+// VENDOR SETTLEMENT
+// Settlement eligibility, fee reconciliation and ensuring that the summed
+// payout items equal the payout total are checked by application transactions.
+
+model CommerceVendorPayout = {
+  id : Int |> primaryKey |> autoIncrement,
+  vendorId : Int |> references CommerceVendor.id,
+  providerPayoutId : String? |> unique,
+  reference : String |> unique,
+  currency : String,
+  amountMinor : Int,
+  status : CommercePayoutStatus |> default CommercePayoutStatus.Pending,
+  scheduledAt : DateTime,
+  paidAt : DateTime?
+}
+  |> tracked
+  |> index [.vendorId, .status]
+
+model CommercePayoutItem = {
+  id : Int |> primaryKey |> autoIncrement,
+  payoutId : Int |> references CommerceVendorPayout.id,
+  paymentId : Int |> unique |> references CommercePayment.id,
+  grossMinor : Int,
+  providerFeeMinor : Int |> default 0,
+  platformFeeMinor : Int |> default 0,
+  refundedMinor : Int |> default 0,
+  netMinor : Int
+}
+  |> timestamps
+  |> index [.payoutId]
+
+// OPERATIONS: ACCESS, DELIVERY, AUTOMATION AND SERVICE HEALTH
+// Credential hashes verify callers; outbound signing material stays in a vault.
+// JSON-suffixed text fields are application-validated serialized documents.
+// Tenant consistency, state transitions, bounds and access control remain
+// application rules: foreign keys alone do not enforce these cross-row rules.
+
+type OperationsClientState = Active | Suspended | Retired
+type OperationsRunState = Pending | Running | Succeeded | Failed | Cancelled
+type OperationsDeliveryState = Pending | Delivered | Retrying | Abandoned
+type OperationsIntegrationState = Connected | Disconnected | Degraded
+type OperationsExperimentState = Draft | Running | Paused | Completed
+type OperationsTicketState = Open | Waiting | Resolved | Closed
+type OperationsPriority = Low | Normal | High | Urgent
+type OperationsAuditAction = Create | Update | Delete | Access | Deny
+
+// API ACCESS
+
+model OperationsApiClient = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  ownerId : Int |> references User.id,
+  clientKey : String |> unique,
+  name : String,
+  state : OperationsClientState |> default OperationsClientState.Active,
+  description : String |> default "",
+  lastUsedAt : DateTime?
+}
+  |> tracked
+  |> index [.teamId, .state]
+  |> index [.ownerId]
+
+// Store a keyed digest of a random credential, never its usable value.
+// hashingKeyVersion identifies verifier configuration, not a hashing key.
+// Rotation creates another credential for the same client before revocation.
+// displayPrefix is deliberately only a short, non-authenticating label.
+model OperationsApiCredential = {
+  id : Int |> primaryKey |> autoIncrement,
+  clientId : Int |> references OperationsApiClient.id,
+  digest : String |> unique,
+  displayPrefix : String,
+  hashingKeyVersion : String,
+  expiresAt : DateTime?,
+  revokedAt : DateTime?,
+  lastUsedAt : DateTime?
+}
+  |> tracked
+  |> index [.clientId, .revokedAt]
+
+model OperationsApiScope = {
+  id : Int |> primaryKey |> autoIncrement,
+  code : String |> unique,
+  name : String,
+  description : String |> default "",
+  resourceKind : String,
+  writeAccess : Bool |> default false,
+  deprecated : Bool |> default false
+}
+  |> timestamps
+  |> index [.resourceKind, .deprecated]
+
+model OperationsApiGrant = {
+  id : Int |> primaryKey |> autoIncrement,
+  clientId : Int |> references OperationsApiClient.id,
+  scopeId : Int |> references OperationsApiScope.id,
+  grantedById : Int |> references User.id,
+  expiresAt : DateTime?,
+  revokedAt : DateTime?,
+  reason : String |> default ""
+}
+  |> tracked
+  |> unique [.clientId, .scopeId]
+  |> index [.scopeId]
+  |> index [.grantedById]
+
+model OperationsApiUsage = {
+  id : Int |> primaryKey |> autoIncrement,
+  clientId : Int |> references OperationsApiClient.id,
+  bucketStart : DateTime,
+  routeKey : String,
+  requestCount : Int |> default 0,
+  errorCount : Int |> default 0,
+  totalLatencyMs : Int |> default 0,
+  responseBytes : Int |> default 0
+}
+  |> timestamps
+  |> unique [.clientId, .bucketStart, .routeKey]
+  |> index [.bucketStart, .routeKey]
+
+// WEBHOOK DELIVERY
+// Endpoint URLs must exclude embedded credentials and pass outbound URL checks.
+// Recheck resolved addresses and redirects when sending to prevent SSRF.
+// Teams own endpoint configuration; event-to-endpoint tenant matching is checked
+// by the dispatcher before it creates a delivery. Signing keys stay in a vault.
+model OperationsWebhookEndpoint = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  createdById : Int |> references User.id,
+  name : String,
+  destinationUrl : String,
+  signingKeyVaultRef : String,
+  enabled : Bool |> default true,
+  timeoutSeconds : Int |> default 15
+}
+  |> tracked
+  |> index [.teamId, .enabled]
+  |> index [.createdById]
+
+// Payloads are stored as sanitized snapshots, not arbitrary request headers.
+model OperationsWebhookEvent = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  eventKey : String |> unique,
+  topic : String,
+  subjectKey : String,
+  payloadJson : String,
+  occurredAt : DateTime |> default now,
+  schemaVersion : Int |> default 1
+}
+  |> tracked
+  |> index [.teamId, .topic, .occurredAt]
+
+model OperationsWebhookSubscription = {
+  id : Int |> primaryKey |> autoIncrement,
+  endpointId : Int |> references OperationsWebhookEndpoint.id,
+  topic : String,
+  enabled : Bool |> default true,
+  filterJson : String |> default "{}",
+  payloadVersion : Int |> default 1,
+  pausedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.endpointId, .topic]
+  |> index [.topic, .enabled]
+
+model OperationsWebhookDelivery = {
+  id : Int |> primaryKey |> autoIncrement,
+  endpointId : Int |> references OperationsWebhookEndpoint.id,
+  eventId : Int |> references OperationsWebhookEvent.id,
+  state : OperationsDeliveryState |> default OperationsDeliveryState.Pending,
+  nextAttemptAt : DateTime?,
+  deliveredAt : DateTime?,
+  attemptCount : Int |> default 0,
+  idempotencyKey : String |> unique
+}
+  |> tracked
+  |> unique [.endpointId, .eventId]
+  |> index [.state, .nextAttemptAt]
+  |> index [.eventId]
+
+model OperationsWebhookAttempt = {
+  id : Int |> primaryKey |> autoIncrement,
+  deliveryId : Int |> references OperationsWebhookDelivery.id,
+  attemptNumber : Int,
+  startedAt : DateTime |> default now,
+  finishedAt : DateTime?,
+  responseStatus : Int?,
+  latencyMs : Int?,
+  errorCode : String?
+}
+  |> timestamps
+  |> unique [.deliveryId, .attemptNumber]
+  |> index [.startedAt, .responseStatus]
+
+// JOBS AND SCHEDULES
+// Worker leases, dependency acyclicity and atomic claims need application logic.
+// A prerequisite may not be the job itself, even though both foreign keys exist.
+// Scheduled instants are recorded separately from actual dispatch time so
+// skipped runs and clock changes can be audited without creating fake jobs.
+model OperationsJobQueue = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  name : String,
+  concurrencyLimit : Int |> default 4,
+  retryLimit : Int |> default 3,
+  paused : Bool |> default false,
+  leaseSeconds : Int |> default 60
+}
+  |> timestamps
+  |> unique [.teamId, .name]
+  |> index [.paused]
+
+model OperationsJob = {
+  id : Int |> primaryKey |> autoIncrement,
+  queueId : Int |> references OperationsJobQueue.id,
+  requestedById : Int? |> references User.id,
+  kind : String,
+  inputArtifactRef : String?,
+  state : OperationsRunState |> default OperationsRunState.Pending,
+  priority : OperationsPriority |> default OperationsPriority.Normal,
+  availableAt : DateTime |> default now,
+  deduplicationKey : String |> unique
+}
+  |> tracked
+  |> index [.queueId, .state, .availableAt]
+  |> index [.requestedById]
+
+model OperationsJobAttempt = {
+  id : Int |> primaryKey |> autoIncrement,
+  jobId : Int |> references OperationsJob.id,
+  attemptNumber : Int,
+  workerKey : String,
+  state : OperationsRunState |> default OperationsRunState.Running,
+  startedAt : DateTime |> default now,
+  finishedAt : DateTime?,
+  leaseExpiresAt : DateTime,
+  failureCode : String?
+}
+  |> timestamps
+  |> unique [.jobId, .attemptNumber]
+  |> index [.state, .leaseExpiresAt]
+
+model OperationsJobDependency = {
+  id : Int |> primaryKey |> autoIncrement,
+  jobId : Int |> references OperationsJob.id,
+  prerequisiteId : Int |> references OperationsJob.id,
+  requireSuccess : Bool |> default true,
+  satisfiedAt : DateTime?,
+  description : String |> default ""
+}
+  |> timestamps
+  |> unique [.jobId, .prerequisiteId]
+  |> index [.prerequisiteId, .satisfiedAt]
+
+model OperationsSchedule = {
+  id : Int |> primaryKey |> autoIncrement,
+  queueId : Int |> references OperationsJobQueue.id,
+  name : String,
+  cronExpression : String,
+  timeZone : String |> default "UTC",
+  jobKind : String,
+  enabled : Bool |> default true,
+  nextRunAt : DateTime?
+}
+  |> tracked
+  |> unique [.queueId, .name]
+  |> index [.enabled, .nextRunAt]
+
+model OperationsScheduleRun = {
+  id : Int |> primaryKey |> autoIncrement,
+  scheduleId : Int |> references OperationsSchedule.id,
+  jobId : Int? |> unique |> references OperationsJob.id,
+  scheduledFor : DateTime,
+  dispatchedAt : DateTime?,
+  skipped : Bool |> default false,
+  skipReason : String?
+}
+  |> timestamps
+  |> unique [.scheduleId, .scheduledFor]
+  |> index [.scheduledFor, .dispatchedAt]
+
+// INTEGRATIONS AND BULK TRANSFERS
+model OperationsIntegration = {
+  id : Int |> primaryKey |> autoIncrement,
+  code : String |> unique,
+  name : String,
+  providerName : String,
+  documentationUrl : String?,
+  supportsImport : Bool |> default false,
+  supportsExport : Bool |> default false,
+  enabled : Bool |> default true
+}
+  |> timestamps
+  |> index [.providerName, .enabled]
+
+// Vault references identify encrypted material managed outside this database.
+model OperationsIntegrationAccount = {
+  id : Int |> primaryKey |> autoIncrement,
+  integrationId : Int |> references OperationsIntegration.id,
+  teamId : Int |> references Team.id,
+  connectedById : Int |> references User.id,
+  externalAccountKey : String,
+  credentialVaultRef : String,
+  state : OperationsIntegrationState |> default OperationsIntegrationState.Connected,
+  lastSyncedAt : DateTime?
+}
+  |> tracked
+  |> unique [.integrationId, .teamId, .externalAccountKey]
+  |> index [.teamId, .state]
+  |> index [.connectedById]
+
+model OperationsIntegrationSync = {
+  id : Int |> primaryKey |> autoIncrement,
+  accountId : Int |> references OperationsIntegrationAccount.id,
+  jobId : Int? |> references OperationsJob.id,
+  state : OperationsRunState |> default OperationsRunState.Pending,
+  startedAt : DateTime?,
+  completedAt : DateTime?,
+  importedCount : Int |> default 0,
+  exportedCount : Int |> default 0,
+  checkpointRef : String?
+}
+  |> tracked
+  |> index [.accountId, .state]
+  |> index [.jobId]
+
+model OperationsImportBatch = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  requestedById : Int |> references User.id,
+  attachmentId : Int |> references Attachment.id,
+  syncId : Int? |> references OperationsIntegrationSync.id,
+  format : String,
+  state : OperationsRunState |> default OperationsRunState.Pending,
+  expectedRows : Int?,
+  completedAt : DateTime?
+}
+  |> tracked
+  |> index [.publicationId, .state]
+  |> index [.requestedById]
+  |> index [.attachmentId]
+  |> index [.syncId]
+
+model OperationsImportRow = {
+  id : Int |> primaryKey |> autoIncrement,
+  batchId : Int |> references OperationsImportBatch.id,
+  rowNumber : Int,
+  sourceKey : String?,
+  postId : Int? |> references Post.id,
+  state : OperationsRunState |> default OperationsRunState.Pending,
+  errorCode : String?,
+  processedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.batchId, .rowNumber]
+  |> index [.batchId, .state]
+  |> index [.postId]
+
+model OperationsExportRequest = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  requestedById : Int |> references User.id,
+  publicationId : Int? |> references Publication.id,
+  format : String,
+  state : OperationsRunState |> default OperationsRunState.Pending,
+  filterJson : String |> default "{}",
+  completedAt : DateTime?,
+  expiresAt : DateTime?
+}
+  |> tracked
+  |> index [.teamId, .state]
+  |> index [.requestedById]
+  |> index [.publicationId]
+
+model OperationsExportArtifact = {
+  id : Int |> primaryKey |> autoIncrement,
+  requestId : Int |> references OperationsExportRequest.id,
+  partNumber : Int,
+  storageKey : String |> unique,
+  contentType : String,
+  sizeBytes : Int,
+  checksum : String,
+  recordCount : Int |> default 0,
+  deletedAt : DateTime?
+}
+  |> timestamps
+  |> unique [.requestId, .partNumber]
+  |> index [.deletedAt]
+
+// AUDIT
+// Audit subjects can outlive source rows. Stable subject keys are intentional,
+// not foreign keys. Redact secrets and personal data before writing changes.
+model OperationsAuditEvent = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  actorId : Int? |> references User.id,
+  clientId : Int? |> references OperationsApiClient.id,
+  action : OperationsAuditAction,
+  subjectKind : String,
+  subjectKey : String,
+  correlationKey : String,
+  occurredAt : DateTime |> default now
+}
+  |> tracked
+  |> index [.teamId, .occurredAt]
+  |> index [.actorId]
+  |> index [.clientId]
+  |> index [.subjectKind, .subjectKey]
+
+model OperationsAuditChange = {
+  id : Int |> primaryKey |> autoIncrement,
+  eventId : Int |> references OperationsAuditEvent.id,
+  fieldPath : String,
+  previousDigest : String?,
+  nextDigest : String?,
+  redacted : Bool |> default true,
+  description : String |> default ""
+}
+  |> timestamps
+  |> unique [.eventId, .fieldPath]
+  |> index [.fieldPath]
+
+// EXPERIMENTS AND FEATURE FLAGS
+// Allocation totals, predicate evaluation and flag precedence are application
+// rules. Assignments identify users explicitly; this is not anonymous tracking.
+model OperationsExperiment = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  ownerId : Int |> references User.id,
+  experimentKey : String,
+  name : String,
+  state : OperationsExperimentState |> default OperationsExperimentState.Draft,
+  startsAt : DateTime?,
+  endsAt : DateTime?
+}
+  |> tracked
+  |> unique [.publicationId, .experimentKey]
+  |> index [.ownerId]
+  |> index [.state, .startsAt]
+
+model OperationsExperimentVariant = {
+  id : Int |> primaryKey |> autoIncrement,
+  experimentId : Int |> references OperationsExperiment.id,
+  variantKey : String,
+  name : String,
+  allocationWeight : Float |> default 1,
+  control : Bool |> default false,
+  configurationJson : String |> default "{}"
+}
+  |> timestamps
+  |> unique [.experimentId, .variantKey]
+  |> index [.experimentId, .control]
+
+// The chosen variant must belong to the experiment: checked by the application.
+model OperationsExperimentAssignment = {
+  id : Int |> primaryKey |> autoIncrement,
+  experimentId : Int |> references OperationsExperiment.id,
+  variantId : Int |> references OperationsExperimentVariant.id,
+  userId : Int |> references User.id,
+  assignedAt : DateTime |> default now,
+  exposedAt : DateTime?,
+  assignmentVersion : Int |> default 1
+}
+  |> timestamps
+  |> unique [.experimentId, .userId]
+  |> index [.variantId]
+  |> index [.userId]
+
+model OperationsFeatureFlag = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  ownerId : Int |> references User.id,
+  flagKey : String,
+  description : String |> default "",
+  enabled : Bool |> default false,
+  defaultValue : Bool |> default false,
+  retiredAt : DateTime?
+}
+  |> tracked
+  |> unique [.teamId, .flagKey]
+  |> index [.ownerId]
+
+model OperationsFeatureRule = {
+  id : Int |> primaryKey |> autoIncrement,
+  flagId : Int |> references OperationsFeatureFlag.id,
+  ruleKey : String,
+  priority : Int |> default 0,
+  predicateJson : String,
+  resultValue : Bool,
+  enabled : Bool |> default true,
+  rolloutPercent : Float |> default 100
+}
+  |> timestamps
+  |> unique [.flagId, .ruleKey]
+  |> index [.flagId, .priority]
+
+model OperationsFeatureOverride = {
+  id : Int |> primaryKey |> autoIncrement,
+  flagId : Int |> references OperationsFeatureFlag.id,
+  userId : Int |> references User.id,
+  changedById : Int |> references User.id,
+  value : Bool,
+  reason : String,
+  expiresAt : DateTime?
+}
+  |> tracked
+  |> unique [.flagId, .userId]
+  |> index [.userId]
+  |> index [.changedById]
+  |> index [.expiresAt]
+
+// ANALYTICS
+// Consent, aggregation boundaries and retention must be enforced by callers.
+// dayKey uses an application-selected reporting zone and ISO calendar date.
+// Recomputing a bucket replaces its aggregate transactionally; counters here
+// are stored results, not automatically maintained database calculations.
+model OperationsAnalyticsEvent = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  postId : Int? |> references Post.id,
+  eventKey : String |> unique,
+  eventName : String,
+  occurredAt : DateTime |> default now,
+  value : Float |> default 1,
+  propertiesJson : String |> default "{}"
+}
+  |> tracked
+  |> index [.publicationId, .eventName, .occurredAt]
+  |> index [.postId]
+
+model OperationsAnalyticsDailyMetric = {
+  id : Int |> primaryKey |> autoIncrement,
+  publicationId : Int |> references Publication.id,
+  dayKey : String,
+  metricName : String,
+  dimensionKey : String |> default "all",
+  sampleCount : Int |> default 0,
+  totalValue : Float |> default 0,
+  computedAt : DateTime |> default now
+}
+  |> timestamps
+  |> unique [.publicationId, .dayKey, .metricName, .dimensionKey]
+  |> index [.metricName, .dayKey]
+
+model OperationsAnalyticsDashboard = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  ownerId : Int |> references User.id,
+  dashboardKey : String,
+  title : String,
+  description : String |> default "",
+  shared : Bool |> default false,
+  refreshSeconds : Int |> default 300
+}
+  |> tracked
+  |> unique [.teamId, .dashboardKey]
+  |> index [.ownerId]
+
+model OperationsAnalyticsWidget = {
+  id : Int |> primaryKey |> autoIncrement,
+  dashboardId : Int |> references OperationsAnalyticsDashboard.id,
+  publicationId : Int? |> references Publication.id,
+  widgetKey : String,
+  title : String,
+  metricName : String,
+  visualization : String |> default "line",
+  sortOrder : Int |> default 0,
+  filterJson : String |> default "{}"
+}
+  |> timestamps
+  |> unique [.dashboardId, .widgetKey]
+  |> index [.dashboardId, .sortOrder]
+  |> index [.publicationId]
+
+// RETENTION
+// Policies describe intentions. A worker must honor legal holds and deletion
+// dependencies; these declarations neither schedule work nor delete records.
+model OperationsRetentionPolicy = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  approvedById : Int |> references User.id,
+  policyKey : String,
+  resourceKind : String,
+  retainDays : Int,
+  enabled : Bool |> default false,
+  legalHold : Bool |> default false
+}
+  |> tracked
+  |> unique [.teamId, .policyKey]
+  |> index [.resourceKind, .enabled]
+  |> index [.approvedById]
+
+model OperationsRetentionRun = {
+  id : Int |> primaryKey |> autoIncrement,
+  policyId : Int |> references OperationsRetentionPolicy.id,
+  jobId : Int? |> references OperationsJob.id,
+  cutoffAt : DateTime,
+  state : OperationsRunState |> default OperationsRunState.Pending,
+  dryRun : Bool |> default true,
+  candidateCount : Int |> default 0,
+  deletedCount : Int |> default 0,
+  completedAt : DateTime?
+}
+  |> tracked
+  |> index [.policyId, .state]
+  |> index [.jobId]
+
+// Subject keys intentionally survive deletion of the original resources.
+model OperationsRetentionDeletion = {
+  id : Int |> primaryKey |> autoIncrement,
+  runId : Int |> references OperationsRetentionRun.id,
+  subjectKind : String,
+  subjectKey : String,
+  deletedAt : DateTime?,
+  blocked : Bool |> default false,
+  blockedReason : String?,
+  evidenceDigest : String?
+}
+  |> timestamps
+  |> unique [.runId, .subjectKind, .subjectKey]
+  |> index [.subjectKind, .subjectKey]
+
+// SUPPORT
+// Support content must be scrubbed of credentials before it is stored.
+model OperationsSupportQueue = {
+  id : Int |> primaryKey |> autoIncrement,
+  teamId : Int |> references Team.id,
+  queueKey : String,
+  name : String,
+  enabled : Bool |> default true,
+  responseTargetMinutes : Int |> default 1440,
+  escalationAfterMinutes : Int |> default 2880
+}
+  |> timestamps
+  |> unique [.teamId, .queueKey]
+  |> index [.enabled]
+
+model OperationsSupportTicket = {
+  id : Int |> primaryKey |> autoIncrement,
+  queueId : Int |> references OperationsSupportQueue.id,
+  requesterId : Int |> references User.id,
+  publicationId : Int? |> references Publication.id,
+  referenceCode : String |> unique,
+  subject : String,
+  state : OperationsTicketState |> default OperationsTicketState.Open,
+  priority : OperationsPriority |> default OperationsPriority.Normal,
+  resolvedAt : DateTime?
+}
+  |> tracked
+  |> index [.queueId, .state, .priority]
+  |> index [.requesterId]
+  |> index [.publicationId]
+
+model OperationsSupportMessage = {
+  id : Int |> primaryKey |> autoIncrement,
+  ticketId : Int |> references OperationsSupportTicket.id,
+  senderId : Int |> references User.id,
+  attachmentId : Int? |> references Attachment.id,
+  body : String,
+  internal : Bool |> default false,
+  editedAt : DateTime?,
+  deliveryKey : String |> unique
+}
+  |> tracked
+  |> index [.ticketId, .createdAt]
+  |> index [.senderId]
+  |> index [.attachmentId]
+
+// Multiple historical assignments are retained; enforcing one active owner
+// per ticket requires a transactional application-level check.
+model OperationsSupportAssignment = {
+  id : Int |> primaryKey |> autoIncrement,
+  ticketId : Int |> references OperationsSupportTicket.id,
+  assigneeId : Int |> references User.id,
+  assignedById : Int |> references User.id,
+  assignedAt : DateTime |> default now,
+  releasedAt : DateTime?,
+  reason : String |> default ""
+}
+  |> timestamps
+  |> index [.ticketId, .releasedAt]
+  |> index [.assigneeId, .releasedAt]
+  |> index [.assignedById]

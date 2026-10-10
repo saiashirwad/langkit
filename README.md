@@ -16,7 +16,7 @@ pnpm typecheck
 pnpm test
 ```
 
-Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, and `strict/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
+Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, and `schema/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
 
 The whole toy language is in **[examples/toy/toy.ts](examples/toy/toy.ts)**, in reading order:
 
@@ -361,6 +361,69 @@ The runtime represents actions as functions taking an empty record. **`compile(s
 
 The standard library also includes the advanced example's `Option`, `Result`, list operations, and function helpers, rewritten in the new syntax. The implementation remains split into [syntax](examples/strict/strict-syntax.ts), [types/kinds](examples/strict/strict-types.ts), and [elaboration](examples/strict/strict.ts). The shared IR needs no new type-class or effect-specific nodes. There are still no FFI, asynchronous effects, mutable references, tail-call optimization, or untrusted-code sandbox. [main.strict](examples/strict/main.strict) is a longer, runnable tour of records, `Functor`, recursive trees, higher-rank functions, `Option` short-circuiting, generic monadic helpers, and printing.
 
+## Functional SQLite schemas
+
+**[examples/schema/schema.ts](examples/schema/schema.ts)** is a schema compiler, not an ORM: field blocks and pure model transformations compile to SQLite DDL. It uses the same parsing, checking, and analysis tools as the expression languages, but its checked representation is a schema rather than the JavaScript expression IR.
+
+```sh
+pnpm schema                       # prints SQL for examples/schema/main.schema
+pnpm schema path/to/database.schema
+pnpm schema:lsp                    # stdio language server
+```
+
+```elm
+type Role = User | Admin
+
+let timestamps = fn(model) =>
+  model |> extend {
+    createdAt : DateTime |> default now,
+    updatedAt : DateTime |> default now
+  }
+
+model User = {
+  id : Int |> primaryKey |> autoIncrement,
+  email : String |> unique,
+  name : String?,
+  role : Role |> default Role.User
+}
+  |> timestamps
+  |> index [.createdAt]
+
+model Post = {
+  id : Int |> primaryKey |> autoIncrement,
+  title : String,
+  authorId : Int |> references User.id,
+  published : Bool |> default false
+}
+  |> timestamps
+  |> index [.authorId, .createdAt]
+```
+
+A field pipe transforms a field description; a model pipe transforms a model description. Neither performs database operations. Helpers are source-defined unary functions of the form `let name = fn(parameter) => parameter |> ...`; they may call other helpers, including forward declarations, but cannot recurse. There are no hidden built-in `timestamps` or automatically imported helpers. `extend` only adds fields: collisions, including SQLite case-insensitive collisions, are errors. An index or unique constraint is checked against the completed model, so it can refer to a field added later in the pipeline.
+
+Fields are comma-separated, with an optional trailing comma. Declarations need no semicolons; `//` introduces a comment. Required fields are the default; `?` allows SQL NULL.
+
+| Field type | SQLite representation |
+| --- | --- |
+| `Int` | `INTEGER` |
+| `Float` | `REAL` |
+| `String` | `TEXT` |
+| `Bool` | `INTEGER` with a `CHECK` restricting it to 0 or 1 |
+| `DateTime` | `TEXT`; `default now` emits `CURRENT_TIMESTAMP` |
+| A declared enum | `TEXT` with a `CHECK` restricting it to the declared members |
+
+Tables use SQLite `STRICT` mode (SQLite 3.37+). `DateTime` describes a storage convention, not a validated timestamp format. `Int` columns store SQLite signed 64-bit integers; numeric defaults are parsed as JavaScript numbers and integer defaults must be safe integers. Defaults accept matching number/string/boolean literals, qualified enum members, or `now` for `DateTime`. There is no literal NULL default or literal DateTime default yet.
+
+Field operations are `primaryKey`, `autoIncrement`, `unique`, `default value`, and `references Model.field`. `autoIncrement` requires an `Int` primary key and cannot be combined with a default. SQLite also generates rowids for an `Int` primary key without `autoIncrement`; the explicit operation adds SQLite's stronger no-reuse guarantee. Optional primary keys, multiple primary keys, duplicate operations, and mismatched defaults are rejected.
+
+Model operations are `extend { ... }`, `index [.field, ...]`, `unique [.field, ...]`, and named helpers. Model-level `unique` supports composite uniqueness. Foreign keys are explicit scalar fields, must have the same declared type as their target, and must reference a primary key or an individually unique field. There are no implicit reverse relations, relationship arrays, composite foreign keys, or referential-action modifiers. Nullable foreign keys and SQLite's default NO ACTION behavior are preserved. Nullable uniqueness follows SQLite semantics: multiple NULLs are allowed.
+
+`compile(source)` returns `{ schema, sql }` inside the usual `Result`. `analyze(source)` reports diagnostics, field/type hovers, and definitions for enum values, helper calls, foreign keys, and index selectors without generating SQL or opening a database. Helpers' field requirements are checked when applied; field types/defaults/references and helper cycles are checked even in unused helpers. Extension fields retain their helper-source locations.
+
+The CLI **only prints SQL**. Output describes a fresh schema, not a migration; it does not drop existing tables, track versions, or connect to a database. `PRAGMA foreign_keys = ON` is included, but applications must also enable foreign keys on every connection (outside an active transaction). `updatedAt |> default now` initializes on insertion only—it does not create an update trigger. There are no imports, arbitrary functions, payload-carrying variants, query language, or generated clients in this first version.
+
+The design takes inspiration from [Acadia's separation of types and tables](https://github.com/acadia-engineering/examples), [PRQL's composable transforms](https://prql-lang.org/book/reference/stdlib/transforms/), and [Gel's reusable constraints](https://docs.geldata.com/reference/datamodel/constraints); it is not syntax-compatible with those languages or Prisma.
+
 ## Explicit imports
 
 The rows, advanced, and strict languages **never load their stdlib automatically**. Add an import yourself:
@@ -380,7 +443,7 @@ Use `.rows` or `.advanced` for those languages. Paths must start with `./` or `.
 
 ## Editor support
 
-All five languages have small stdio LSP servers:
+All six languages have small stdio LSP servers:
 
 ```sh
 node examples/toy/toy-lsp.ts --stdio
@@ -388,6 +451,7 @@ node examples/hm/hm-lsp.ts --stdio
 node examples/rows/rows-lsp.ts --stdio
 node examples/advanced/advanced-lsp.ts --stdio
 node examples/strict/strict-lsp.ts --stdio
+node examples/schema/schema-lsp.ts --stdio
 # Also available as pnpm <language>:lsp; use direct node commands in editors.
 ```
 
@@ -424,7 +488,7 @@ This is deliberately an explicit, small integration, not automatic extraction of
 
 ### Neovim 0.11+
 
-[.nvim.lua](.nvim.lua) configures all five servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, `.rows` files as rows, `.advanced` files as advanced, and `.strict` files as strict, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
+[.nvim.lua](.nvim.lua) configures all six servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, `.rows` files as rows, `.advanced` files as advanced, `.strict` files as strict, and `.schema` files as schema, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
 
 ```lua
 vim.opt.exrc = true

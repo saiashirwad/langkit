@@ -160,6 +160,34 @@ test("stdio LSP: initialize, analyze, edit, clear and shut down", { timeout: 150
   await server.shutdown()
 })
 
+test("schema stdio LSP resolves schema helpers and foreign keys without emitting SQL", { timeout: 10000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/schema/schema-lsp.ts", import.meta.url)), "--stdio"])
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  const source = `let timestamps = fn(model) => model |> extend { createdAt : DateTime |> default now }
+model User = { id : Int |> primaryKey } |> timestamps
+model Post = { authorId : Int |> references User.id } |> index [.authorId]`
+  const schemaUri = new URL("../examples/editor.schema", import.meta.url).href
+  const document = TextDocument.create(schemaUri, "schema", 1, source)
+  const atOffset = (offset: number) => ({ textDocument: { uri: schemaUri }, position: document.positionAt(offset) })
+  server.notify("textDocument/didOpen", { textDocument: { uri: schemaUri, languageId: "schema", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1, schemaUri)).diagnostics, [])
+  assert.equal((await server.request<Hover>("textDocument/hover", atOffset(source.lastIndexOf("timestamps"))))?.contents.value, "Model -> Model")
+  assert.equal((await server.request<Hover>("textDocument/hover", atOffset(source.lastIndexOf("authorId"))))?.contents.value, "Int")
+  const id = source.indexOf("id :")
+  assert.deepEqual(await server.request("textDocument/definition", atOffset(source.indexOf("User.id") + 5)), {
+    uri: schemaUri, range: { start: document.positionAt(id), end: document.positionAt(id + 2) }
+  })
+  const helper = source.indexOf("timestamps")
+  assert.deepEqual(await server.request("textDocument/definition", atOffset(source.lastIndexOf("timestamps"))), {
+    uri: schemaUri, range: { start: document.positionAt(helper), end: document.positionAt(helper + "timestamps".length) }
+  })
+  assert.ok((await server.request<{ data: number[] }>("textDocument/semanticTokens/full", { textDocument: { uri: schemaUri } })).data.length > 0)
+  server.notify("textDocument/didChange", { textDocument: { uri: schemaUri, version: 2 }, contentChanges: [{ text: "model User = { id : Int } |> index [.missing]" }] })
+  assert.match((await server.diagnostics(2, schemaUri)).diagnostics[0]!.message, /Unknown field: User.missing/)
+  await server.shutdown()
+})
+
 test("HM stdio LSP specializes uses without losing definition identity", { timeout: 10000 }, async t => {
   const server = client(t, [fileURLToPath(new URL("../examples/hm/hm-lsp.ts", import.meta.url)), "--stdio"])
   await server.request("initialize", { processId: null, capabilities: {} })
