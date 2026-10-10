@@ -1,0 +1,20 @@
+(shape Named {name string})
+(def greet (fn [(person Named)] (concat "Hello, " (. person name))))
+
+(def birthday
+  (fn [(person {age number ..r})]
+    (update person age (+ (. person age) 1))))
+
+(def activate (fn [person] (extend person {active true})))
+
+(def compose (fn [f g x] (f (g x))))
+(def celebrate (compose activate birthday))
+(def ada (celebrate {name "Ada" age 36 language "Shapes"}))
+
+(def counter (activate {count 42}))
+
+{greeting (greet ada)
+  age (. ada age)
+    language (. ada language)
+    active (. ada active)
+    count (. counter count)}

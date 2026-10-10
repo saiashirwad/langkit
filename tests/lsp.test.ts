@@ -731,3 +731,24 @@ test(
     await server.shutdown();
   },
 );
+
+test("Shapes LSP exposes macro templates, expanded results and lexical definitions", { timeout: 15000 }, async (t) => {
+  const server = client(t, [fileURLToPath(new URL('../examples/shapes/shapes-lsp.ts', import.meta.url)), '--stdio']);
+  await server.request('initialize', { processId: null, rootUri: null, capabilities: {} });
+  server.notify('initialized', {});
+  const source = '(macro twice [value] (+ value value))\n(macro four [value] (twice (twice value)))\n(four 10.5)';
+  const macroUri = new URL('../examples/shapes/editor.shapes', import.meta.url).href;
+  server.notify('textDocument/didOpen', { textDocument: { uri: macroUri, languageId: 'shapes', version: 1, text: source } });
+  assert.deepEqual((await server.diagnostics(1, macroUri)).diagnostics, []);
+  const location = (offset: number) => ({ textDocument: { uri: macroUri }, position: position(source, offset) });
+  const declaration = await server.request<Hover>('textDocument/hover', location(source.indexOf('four')));
+  assert.equal(declaration?.contents.value, '(macro four [value]) — expression template; typechecked at use');
+  const call = await server.request<Hover>('textDocument/hover', location(source.lastIndexOf('four')));
+  assert.equal(call?.contents.value, '(macro four [value]) — expression template; typechecked at use\nExpanded result: number');
+  for (const [use, name] of [[source.lastIndexOf('four'), 'four'], [source.lastIndexOf('twice'), 'twice']] as const) {
+    const definition = await server.request('textDocument/definition', location(use));
+    const start = source.indexOf(name);
+    assert.deepEqual(definition, { uri: macroUri, range: { start: position(source, start), end: position(source, start + name.length) } });
+  }
+  await server.shutdown();
+});

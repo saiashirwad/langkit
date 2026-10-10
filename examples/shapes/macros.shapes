@@ -1,0 +1,46 @@
+(macro twice [value]
+  (let [result value]
+    (+ result result)))
+
+(macro unless [condition otherwise body]
+  (if condition otherwise body))
+
+(macro pipe [value first second]
+  (second (first value)))
+
+(macro withGreeting [person]
+  (let [result person]
+    (extend result {greeting (concat "Hello, " (. result name))})))
+
+(macro activate [person]
+  (extend person {active true}))
+
+(macro birthday [person]
+  (let [result person]
+    (update result age (+ (. result age) 1))))
+
+(def celebrate (fn [person] (activate (birthday person))))
+(def greet (fn [person] (withGreeting person)))
+
+(def original {name "Ada" age 36 language "Shapes"})
+(def updated (pipe original celebrate greet))
+
+(def hygiene
+  (let [result 21
+        concat (fn [left right] "caller shadow")]
+    {twice (twice result)
+     greeting (. (withGreeting original) greeting)}))
+
+(def summary
+  (unless (> (. updated age) 40)
+    "experienced"
+    "still exploring"))
+
+{originalAge (. original age)
+ updatedAge (. updated age)
+ name (. updated name)
+ language (. updated language)
+ active (. updated active)
+ twice (. hygiene twice)
+ greeting (. hygiene greeting)
+ summary summary}

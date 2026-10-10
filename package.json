@@ -28,7 +28,9 @@
     "ur": "node examples/ur/ur.ts",
     "ur:lsp": "node examples/ur/ur-lsp.ts --stdio",
     "schema": "node examples/schema/schema.ts",
-    "schema:lsp": "node examples/schema/schema-lsp.ts --stdio"
+    "schema:lsp": "node examples/schema/schema-lsp.ts --stdio",
+    "shapes": "node examples/shapes/shapes.ts",
+    "shapes:lsp": "node examples/shapes/shapes-lsp.ts --stdio"
   },
   "dependencies": {
     "parserator": "0.3.0",

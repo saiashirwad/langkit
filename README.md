@@ -16,7 +16,7 @@ pnpm typecheck
 pnpm test
 ```
 
-Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, `ur/`, and `schema/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
+Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, `ur/`, `schema/`, and `shapes/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
 
 The whole toy language is in **[examples/toy/toy.ts](examples/toy/toy.ts)**, in reading order:
 
@@ -34,6 +34,34 @@ let inc = fn(x: number) => x + 1 in
 let answer = twice(inc)(40) in
 if answer > 40 then answer else 0
 ```
+
+## Shapes: a row-polymorphic Lisp
+
+[Shapes](examples/shapes/README.md) combines Lisp syntax with structural shape
+requirements and inferred, unique-label row types. Unknown fields survive
+functions and immutable updates; disjoint extension carries absence constraints
+through polymorphic uses.
+
+```sh
+pnpm shapes                         # run the included sample
+pnpm shapes path/to/program.shapes
+pnpm shapes:lsp                     # stdio language server
+```
+
+```lisp
+(shape Named {name string})
+(def greet (fn [(person Named)] (concat "Hello, " (. person name))))
+(def birthday
+  (fn [(person {age number ..r})]
+    (update person age (+ (. person age) 1))))
+(greet (birthday {name "Ada" age 36}))
+```
+
+It includes local/let-polymorphic inference, shared row annotations, higher-order
+functions, projection, type-changing updates, disjoint extension/closed-right
+merge, field selection, and hygienic expression-template macros checked at each
+use. Try `pnpm shapes examples/shapes/macros.shapes` for a macro showcase. See the
+[language guide](examples/shapes/README.md) for syntax and deliberate limits.
 
 ## The pieces
 

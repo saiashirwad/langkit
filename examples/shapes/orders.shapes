@@ -1,0 +1,91 @@
+(shape Customer {name string address {city string country string}})
+(shape Item {name string price number})
+
+(def compose (fn [f g x] (f (g x))))
+
+(def lineTotal
+  (fn [(line {item Item quantity number ..r})]
+    (* (. (. line item) price) (. line quantity))))
+
+(def priceLine
+  (fn [line]
+    (extend line {subtotal (lineTotal line)})))
+
+(def discountLine
+  (fn [rate line]
+    (update line subtotal (* (. line subtotal) (- 1 rate)))))
+
+(def describeLine
+  (fn [line]
+    (extend line {description (concat (. (. line item) name) " — ready to ship")})))
+
+(def prepareLine
+  (compose describeLine (compose (discountLine 0.1) priceLine)))
+
+(def customer
+  {name "Ada"
+   address {city "London" country "UK"}
+   email "ada@example.test"
+   member true})
+
+(def notebook
+  (prepareLine
+    {item {name "Notebook" price 12 color "violet"}
+     quantity 3
+     gift true}))
+
+(def pencil
+  (prepareLine
+    {item {name "Pencil" price 2 hardness "HB"}
+     quantity 5
+     warehouse "north"}))
+
+(def shippingCost
+  (fn [(buyer Customer) subtotal]
+    (if (> subtotal 50)
+      0
+      (if (. buyer member) 3 7))))
+
+(def priceOrder
+  (fn [order]
+    (let [lines (. order lines)
+          subtotal (+ (. (. lines first) subtotal) (. (. lines second) subtotal))
+          shipping (shippingCost (. order customer) subtotal)]
+      (extend order
+        {subtotal subtotal
+         shipping shipping
+         total (+ subtotal shipping)}))))
+
+(def pay
+  (fn [reference order]
+    (extend order
+      {payment {reference reference amount (. order total) settled true}})))
+
+(def receipt
+  (fn [order]
+    (merge
+      (select order [id total shipping])
+      {message (concat "Thank you, " (. (. order customer) name))
+       destination (. (. (. order customer) address) city)
+       reference (. (. order payment) reference)})))
+
+(def checkout (compose (pay "payment-0042") priceOrder))
+
+(def order
+  (checkout
+    {id "order-0042"
+     customer customer
+     lines {first notebook second pencil}
+     priority true}))
+
+(def archived
+  (update order customer (select (. order customer) [name address])))
+
+{receipt (receipt archived)
+ originalEmail (. (. order customer) email)
+ archivedCustomer (. archived customer)
+ notebookColor (. (. (. (. order lines) first) item) color)
+ pencilHardness (. (. (. (. order lines) second) item) hardness)
+ gift (. (. (. order lines) first) gift)
+ warehouse (. (. (. order lines) second) warehouse)
+ priority (. archived priority)}

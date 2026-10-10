@@ -12,10 +12,11 @@ vim.filetype.add({
     [vim.pesc(root) .. "/.*%.strict"] = "strict",
     [vim.pesc(root) .. "/.*%.schema"] = "schema",
     [vim.pesc(root) .. "/.*%.ur"] = "ur",
+    [vim.pesc(root) .. "/.*%.shapes"] = "shapes",
   },
 })
 
-for _, language in ipairs({ "toy", "hm", "rows", "advanced", "strict", "schema", "ur" }) do
+for _, language in ipairs({ "toy", "hm", "rows", "advanced", "strict", "schema", "ur", "shapes" }) do
   vim.lsp.config(language, {
     cmd = { "node", root .. "/examples/" .. language .. "/" .. language .. "-lsp.ts", "--stdio" },
     filetypes = { language },
