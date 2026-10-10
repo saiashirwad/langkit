@@ -621,15 +621,24 @@ node examples/ur/ur-lsp.ts --stdio
 # Also available as pnpm <language>:lsp; use direct node commands in editors.
 ```
 
-It provides syntax/type diagnostics, type hover, go-to-definition, and semantic highlighting. Rows, advanced, and strict support definitions in imported files and recheck open importers when an imported buffer changes or closes. It only analyzes text; it never emits or executes a program. The server uses the standard `vscode-languageserver` packages, imported only through `langkit/lsp`.
+It provides syntax/type diagnostics, type hover, go-to-definition, and semantic highlighting. Rows, advanced, and strict support definitions in imported files and recheck open importers when an imported buffer changes or closes. It only analyzes text; it never emits or executes a program. The server uses the standard `vscode-languageserver` packages. `langkit/lsp` itself has no Node imports: the adapter supplies the connection and reads files that are not open in the editor.
 
 The language adapter is just:
 
 ```ts
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
+import { createConnection } from "vscode-languageserver/node"
 import { serve } from "langkit/lsp"
 import { analyze, show } from "./toy.ts"
 
-serve(analyze, show)
+const read = (uri: string): string => {
+  const url = new URL(uri)
+  if (url.protocol !== "file:") throw new Error("Only local file imports are supported")
+  return readFileSync(fileURLToPath(url), "utf8")
+}
+
+serve(createConnection(process.stdin, process.stdout), read, analyze, show)
 ```
 
 ### What the language author supplies

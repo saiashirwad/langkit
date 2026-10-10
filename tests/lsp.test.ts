@@ -584,8 +584,9 @@ test(
   "analyzer exceptions discard old facts without breaking the connection",
   { timeout: 10000 },
   async (t) => {
-    const source = `import { serve } from "langkit/lsp";
-serve(text => {
+    const source = `import { createConnection } from "vscode-languageserver/node";
+import { serve } from "langkit/lsp";
+serve(createConnection(process.stdin, process.stdout), uri => { throw new Error(uri); }, text => {
   if (text === "bad") throw new Error("broken analyzer");
   return { diagnostics: [], definitions: [], references: [], tokens: [], types: [{ span: { start: 0, end: text.length }, type: "number" }] };
 }, type => type);`;
@@ -619,9 +620,13 @@ test(
     const importedUri = pathToFileURL(join(directory, "dep.mini")).href;
     const rootUri = pathToFileURL(join(directory, "main.mini")).href;
     writeFileSync(join(directory, "dep.mini"), "header\n\nlet value = 42");
-    const script = `import { serve } from "langkit/lsp";
+    const script = `import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { createConnection } from "vscode-languageserver/node";
+import { serve } from "langkit/lsp";
 const dep = ${JSON.stringify(importedUri)};
-serve((source, context) => {
+const read = uri => readFileSync(fileURLToPath(uri), "utf8");
+serve(createConnection(process.stdin, process.stdout), read, (source, context) => {
   if (context.uri === dep) return { diagnostics: [], definitions: [], references: [], tokens: [], types: [] };
   const imported = context.read(dep);
   const id = Symbol("value");

@@ -1,12 +1,12 @@
 import {
-  createConnection,
   DiagnosticSeverity,
   MarkupKind,
   PositionEncodingKind,
   TextDocuments,
   TextDocumentSyncKind,
+  type Connection,
   type Range,
-} from "vscode-languageserver/node";
+} from "vscode-languageserver";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
   definitionAt,
@@ -17,8 +17,6 @@ import {
   type Token,
 } from "./analysis.ts";
 import type { Span } from "./diagnostic.ts";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 /** LSP tokens cannot cross line endings; lengths and columns are UTF-16. */
 export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): number[] => {
@@ -59,12 +57,16 @@ export type AnalysisContext = {
   readonly read: (uri: string) => string;
 };
 
-/** A synchronous adapter with open-buffer import snapshots. No program is executed. */
+/**
+ * A synchronous adapter with open-buffer import snapshots. No program is executed.
+ * The caller supplies the connection and reads files that are not open.
+ */
 export const serve = <T>(
+  connection: Connection,
+  read: (uri: string) => string,
   analyze: (source: string, context: AnalysisContext) => Analysis<T>,
   show: (type: T) => string,
 ): void => {
-  const connection = createConnection(process.stdin, process.stdout);
   const documents = new TextDocuments(TextDocument);
   const analyses = new Map<string, Analysis<T>>();
   const range = (document: TextDocument, span: Span): Range => ({
@@ -85,18 +87,12 @@ export const serve = <T>(
     },
   }));
 
-  const read = (uri: string): string => {
-    const open = documents.get(uri);
-    if (open) return open.getText();
-    const url = new URL(uri);
-    if (url.protocol !== "file:") throw new Error("Only local file imports are supported");
-    return readFileSync(fileURLToPath(url), "utf8");
-  };
+  const snapshot = (uri: string): string => documents.get(uri)?.getText() ?? read(uri);
 
   const update = (document: TextDocument): void => {
     let analysis: Analysis<T>;
     try {
-      analysis = analyze(document.getText(), { uri: document.uri, read });
+      analysis = analyze(document.getText(), { uri: document.uri, read: snapshot });
     } catch (error) {
       connection.console.error(`Analysis failed for ${document.uri}: ${String(error)}`);
       analysis = {
@@ -157,7 +153,7 @@ export const serve = <T>(
     let target = documents.get(uri);
     if (!target) {
       try {
-        target = TextDocument.create(uri, "", 0, analysis.sources?.get(uri) ?? read(uri));
+        target = TextDocument.create(uri, "", 0, analysis.sources?.get(uri) ?? snapshot(uri));
       } catch {
         return null;
       }
