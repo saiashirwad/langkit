@@ -46,11 +46,11 @@ Nested named shapes introduce their own fresh tails.
 The inferred type is effectively:
 
 ```text
-{age: number | r} -> {age: number | r}, where r lacks age
+{age: number, ..r} -> {age: number, ..r}
 ```
 
 This is more precise than forgetting extra fields after a structural check.
-The *same row* appears in the input and output, so all unknown fields survive.
+The _same row_ appears in the input and output, so all unknown fields survive.
 Unannotated projection and extension infer row requirements automatically:
 
 ```lisp
@@ -60,7 +60,7 @@ Unannotated projection and extension infer row requirements automatically:
 (def celebrate (compose activate birthday))
 ```
 
-`activate` has type `{| r} -> {active: boolean | r}` with `r lacks active`.
+`activate` has type `{..r} -> {active: boolean, ..r}` with the implicit constraint `r lacks active`.
 Calling it with an already-active record is a **compile-time error**, even through
 an alias or a higher-order function. Every generalized use receives fresh type
 variables, row variables, and copies of their absence constraints.
@@ -83,23 +83,23 @@ expression. Definitions are sequential and non-recursive. Semicolon comments run
 to the end of the line. Strings use JSON escapes. Names use letters/underscore,
 then letters, digits, underscores, `?`, `!`, or `-`.
 
-| Form | Meaning |
-| --- | --- |
-| `42`, `-2.5`, `1e3`, `true`, `"hello"` | Number, boolean, and string literals |
-| `{name "Ada" age 36}` | Immutable record; duplicate labels are rejected |
-| `(fn [x y] body)` | Curried function; at least one parameter |
-| `(fn [(x number) y] body)` | Mix annotated and inferred parameters |
-| `(f x y)` | Curried application; partial application is supported |
-| `(let [x value y other] body)` | Sequential, lexical, polymorphic bindings |
-| `(if condition then else)` | Boolean condition; only the chosen branch runs |
-| `(. record field)` | Require and project a field |
-| `(extend record {new value ...})` | Add fields proven absent from the input |
-| `(update record field value)` | Require an existing field, replace its value and type |
-| `(merge left right)` | Disjoint merge; right must have a statically closed row |
-| `(select record [x y])` | Require fields and construct an exact record containing only them |
-| `(shape Name {field Type ...})` | Define an open structural record requirement |
-| `(def name value)` | Top-level polymorphic binding |
-| `(macro name [argument ...] expression)` | Hygienic expression-template macro |
+| Form                                     | Meaning                                                           |
+| ---------------------------------------- | ----------------------------------------------------------------- |
+| `42`, `-2.5`, `1e3`, `true`, `"hello"`   | Number, boolean, and string literals                              |
+| `{name "Ada" age 36}`                    | Immutable record; duplicate labels are rejected                   |
+| `(fn [x y] body)`                        | Curried function; at least one parameter                          |
+| `(fn [(x number) y] body)`               | Mix annotated and inferred parameters                             |
+| `(f x y)`                                | Curried application; partial application is supported             |
+| `(let [x value y other] body)`           | Sequential, lexical, polymorphic bindings                         |
+| `(if condition then else)`               | Boolean condition; only the chosen branch runs                    |
+| `(. record field)`                       | Require and project a field                                       |
+| `(extend record {new value ...})`        | Add fields proven absent from the input                           |
+| `(update record field value)`            | Require an existing field, replace its value and type             |
+| `(merge left right)`                     | Disjoint merge; right must have a statically closed row           |
+| `(select record [x y])`                  | Require fields and construct an exact record containing only them |
+| `(shape Name {field Type ...})`          | Define an open structural record requirement                      |
+| `(def name value)`                       | Top-level polymorphic binding                                     |
+| `(macro name [argument ...] expression)` | Hygienic expression-template macro                                |
 
 `update` may change the selected field's type, but never the original record:
 
@@ -233,6 +233,43 @@ both caller-variable and definition-site hygiene:
 pnpm shapes examples/shapes/macros.shapes
 ```
 
+## Named shapes in editor types
+
+Parameter annotations retain their shape names when it is safe to abbreviate:
+
+```lisp
+(shape Customer {name string email string})
+(def greet (fn [(customer Customer)] (concat "Hello, " (. customer name))))
+greet
+```
+
+The function hover is `(Customer -> string)`. Hovering on the shape declaration
+or a `Customer` annotation shows its fields; go-to-definition from annotations
+jumps to the shape declaration. References inside function-type annotations,
+nested record annotations, and macro-template annotations are also tracked.
+Shape names and value names have separate identities.
+
+If the body requires another field, the hover says, for example,
+`Customer & { member: boolean }`. `&` here is **display notation only**, not new
+intersection syntax or a nominal type. Aliases are annotation provenance, not
+names guessed for structurally matching inferred records. Structural acceptance
+and all existing row constraints remain unchanged.
+
+A shared remainder remains explicit: an identity function has type
+`(Customer & { ..r } -> Customer & { ..r })`. Additional absence constraints
+remain visible; only constraints already implied by the named or displayed
+fields are omitted. Closed instantiations display their full exact record, not
+an open shape name. Record transformations may display their result structurally
+rather than carrying a name onto changed fields.
+
+Abbreviation is deliberately conservative: shapes with inference variables or
+open nested rows in their declared fields are expanded, so specialization and
+field correlations cannot be hidden behind a bare name. Nested named shapes can
+still appear inside those expanded fields. A shape with only fixed fields
+(including exact nested records or fixed function types) can be abbreviated.
+Macro definitions remain checked at use; observing their known type references
+does not check unused templates or resolve names declared later.
+
 ## Compiler and editor API
 
 ```ts
@@ -249,8 +286,8 @@ if (result.success) {
 ```
 
 `analyze` provides expression types, value definitions/references, diagnostics,
-and semantic tokens. The language server uses langkit's shared adapter. Shape
-names and record labels do not yet have dedicated definition/reference facts;
+and semantic tokens. The language server uses langkit's shared adapter. Record
+labels do not yet have dedicated definition/reference facts;
 comments are skipped by semantic highlighting. There is no import system.
 
 Implementation:
@@ -274,3 +311,7 @@ solver. Use `extend` or a closed right operand to `merge` instead.
 Arbitrary field removal from an unknown row is not implemented; `select` supports
 explicit narrowing without changing the shared IR. These boundaries are checked
 or absent from the syntax, not bypassed with runtime casts.
+
+Hover types use `..r` for open rows, keep short arrow tails together, and omit
+absence constraints already implied by visible fields beside the same row tail.
+Additional absence constraints remain visible under `where`; inference is unchanged.

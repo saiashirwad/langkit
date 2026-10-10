@@ -1,3 +1,6 @@
+(shape Named {name string})
+(shape Aged {age number})
+
 (macro twice [value]
   (let [result value]
     (+ result result)))
@@ -19,15 +22,15 @@
   (let [result person]
     (update result age (+ (. result age) 1))))
 
-(def celebrate (fn [person] (activate (birthday person))))
-(def greet (fn [person] (withGreeting person)))
+(def celebrate (fn [(person Aged)] (activate (birthday person))))
+(def greet (fn [(person Named)] (withGreeting person)))
 
 (def original {name "Ada" age 36 language "Shapes"})
 (def updated (pipe original celebrate greet))
 
 (def hygiene
   (let [result 21
-        concat (fn [left right] "caller shadow")]
+        concat (fn [(left string) (right string)] "caller shadow")]
     {twice (twice result)
      greeting (. (withGreeting original) greeting)}))
 

@@ -1,8 +1,9 @@
 (shape Named {name string})
+(shape Aged {age number})
 (def greet (fn [(person Named)] (concat "Hello, " (. person name))))
 
 (def birthday
-  (fn [(person {age number ..r})]
+  (fn [(person Aged)]
     (update person age (+ (. person age) 1))))
 
 (def activate (fn [person] (extend person {active true})))

@@ -37,6 +37,7 @@ import {
   generalize,
   instantiate,
   show as showType,
+  named,
   type Type,
   type Entry,
   type RowVariable,
@@ -48,22 +49,38 @@ export type MacroInfo = {
   readonly params: readonly string[];
   readonly result?: Type;
 };
-export type EditorType = Type | MacroInfo;
-export const show = (type: EditorType): string => type.kind === "macro"
-  ? `(macro ${type.name} [${type.params.join(" ")}]) — expression template; typechecked at use${type.result ? `\nExpanded result: ${showType(type.result)}` : ""}`
-  : showType(type);
+export type ShapeInfo = { readonly kind: "shape"; readonly name: string; readonly body: Type };
+export type EditorType = Type | MacroInfo | ShapeInfo;
+export const show = (type: EditorType): string => {
+  if (type.kind === "shape") {
+    const heading = `shape ${type.name} =`;
+    const body = showType(type.body);
+    return body.includes("\n") || heading.length + body.length + 1 > 80
+      ? `${heading}\n${body}` : `${heading} ${body}`;
+  }
+  if (type.kind !== "macro") return showType(type);
+  const signature = `(macro ${type.name} [${type.params.join(" ")}])`;
+  const description = "expression template; typechecked at use";
+  const heading = `${signature} — ${description}`;
+  const result = type.result ? showType(type.result) : undefined;
+  return (heading.length <= 80 ? heading : `${signature}\n${description}`)
+    + (result === undefined ? "" : result.includes("\n") || result.length + 17 > 80
+      ? `\nExpanded result:\n${result}`
+      : `\nExpanded result: ${result}`);
+};
 export { parse } from "./shapes-syntax.ts";
 
 const code = create<Type>();
 const facts = createAnalysis<EditorType>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
-const shapes = scoped<ReadonlyMap<string, Form>>(new Map());
+type Shape = { readonly id: symbol; readonly name: string; readonly body: Form; readonly type: ShapeInfo };
+const shapes = scoped<ReadonlyMap<string, Shape>>(new Map());
 type Macro = { readonly id: symbol; readonly name: string; readonly params: readonly string[]; readonly body: Form; readonly context: ExpansionContext };
 type ExpansionContext = {
   readonly generated: boolean;
   readonly values: ReadonlyMap<string, Entry>;
   readonly macros: ReadonlyMap<string, Macro>;
-  readonly shapes: ReadonlyMap<string, Form>;
+  readonly shapes: ReadonlyMap<string, Shape>;
 };
 const macros = scoped<ReadonlyMap<string, Macro>>(new Map());
 const expansionDepth = scoped(0);
@@ -137,7 +154,13 @@ const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
       }
       const shape = (yield* get(shapes)).get(form.value);
       if (!shape) return yield* fail(`Unknown type: ${form.value}`);
-      return yield* annotation(shape, typeScope(), true);
+      if (!(yield* get(generated))) {
+        const span = { start: form.span.start, end: form.span.start + form.value.length };
+        yield* facts.reference(shape, span);
+        yield* facts.typed(shape.type, span);
+      }
+      const resolved = yield* within(generated, true, annotation(shape.body, typeScope(), true));
+      return named(resolved, shape.name);
     }
     if (form.kind === "record") {
       const fields = new Map<string, Type>();
@@ -171,6 +194,22 @@ const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
       "Expected a type: number, boolean, string, 'a, a shape, a record, or (-> A B)",
     );
   }).at(form.span);
+
+// Observe template annotations without checking unused templates or specializing their types.
+const shapeReferences = (form: Form): Check<void> => check(function* () {
+  if (form.kind === "symbol") {
+    const shape = (yield* get(shapes)).get(form.value);
+    if (shape) {
+      const span = { start: form.span.start, end: form.span.start + form.value.length };
+      yield* facts.reference(shape, span);
+      yield* facts.typed(shape.type, span);
+    }
+  } else if (form.kind === "record") {
+    for (let i = 1; i < form.items.length; i += 2) yield* shapeReferences(form.items[i]!);
+  } else if (form.kind === "list" && atom(form.items[0], "->")) {
+    for (const item of form.items.slice(1)) yield* shapeReferences(item);
+  }
+});
 
 const fields = (form: Form): Check<{ name: string; value: Value<Type> }[]> =>
   check(function* () {
@@ -490,7 +529,7 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
                   text === "true" || text === "false" || /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text) ||
                   (callee && context.macros.has(text))) return reference;
               return yield* fail(`Unknown definition-site identifier in macro ${key}: ${text}`).at(reference.span);
-            }));
+            }), undefined, shapeReferences);
             const macro: Macro = { id: Symbol(key), name: key, params, body, context };
             yield* facts.define({ ...macro, type: { kind: "macro", name: key, params } }, { start: form.items[1]!.span.start, end: form.items[1]!.span.start + key.length }, "function");
             return yield* bind(macros, [[key, macro]], next(index + 1));
@@ -510,8 +549,10 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
                 body.span,
               );
             // Resolve now against earlier definitions; storing syntax freshens each use.
-            yield* annotation(body, typeScope());
-            return yield* bind(shapes, [[key, body]], next(index + 1));
+            const type: ShapeInfo = { kind: "shape", name: key, body: yield* annotation(body, typeScope(), true) };
+            const shape: Shape = { id: Symbol(key), name: key, body, type };
+            yield* facts.define(shape, { start: label.span.start, end: label.span.start + key.length });
+            return yield* bind(shapes, [[key, shape]], next(index + 1));
           }
           if (form.kind === "list" && atom(form.items[0], "def")) {
             yield* arity(form, form.items, 3);

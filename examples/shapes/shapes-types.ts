@@ -5,8 +5,21 @@ import type { Binding } from "langkit/ir";
 export type Type =
   | { readonly kind: "number" | "boolean" | "string" }
   | { readonly kind: "function"; readonly param: Type; readonly result: Type }
-  | { readonly kind: "record"; readonly row: Row }
+  | { readonly kind: "record"; readonly row: Row; readonly shape?: ShapeName }
   | Variable;
+
+export type ShapeName = { readonly name: string; readonly fields: ReadonlyMap<string, string> };
+
+// Only closed, variable-free fields can be hidden without losing specialization or sharing.
+export const named = (type: Type, name: string): Type => {
+  if (type.kind !== "record") return type;
+  const fields = new Map<string, string>();
+  for (const [label, field] of flatten(type.row).fields) {
+    if (free(field).size) return type;
+    fields.set(label, show(field));
+  }
+  return { ...type, shape: { name, fields } };
+};
 
 type Variable = { readonly kind: "variable"; instance?: Type };
 
@@ -55,24 +68,116 @@ export const flatten = (input: Row): Row => {
   return row(fields, tail);
 };
 
+type Display = {
+  readonly compact: string;
+  readonly alias?: string;
+  readonly fields?: readonly (readonly [string, Display])[];
+  readonly tail?: string;
+  readonly param?: Display;
+  readonly result?: Display;
+};
+
+const displayWidth = 80;
+
+// Prefix/suffix widths are included so nesting does not overflow an otherwise fitting line.
+const layout = (node: Display, indent = 0, prefix = "", suffix = ""): string => {
+  const pad = " ".repeat(indent);
+  if (indent + prefix.length + node.compact.length + suffix.length <= displayWidth)
+    return pad + prefix + node.compact + suffix;
+  if (node.fields) {
+    const lines = [pad + prefix + (node.alias ? node.alias + " & " : "") + "{"];
+    for (const [index, [name, value]] of node.fields.entries()) {
+      lines.push(layout(value, indent + 2, `${name}: `, index < node.fields.length - 1 || node.tail ? "," : ""));
+    }
+    if (node.tail) lines.push(`${pad}  ..${node.tail}`);
+    lines.push(pad + "}" + suffix);
+    return lines.join("\n");
+  }
+  if (node.param && node.result) {
+    // Parenthesize the whole chain when nested, retaining higher-order grouping.
+    const nested = prefix.length > 0 || suffix.length > 0;
+    const lines: string[] = nested ? [pad + prefix + "("] : [];
+    const depth = indent + (nested ? 2 : 0);
+    let current = node;
+    while (current.param && current.result) {
+      const parameter = layout(current.param, depth, "", " ->");
+      const rest: string[] = [];
+      let tail = current.result;
+      while (tail.param && tail.result) {
+        rest.push(tail.param.compact);
+        tail = tail.result;
+      }
+      rest.push(tail.compact);
+      const remaining = rest.join(" -> ");
+      const lastLine = parameter.slice(parameter.lastIndexOf("\n") + 1);
+      if (lastLine.length + 1 + remaining.length <= displayWidth) {
+        lines.push(parameter + " " + remaining);
+        if (nested) lines.push(pad + ")" + suffix);
+        return lines.join("\n");
+      }
+      lines.push(parameter);
+      current = current.result;
+    }
+    lines.push(layout(current, depth));
+    if (nested) lines.push(pad + ")" + suffix);
+    return lines.join("\n");
+  }
+  // Identifiers are indivisible: never truncate a long field or variable name.
+  return pad + prefix + node.compact + suffix;
+};
+
 export const show = (type: Type): string => {
   const names = new Map<Variable, string>();
   const rows = new Map<RowVariable, string>();
-  const visit = (type: Type): string => {
+  const implied = new Map<RowVariable, Set<string>>();
+  const occurrences = new Map<RowVariable, number>();
+  const count = (input: Type): void => {
+    const t = prune(input);
+    if (t.kind === "function") { count(t.param); count(t.result); }
+    if (t.kind === "record") {
+      const { fields, tail } = flatten(t.row);
+      if (tail) occurrences.set(tail, (occurrences.get(tail) ?? 0) + 1);
+      for (const field of fields.values()) count(field);
+    }
+  };
+  count(type);
+  const visit = (type: Type): Display => {
     type = prune(type);
-    if (type.kind === "function") return `(${visit(type.param)} -> ${visit(type.result)})`;
+    if (type.kind === "function") {
+      const param = visit(type.param);
+      const result = visit(type.result);
+      return { compact: `(${param.compact} -> ${result.compact})`, param, result };
+    }
     if (type.kind === "record") {
       const { fields, tail } = flatten(type.row);
-      const labels = [...fields]
+      const alias = tail && type.shape && [...type.shape.fields].every(([label, baseline]) => {
+        const field = fields.get(label);
+        return field && !free(field).size && show(field) === baseline;
+      }) ? type.shape : undefined;
+      const entries = [...fields]
+        .filter(([label]) => !alias?.fields.has(label))
         .sort(([a], [b]) => a.localeCompare(b))
-        .map(([name, type]) => `${name}: ${visit(type)}`);
+        .map(([name, type]) => [name, visit(type)] as const);
+      const labels = entries.map(([name, value]) => `${name}: ${value.compact}`);
       if (tail) {
         if (!rows.has(tail)) rows.set(tail, `r${rows.size || ""}`);
-        return `{ ${labels.join(", ")}${labels.length ? " " : ""}| ${rows.get(tail)} }`;
+        const visible = implied.get(tail) ?? new Set<string>();
+        for (const label of fields.keys()) visible.add(label);
+        implied.set(tail, visible);
+        const showTail = !alias || (occurrences.get(tail) ?? 0) > 1 ||
+          [...tail.lacks].some(label => !fields.has(label));
+        if (alias && !labels.length && !showTail) return { compact: alias.name };
+        const remainder = `{ ${labels.join(", ")}${showTail ? `${labels.length ? ", " : ""}..${rows.get(tail)}` : ""} }`;
+        return {
+          compact: alias ? `${alias.name} & ${remainder}` : `{ ${labels.join(", ")}${labels.length ? ", " : ""}..${rows.get(tail)} }`,
+          ...(alias ? { alias: alias.name } : {}),
+          fields: entries,
+          ...(showTail ? { tail: rows.get(tail)! } : {}),
+        };
       }
-      return labels.length ? `{ ${labels.join(", ")} }` : "{}";
+      return { compact: labels.length ? `{ ${labels.join(", ")} }` : "{}", fields: entries };
     }
-    if (type.kind !== "variable") return type.kind;
+    if (type.kind !== "variable") return { compact: type.kind };
     if (!names.has(type)) {
       const index = names.size;
       names.set(
@@ -80,13 +185,33 @@ export const show = (type: Type): string => {
         String.fromCharCode(97 + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : ""),
       );
     }
-    return names.get(type)!;
+    return { compact: names.get(type)! };
   };
   const result = visit(type);
   const constraints = [...rows]
-    .filter(([variable]) => variable.lacks.size)
-    .map(([variable, name]) => `${name} lacks ${[...variable.lacks].sort().join(", ")}`);
-  return result + (constraints.length ? ` where ${constraints.join("; ")}` : "");
+    .map(([variable, name]) => ({
+      name,
+      labels: [...variable.lacks].filter(label => !implied.get(variable)?.has(label)).sort(),
+    }))
+    .filter(({ labels }) => labels.length);
+  const compact = result.compact + (constraints.length
+    ? ` where ${constraints.map(({ name, labels }) => `${name} lacks ${labels.join(", ")}`).join("; ")}`
+    : "");
+  if (compact.length <= displayWidth) return compact;
+  const lines = [layout(result)];
+  if (constraints.length) lines.push("where");
+  for (const { name, labels } of constraints) {
+    let line = `  ${name} lacks`;
+    for (const [index, label] of labels.entries()) {
+      const text = label + (index < labels.length - 1 ? "," : "");
+      if (line.length + 1 + text.length > displayWidth) {
+        lines.push(line);
+        line = `    ${text}`;
+      } else line += ` ${text}`;
+    }
+    lines.push(line);
+  }
+  return lines.join("\n");
 };
 
 export const freeRow = (input: Row, found: Set<FreeVariable>): void => {
@@ -206,7 +331,7 @@ export const instantiate = (scheme: Scheme): Type => {
   const visit = (type: Type): Type => {
     type = prune(type);
     if (type.kind === "function") return fn(visit(type.param), visit(type.result));
-    if (type.kind === "record") return record(visitRow(type.row));
+    if (type.kind === "record") return { ...type, row: visitRow(type.row) };
     if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
     if (!replacements.has(type)) replacements.set(type, fresh());
     return replacements.get(type)!;

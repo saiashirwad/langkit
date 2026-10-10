@@ -1,22 +1,29 @@
 (shape Customer {name string address {city string country string}})
 (shape Item {name string price number})
+(shape Line {item Item quantity number})
+(shape PricedLine {subtotal number})
+(shape LabeledLine {item {name string ..item}})
+(shape Order {customer Customer lines {first PricedLine second PricedLine ..lines}})
+(shape Payable {total number})
+(shape ReceiptOrder
+  {id string total number shipping number customer Customer payment {reference string ..payment}})
 
 (def compose (fn [f g x] (f (g x))))
 
 (def lineTotal
-  (fn [(line {item Item quantity number ..r})]
+  (fn [(line Line)]
     (* (. (. line item) price) (. line quantity))))
 
 (def priceLine
-  (fn [line]
+  (fn [(line Line)]
     (extend line {subtotal (lineTotal line)})))
 
 (def discountLine
-  (fn [rate line]
+  (fn [(rate number) (line PricedLine)]
     (update line subtotal (* (. line subtotal) (- 1 rate)))))
 
 (def describeLine
-  (fn [line]
+  (fn [(line LabeledLine)]
     (extend line {description (concat (. (. line item) name) " — ready to ship")})))
 
 (def prepareLine
@@ -41,13 +48,13 @@
      warehouse "north"}))
 
 (def shippingCost
-  (fn [(buyer Customer) subtotal]
+  (fn [(buyer Customer) (subtotal number)]
     (if (> subtotal 50)
       0
       (if (. buyer member) 3 7))))
 
 (def priceOrder
-  (fn [order]
+  (fn [(order Order)]
     (let [lines (. order lines)
           subtotal (+ (. (. lines first) subtotal) (. (. lines second) subtotal))
           shipping (shippingCost (. order customer) subtotal)]
@@ -56,13 +63,22 @@
          shipping shipping
          total (+ subtotal shipping)}))))
 
+
+
+
+
+
+
+
+
+
 (def pay
-  (fn [reference order]
+  (fn [(reference string) (order Payable)]
     (extend order
       {payment {reference reference amount (. order total) settled true}})))
 
 (def receipt
-  (fn [order]
+  (fn [(order ReceiptOrder)]
     (merge
       (select order [id total shipping])
       {message (concat "Thank you, " (. (. order customer) name))

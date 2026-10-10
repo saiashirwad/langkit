@@ -121,7 +121,7 @@ test("macro caller references retain their definition and type facts", () => {
 
 test("macro row inference remains polymorphic and preserves unknown fields", () => {
   const source = "(macro activate [r] (extend r {active true})) (fn [r] (activate r))";
-  assert.equal(show(compiled(source).type), "({ | r } -> { active: boolean | r }) where r lacks active");
+  assert.equal(show(compiled(source).type), "({ ..r } -> { active: boolean, ..r })");
   assert.equal(evaluate("(macro activate [r] (extend r {active true})) (def f (fn [r] (activate r))) (let [a (f {x true})] (. (f {y 42}) y))"), 42);
 });
 

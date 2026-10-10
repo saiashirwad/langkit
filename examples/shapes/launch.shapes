@@ -1,3 +1,7 @@
+(shape PoweredCraft {fuel number engine number})
+(shape Payload {name string})
+(shape Carrier {name string payload Payload})
+
 (macro pipe3 [value first second third]
   (third (second (first value))))
 
@@ -47,9 +51,9 @@
 
 (def destination {name "Europa" distance 628})
 
-(def lightEngines (fn [ship] (ignite (burn ship 25))))
+(def lightEngines (fn [(ship PoweredCraft)] (ignite (burn ship 25))))
 (def setCourse (fn [ship] (navigate ship destination)))
-(def releaseObservatory (fn [ship] (deploy ship)))
+(def releaseObservatory (fn [(ship Carrier)] (deploy ship)))
 
 (def mission
   (instrument "first-light"
@@ -77,7 +81,7 @@
 (def shadowTest
   (let [craft "not a spacecraft"
         fuel 999
-        concat (fn [left right] "hijacked")]
+        concat (fn [(left string) (right string)] "hijacked")]
     {callerCraft craft
      callerFuel fuel
      remaining (. (burn docked 5) fuel)

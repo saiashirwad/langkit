@@ -17,12 +17,12 @@ const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
   runInNewContext(compiled(source).javascript, { console: { log } }, { timeout: 1000 });
 
 for (const [source, expected] of [
-  ["(fn [r] (. r x))", "({ x: a | r } -> a) where r lacks x"],
-  ["(fn [r] (extend r {flag true}))", "({ | r } -> { flag: boolean | r }) where r lacks flag"],
-  ["(fn [r] (+ (. r x) (. r y)))", "({ x: number, y: number | r } -> number) where r lacks x, y"],
-  ["(fn [r] (update r x true))", "({ x: a | r } -> { x: boolean | r }) where r lacks x"],
-  ["(fn [r] (select r [x]))", "({ x: a | r } -> { x: a }) where r lacks x"],
-  ["(fn [(r {x 'a ..rest})] (. r x))", "({ x: a | r } -> a) where r lacks x"],
+  ["(fn [r] (. r x))", "({ x: a, ..r } -> a)"],
+  ["(fn [r] (extend r {flag true}))", "({ ..r } -> { flag: boolean, ..r })"],
+  ["(fn [r] (+ (. r x) (. r y)))", "({ x: number, y: number, ..r } -> number)"],
+  ["(fn [r] (update r x true))", "({ x: a, ..r } -> { x: boolean, ..r })"],
+  ["(fn [r] (select r [x]))", "({ x: a, ..r } -> { x: a })"],
+  ["(fn [(r {x 'a ..rest})] (. r x))", "({ x: a, ..r } -> a)"],
   ["(fn [f g x] (f (g x)))", "((a -> b) -> ((c -> a) -> (c -> b)))"],
   ["{}", "{}"],
   ["print", "(a -> {})"],

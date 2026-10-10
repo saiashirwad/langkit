@@ -752,3 +752,47 @@ test("Shapes LSP exposes macro templates, expanded results and lexical definitio
   }
   await server.shutdown();
 });
+
+test("Shapes LSP formats the orders pay hover without client-side wrapping", { timeout: 15000 }, async (t) => {
+  const server = client(t, [fileURLToPath(new URL("../examples/shapes/shapes-lsp.ts", import.meta.url)), "--stdio"]);
+  await server.request("initialize", { processId: null, rootUri: null, capabilities: {} });
+  server.notify("initialized", {});
+  const url = new URL("../examples/shapes/orders.shapes", import.meta.url);
+  const source = readFileSync(url, "utf8");
+  server.notify("textDocument/didOpen", { textDocument: { uri: url.href, languageId: "shapes", version: 1, text: source } });
+  assert.deepEqual((await server.diagnostics(1, url.href)).diagnostics, []);
+  const hover = await server.request<Hover>("textDocument/hover", {
+    textDocument: { uri: url.href }, position: position(source, source.indexOf('(pay "') + 1),
+  });
+  assert.equal(hover?.contents.kind, "plaintext");
+  const value = hover!.contents.value;
+  assert.match(value, /^string ->\nPayable & \{\n  customer: Customer & \{ member: boolean, \.\.r \}/);
+  assert.match(value, /\n  payment: \{ amount: number, reference: string, settled: boolean \},/);
+  assert.ok(!value.includes("where"));
+  assert.ok(value.includes("first: PricedLine & { ..r1 }"));
+  assert.ok(value.includes("second: PricedLine & { ..r2 }"));
+  assert.ok(value.includes("..r3"));
+  assert.ok(value.includes("..r4"));
+  assert.ok(value.split("\n").every(line => line.length <= 80));
+  await server.shutdown();
+});
+
+test("Shapes LSP names annotated signatures and resolves shape annotations", { timeout: 15000 }, async (t) => {
+  const server = client(t, [fileURLToPath(new URL("../examples/shapes/shapes-lsp.ts", import.meta.url)), "--stdio"]);
+  await server.request("initialize", { processId: null, rootUri: null, capabilities: {} });
+  server.notify("initialized", {});
+  const uri = new URL("../examples/shapes/named-editor.shapes", import.meta.url).href;
+  const source = '(shape Customer {name string email string})\n(def greet (fn [(c Customer)] (. c name)))\ngreet';
+  server.notify("textDocument/didOpen", { textDocument: { uri, languageId: "shapes", version: 1, text: source } });
+  assert.deepEqual((await server.diagnostics(1, uri)).diagnostics, []);
+  const at = (offset: number) => ({ textDocument: { uri }, position: position(source, offset) });
+  const signature = await server.request<Hover>("textDocument/hover", at(source.indexOf("greet")));
+  assert.equal(signature?.contents.value, "(Customer -> string)");
+  for (const offset of [source.indexOf("Customer"), source.lastIndexOf("Customer")]) {
+    const hover = await server.request<Hover>("textDocument/hover", at(offset));
+    assert.equal(hover?.contents.value, "shape Customer = { email: string, name: string, ..r }");
+    const definition = await server.request("textDocument/definition", at(offset));
+    assert.deepEqual(definition, { uri, range: { start: position(source, 7), end: position(source, 15) } });
+  }
+  await server.shutdown();
+});
