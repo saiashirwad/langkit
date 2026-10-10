@@ -1,0 +1,4 @@
+let twice = fn(f: number -> number) => fn(x: number) => f(f(x)) in
+let inc = fn(x: number) => x + 1 in
+let answer = twice(inc)(40) in
+if answer > 40 then answer else 5

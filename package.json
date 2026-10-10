@@ -1,0 +1,33 @@
+{
+  "name": "langkit",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Small cooperating tools for language experiments",
+  "exports": {
+    ".": "./src/index.ts",
+    "./parse": "./src/parse.ts",
+    "./ir": "./src/ir.ts",
+    "./javascript": "./src/javascript.ts",
+    "./analysis": "./src/analysis.ts",
+    "./lsp": "./src/lsp.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "node --test tests/*.test.ts",
+    "toy": "node examples/toy.ts",
+    "toy:lsp": "node examples/toy-lsp.ts --stdio"
+  },
+  "dependencies": {
+    "parserator": "0.3.0",
+    "vscode-languageserver": "^10.1.2",
+    "vscode-languageserver-textdocument": "^1.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "typescript": "^7.0.2"
+  },
+  "engines": {
+    "node": ">=24.2"
+  }
+}
