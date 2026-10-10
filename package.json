@@ -15,6 +15,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
+    "playground": "vite playground",
+    "playground:build": "vite build playground",
     "toy": "node examples/toy/toy-run.ts",
     "toy:lsp": "node examples/toy/toy-lsp.ts --stdio",
     "hm": "node examples/hm/hm-run.ts",
@@ -33,11 +35,15 @@
   "dependencies": {
     "parserator": "0.3.0",
     "vscode-languageserver": "^10.1.2",
+    "vscode-languageserver-protocol": "3.18.4",
     "vscode-languageserver-textdocument": "^1.0.15"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
-    "typescript": "^7.0.2"
+    "monaco-editor": "0.57.0",
+    "sucrase": "3.35.1",
+    "typescript": "^7.0.2",
+    "vite": "8.3.1"
   },
   "engines": {
     "node": ">=24.2"

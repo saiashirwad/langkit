@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="color-scheme" content="light dark" />
+    <title>langkit playground</title>
+    <link rel="icon" href="data:," />
+  </head>
+  <body>
+    <header class="bar">
+      <strong class="title">langkit</strong>
+      <label class="field">
+        Language
+        <select id="language"></select>
+      </label>
+      <label class="field">
+        <input id="editing" type="checkbox" />
+        Edit the language
+      </label>
+      <button id="run" class="run" type="button" title="Run (Ctrl/Cmd+Enter)">Run</button>
+    </header>
+    <nav id="tabs" class="tabs" aria-label="Files"></nav>
+    <main class="workspace">
+      <div id="editor" class="editor"></div>
+      <section class="output" aria-labelledby="output-title">
+        <h2 id="output-title">Output</h2>
+        <p id="status" class="status" role="status"></p>
+        <pre id="output"></pre>
+        <p class="hint">
+          Hover for types. F12 or Ctrl/Cmd+click goes to a definition. Ctrl/Cmd+Enter runs the open
+          program.
+        </p>
+      </section>
+    </main>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>

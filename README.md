@@ -688,6 +688,19 @@ Analysis is synchronous and recomputed on document changes; there is no incremen
 
 The parser still stops at its first syntax error. Incomplete syntax gets lexical highlighting and a diagnostic, but no hover/definitions. For syntactically complete programs, facts collected before a type error remain available. There is no parser recovery, completion, rename, TextMate grammar, or Tree-sitter grammar yet. Import resolution is limited to explicit local file imports in rows, advanced, and strict.
 
+## Playground
+
+```sh
+pnpm playground            # http://localhost:5173
+pnpm playground:build      # static files in playground/dist
+```
+
+[playground/](playground) is a static site: Monaco with every example language, their samples and standard libraries. Nothing runs on a server.
+
+- **Editing a program** talks LSP to the same `serve` the editors use, running in a Web Worker ([server.ts](playground/server.ts)). [client.ts](playground/client.ts) is a small client: it syncs one language's models and maps diagnostics, hovers, definitions (across files) and semantic tokens onto Monaco.
+- **Run** compiles and evaluates the open program in a second worker ([runner.ts](playground/runner.ts)), behaving like the CLI runners. It is stopped after 3 seconds. A worker is a separate thread, not a sandbox: like the VM runners, it is meant for trusted examples.
+- **Edit the language** shows the language's own TypeScript, typechecked against langkit's sources. Edits restart the language server with those sources. [custom.ts](playground/custom.ts) strips their types with sucrase and evaluates them, resolving `langkit/*` to the bundled library. Edits live in memory and are gone on reload.
+
 ## Tests
 
 Runtime tests cover parsing, precedence, diagnostics, functions, closure capture, shadowing, branch isolation, construction reuse, scope validation, and evaluation order. Analysis tests cover precise name ranges, shadowing, partial checking results, and malformed-input highlighting. LSP tests communicate with a real server over framed JSON-RPC. `tests/types.ts` supplies compile-time contracts checked by `pnpm typecheck`.

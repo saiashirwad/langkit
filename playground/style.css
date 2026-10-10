@@ -1,0 +1,219 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+:root {
+  color-scheme: light dark;
+  --background: light-dark(oklch(0.99 0 none), oklch(0.17 0 none));
+  --surface: light-dark(oklch(0.96 0 none), oklch(0.22 0 none));
+  --border: light-dark(oklch(0.88 0 none), oklch(0.32 0 none));
+  --foreground: light-dark(oklch(0.2 0 none), oklch(0.93 0 none));
+  --muted: light-dark(oklch(0.5 0 none), oklch(0.68 0 none));
+  --accent: light-dark(oklch(0.52 0.17 265), oklch(0.72 0.14 265));
+  --error: light-dark(oklch(0.52 0.19 27), oklch(0.72 0.16 27));
+
+  font-family: system-ui, sans-serif;
+  font-size: 15px;
+  overflow-wrap: break-word;
+  font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html {
+  overscroll-behavior-y: none;
+}
+
+body {
+  margin: 0;
+  block-size: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+select {
+  font-size: max(16px, 1rem);
+}
+
+button {
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+:focus-visible {
+  outline: max(2px, 0.08em) solid var(--accent);
+  outline-offset: 2px;
+}
+
+.bar {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 1.25rem;
+  padding-block: calc(0.5rem + env(safe-area-inset-top, 0px)) 0.5rem;
+  padding-inline: 1rem;
+  border-block-end: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.title {
+  font-size: 1.1rem;
+}
+
+.field {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.run {
+  margin-inline-start: auto;
+  padding-block: 0.4rem;
+  padding-inline: 1.1rem;
+  border: 0;
+  border-radius: 0.4rem;
+  background: var(--accent);
+  color: var(--background);
+  font: inherit;
+  font-weight: 600;
+}
+
+.run:focus-visible {
+  outline-color: var(--accent);
+}
+
+.run:active {
+  transform: scale(0.97);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .run:hover {
+    background: color-mix(in oklch, var(--accent), var(--foreground) 15%);
+  }
+
+  .tabs button:hover {
+    color: var(--foreground);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .run {
+    transition: transform 160ms ease-out;
+  }
+}
+
+.tabs {
+  flex: none;
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  border-block-end: 1px solid var(--border);
+}
+
+.tabs button {
+  flex: none;
+  padding-block: 0.45rem;
+  padding-inline: 0.9rem;
+  border: 0;
+  border-block-end: 2px solid transparent;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+}
+
+.tabs button:active {
+  background: var(--surface);
+}
+
+.tabs button[aria-current="true"] {
+  border-block-end-color: var(--accent);
+  color: var(--foreground);
+}
+
+.tabs .source {
+  font-style: italic;
+}
+
+.workspace {
+  flex: 1;
+  min-block-size: 0;
+  display: flex;
+  flex-wrap: wrap;
+}
+
+.editor {
+  flex: 3 1 32rem;
+  min-block-size: 55%;
+  /* Monaco sizes itself to this box; containment keeps its content from resizing the box back. */
+  contain: strict;
+}
+
+.output {
+  flex: 1 1 18rem;
+  min-block-size: 0;
+  max-block-size: 100%;
+  display: flex;
+  flex-direction: column;
+  border-inline-start: 1px solid var(--border);
+  background: var(--surface);
+  padding-block-end: env(safe-area-inset-bottom, 0px);
+}
+
+.output h2 {
+  flex: none;
+  margin: 0;
+  padding-block: 0.6rem 0.2rem;
+  padding-inline: 1rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+
+.status {
+  flex: none;
+  margin: 0;
+  padding-inline: 1rem;
+  color: var(--error);
+  white-space: pre-wrap;
+}
+
+.status:empty {
+  display: none;
+}
+
+#output {
+  flex: 1;
+  margin: 0;
+  padding-block: 0.4rem;
+  padding-inline: 1rem;
+  overflow: auto;
+  overscroll-behavior: contain;
+  font-family: ui-monospace, monospace;
+  font-size: 0.85rem;
+  white-space: pre-wrap;
+}
+
+#output .error {
+  color: var(--error);
+}
+
+.hint {
+  flex: none;
+  margin: 0;
+  padding-block: 0.6rem;
+  padding-inline: 1rem;
+  border-block-start: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.8rem;
+}
