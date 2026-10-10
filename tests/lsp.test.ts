@@ -176,6 +176,25 @@ test("HM stdio LSP specializes uses without losing definition identity", { timeo
   await server.shutdown()
 })
 
+test("rows stdio LSP exposes row constraints and analyzes print without executing it", { timeout: 10000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/rows-lsp.ts", import.meta.url)), "--stdio"])
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  const source = 'let get = fn(r) => r.x in print(get({ x = "hello" }))'
+  server.notify("textDocument/didOpen", { textDocument: { uri, languageId: "rows", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1)).diagnostics, [])
+  assert.equal((await server.request<Hover>("textDocument/hover", at(source, 4)))?.contents.value,
+    "({ x: a | r } -> a) where r lacks x")
+  assert.equal((await server.request<Hover>("textDocument/hover", at(source, source.lastIndexOf("get"))))?.contents.value,
+    "({ x: string } -> string)")
+  assert.equal(await server.request("textDocument/definition", at(source, source.indexOf("print"))), null)
+  const tokens = await server.request<{ data: number[] }>("textDocument/semanticTokens/full", { textDocument: { uri } })
+  assert.ok(tokens.data.some((value, index) => index % 5 === 3 && value === tokenKinds.indexOf("string")))
+  server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: "{ x = 1 | { x = 2 } }" }] })
+  assert.match((await server.diagnostics(2)).diagnostics[0]!.message, /Duplicate field/)
+  await server.shutdown()
+})
+
 test("analyzer exceptions discard old facts without breaking the connection", { timeout: 10000 }, async t => {
   const source = `import { serve } from "langkit/lsp";
 serve(text => {

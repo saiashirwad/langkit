@@ -99,7 +99,7 @@ Before emitting, structural validation checks references, declaration order, and
 - `if condition then a else b` requires a boolean condition and equal branch types. Only the selected branch executes, though both are checked.
 - Number literals may have a leading minus and a decimal part. General unary operators and exponent notation are not implemented.
 
-No recursion, polymorphism, records, optimization passes, modules, or LLVM backend yet. The mid-level representation is the small, inspectable expression IR in `src/ir.ts`; there is no separate mandatory lowering pipeline. Pure transformations can be ordinary functions between checking and emission.
+The toy language has no recursion, polymorphism, or records. There are no optimization passes, modules, or LLVM backend yet. The mid-level representation is the small, inspectable expression IR in `src/ir.ts`; there is no separate mandatory lowering pipeline. Pure transformations can be ordinary functions between checking and emission.
 
 `emit(body)` returns a JavaScript **expression**, not a complete module. The example evaluates trusted demonstrations using `node:vm`; that is not a security sandbox for untrusted code.
 
@@ -126,14 +126,57 @@ HM's arithmetic, `>`, and `==` operate on numbers. Unlike toy, HM does not suppo
 
 The shared IR supports `code.ref(binding, instantiatedType)`. This keeps declaration identity while allowing a different type at each use; omitting the second argument preserves the original behavior. Editor reference facts likewise track identity only. Both compilers report expression types separately, so a generic declaration's hover does not mask a specialized use's type.
 
+## Row polymorphism
+
+**[examples/rows.ts](examples/rows.ts)** is a separate HM language with immutable records, strings, and a tiny standard library. The existing HM example is unchanged.
+
+```sh
+pnpm rows                 # runs examples/main.rows
+pnpm rows path/to/program.rows
+```
+
+```text
+let getX = fn(r) => r.x in
+let extend = fn(r) => { flag = true | r } in
+let answer = compose(getX)(extend)({ x = 42 }) in
+let ignored = print("The answer is:") in
+let ignored = print(answer) in
+answer
+```
+
+- `{ x = 1, flag = true }` constructs a closed record; `{}` is the empty record.
+- `record.x` selects a field. Selection and calls chain: `record.f(42).answer`.
+- `{ flag = true | record }` extends a record, requiring `flag` to be absent. It does not overwrite fields. Fields evaluate left to right, followed by the base, each exactly once.
+- Strings use double quotes and JSON escapes. Arithmetic and equality remain numeric.
+
+`getX` infers `({ x: a | r } -> a) where r lacks x`. The row variable `r` stands for the remaining fields, not an unchecked bag of extra properties. `extend` infers `({ | r } -> { flag: boolean | r }) where r lacks flag`. Absence constraints survive aliases, generalization, and instantiation. Record field order does not affect type equality.
+
+Both ordinary type variables and row variables are let-polymorphic; captured variables and function parameters remain monomorphic. Unification rejects missing fields, duplicates, and infinite types/rows. The type printer includes field-absence constraints explicitly. These rules live entirely in the example, not the shared IR.
+
+### Small standard library
+
+The following names are in scope automatically and can be shadowed:
+
+| Name | Type | Behavior |
+| --- | --- | --- |
+| `print` | `a -> {}` | Prints one value and returns the empty record. |
+| `id` | `a -> a` | Returns its argument. |
+| `const` | `a -> b -> a` | Keeps the first argument. Both calls still evaluate their arguments. |
+| `compose` | `(b -> c) -> (a -> b) -> a -> c` | `compose(f)(g)(x)` computes `f(g(x))`. |
+
+[id, const, and compose](examples/stdlib.rows) are ordinary source-language functions, not special typing rules. `print` is the only intrinsic. Sequence printing with `let ignored = print(value) in ...`; there is no statement syntax or effect-type system. Functions are still written as `fn(x) => body`, and `let` is non-recursive.
+
+The runner uses `console.log` and also displays the program's final value. When evaluating emitted JavaScript yourself, provide a `console.log` implementation. Analysis never executes the program or prints. Built-in uses have type hovers but no same-file definition location; library source spans are not reported as user-source facts. As with the other examples, the VM runner is for trusted demonstrations, not a security sandbox.
+
 ## Editor support
 
-Both languages have small stdio LSP servers:
+All three languages have small stdio LSP servers:
 
 ```sh
 node examples/toy-lsp.ts --stdio
 node examples/hm-lsp.ts --stdio
-# Also available as pnpm toy:lsp / pnpm hm:lsp; use direct node commands in editors.
+node examples/rows-lsp.ts --stdio
+# Also available as pnpm toy:lsp / pnpm hm:lsp / pnpm rows:lsp; use direct node commands in editors.
 ```
 
 It provides syntax/type diagnostics, type hover, same-file go-to-definition, and semantic highlighting. It only analyzes text; it never emits or executes a program. The server uses the standard `vscode-languageserver` packages, imported only through `langkit/lsp`.
@@ -169,7 +212,7 @@ This is deliberately an explicit, small integration, not automatic extraction of
 
 ### Neovim 0.11+
 
-[.nvim.lua](.nvim.lua) configures both servers and recognizes `.toy` / `.tpy` files as toy and `.hm` files as HM, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
+[.nvim.lua](.nvim.lua) configures all three servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, and `.rows` files as rows, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
 
 ```lua
 vim.opt.exrc = true
@@ -185,7 +228,7 @@ nvim examples/main.toy
 
 Review and trust `.nvim.lua` when prompted. Neovim records trust for that file's contents; changes require approval again. Enabling `exrc` does not silently trust other projects. On Neovim 0.12, starting in a subdirectory also discovers the parent config.
 
-Use `K` to hover over `twice`, or `vim.lsp.buf.definition()` on `inc` in `twice(inc)(40)` (your configured `gd` mapping can call it). Semantic colors depend on your editor/theme. If an existing session did not load the local config, restart from the project directory. The `.nvim.lua` file restricts both filetype detection and server attachment to this project.
+Use `K` to hover over `twice`, or `vim.lsp.buf.definition()` on `inc` in `twice(inc)(40)` (your configured `gd` mapping can call it). Semantic colors depend on your editor/theme. If an existing session did not load the local config, restart from the project directory. The `.nvim.lua` file restricts filetype detection and server attachment to this project.
 
 ### Current limits
 

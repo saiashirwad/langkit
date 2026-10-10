@@ -1,7 +1,7 @@
 import { get, run, scoped, within, type Check, type Result } from "./check.ts"
 import type { Diagnostic, Span } from "./diagnostic.ts"
 
-export const tokenKinds = ["keyword", "number", "type", "variable", "parameter", "function", "operator"] as const
+export const tokenKinds = ["keyword", "number", "type", "variable", "parameter", "function", "operator", "string"] as const
 export type TokenKind = typeof tokenKinds[number]
 export type Token = { readonly span: Span; readonly kind: TokenKind }
 

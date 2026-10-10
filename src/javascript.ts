@@ -15,7 +15,8 @@ export const emit = <T>(root: Body<T>): string => {
     return chosen
   }
 
-  const literal = (value: number | boolean): string => {
+  const literal = (value: number | boolean | string): string => {
+    if (typeof value === "string") return JSON.stringify(value)
     if (typeof value === "boolean") return String(value)
     if (Object.is(value, -0)) return "-0"
     if (Number.isNaN(value)) return "(0 / 0)"
@@ -40,6 +41,21 @@ export const emit = <T>(root: Body<T>): string => {
     const node = value.node
     switch (node.kind) {
       case "literal": return literal(node.value)
+      case "record": {
+        // Evaluate fields before the base, but merge the base before fields.
+        // Arguments run outside the temporary parameter scope, avoiding capture.
+        const params = node.fields.map((_, index) => `_field${index}`)
+        const args = node.fields.map(field => expr(field.value, depth))
+        const entries = node.fields.map((field, index) => `[${JSON.stringify(field.name)}]: ${params[index]}`)
+        if (node.base) {
+          params.push("_base")
+          args.push(expr(node.base, depth))
+          entries.unshift("..._base")
+        }
+        return `((${params.join(", ")}) => ({ __proto__: null${entries.length ? `, ${entries.join(", ")}` : ""} }))(${args.join(", ")})`
+      }
+      case "field": return `(${expr(node.record, depth)})[${JSON.stringify(node.name)}]`
+      case "print": return `(console.log(${expr(node.value, depth)}), { __proto__: null })`
       case "ref": return name(node.binding)
       case "binary":
         return `(${expr(node.left, depth)} ${node.op === "==" ? "===" : node.op} ${expr(node.right, depth)})`

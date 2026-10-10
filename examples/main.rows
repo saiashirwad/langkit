@@ -1,0 +1,6 @@
+let getX = fn(r) => r.x in
+let extend = fn(r) => { flag = true | r } in
+let answer = compose(getX)(extend)({ x = 42 }) in
+let ignored = print("The answer is:") in
+let ignored = print(answer) in
+answer

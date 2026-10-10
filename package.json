@@ -18,7 +18,9 @@
     "toy": "node examples/toy.ts",
     "toy:lsp": "node examples/toy-lsp.ts --stdio",
     "hm": "node examples/hm.ts",
-    "hm:lsp": "node examples/hm-lsp.ts --stdio"
+    "hm:lsp": "node examples/hm-lsp.ts --stdio",
+    "rows": "node examples/rows.ts",
+    "rows:lsp": "node examples/rows-lsp.ts --stdio"
   },
   "dependencies": {
     "parserator": "0.3.0",

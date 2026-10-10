@@ -20,7 +20,10 @@ export type Reference<T> = Value<T> & {
 }
 
 export type Node<T> =
-  | { readonly kind: "literal"; readonly value: number | boolean }
+  | { readonly kind: "literal"; readonly value: number | boolean | string }
+  | { readonly kind: "record"; readonly fields: readonly { readonly name: string; readonly value: Value<T> }[]; readonly base?: Value<T> }
+  | { readonly kind: "field"; readonly record: Value<T>; readonly name: string }
+  | { readonly kind: "print"; readonly value: Value<T> }
   | { readonly kind: "ref"; readonly binding: Binding<T> }
   | { readonly kind: "binary"; readonly op: Operator; readonly left: Value<T>; readonly right: Value<T> }
   | { readonly kind: "call"; readonly fn: Value<T>; readonly arg: Value<T> }
@@ -68,7 +71,12 @@ export const create = <T>() => {
     ref,
     body,
     declare,
-    literal: (type: T, literal: number | boolean): Value<T> => value(type, { kind: "literal", value: literal }),
+    literal: (type: T, literal: number | boolean | string): Value<T> => value(type, { kind: "literal", value: literal }),
+    // Fields evaluate in source order, followed by the optional base.
+    record: (type: T, fields: readonly { readonly name: string; readonly value: Value<T> }[], base?: Value<T>): Value<T> =>
+      value(type, base ? { kind: "record", fields, base } : { kind: "record", fields }),
+    field: (type: T, record: Value<T>, name: string): Value<T> => value(type, { kind: "field", record, name }),
+    print: (type: T, printed: Value<T>): Value<T> => value(type, { kind: "print", value: printed }),
     binary: (type: T, op: Operator, left: Value<T>, right: Value<T>): Value<T> =>
       value(type, { kind: "binary", op, left, right }),
     call: (type: T, fn: Value<T>, arg: Value<T>): Value<T> => value(type, { kind: "call", fn, arg }),
@@ -105,6 +113,12 @@ export const validate = <T>(root: Body<T>): void => {
     const node = value.node
     switch (node.kind) {
       case "literal": return
+      case "record":
+        for (const field of node.fields) visit(field.value, visible)
+        if (node.base) visit(node.base, visible)
+        return
+      case "field": return visit(node.record, visible)
+      case "print": return visit(node.value, visible)
       case "ref":
         if (!visible.has(node.binding.id)) throw new Error(`Out-of-scope binding: ${node.binding.name}`)
         return
