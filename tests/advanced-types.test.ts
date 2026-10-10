@@ -2,26 +2,52 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { check, run, type Check } from "langkit";
 import {
-  number, boolean, string, fn, record, row, fresh, freshRow, prune, flatten,
-  free, exclude, unify, mono, generalize, instantiate, show, data, generic,
-  forall, substitute, instantiateForall, skolemize, subsume,
-  type Type, type TypeConstructor,
+  number,
+  boolean,
+  string,
+  fn,
+  record,
+  row,
+  fresh,
+  freshRow,
+  prune,
+  flatten,
+  free,
+  exclude,
+  unify,
+  mono,
+  generalize,
+  instantiate,
+  show,
+  data,
+  generic,
+  forall,
+  substitute,
+  instantiateForall,
+  skolemize,
+  subsume,
+  type Type,
+  type TypeConstructor,
 } from "../examples/advanced/advanced-types.ts";
 
 const accept = (body: Check<unknown>) => {
   const result = run(body);
   assert.ok(result.success, result.success ? "" : result.error.message);
 };
+
 const reject = (body: Check<unknown>, message: RegExp) => {
   const result = run(body);
   assert.equal(result.success, false);
   if (!result.success) assert.match(result.error.message, message);
 };
+
 const option: TypeConstructor = { id: Symbol("Option"), name: "Option", arity: 1 };
+
 const identity = () => {
   const a = generic("a");
   return forall([a], fn(a, a));
 };
+
 const field = (label: string, type: Type) => record(row(new Map([[label, type]])));
 
 test("advanced types: ordinary and row polymorphism freshen together", () => {
@@ -33,7 +59,22 @@ test("advanced types: ordinary and row polymorphism freshen together", () => {
   const first = instantiate(scheme, 2);
   const second = instantiate(scheme, 2);
   accept(unify(first, fn(field("x", number), number)));
-  accept(unify(second, fn(record(row(new Map([["x", boolean], ["y", string]]))), boolean)));
+  accept(
+    unify(
+      second,
+      fn(
+        record(
+          row(
+            new Map([
+              ["x", boolean],
+              ["y", string],
+            ]),
+          ),
+        ),
+        boolean,
+      ),
+    ),
+  );
   assert.equal(show(type), "({ x: a | r } -> a) where r lacks x");
 });
 
@@ -77,10 +118,22 @@ test("advanced types: forall substitution respects binder identities and shadowi
   const a = generic("a");
   const shadow = generic("a");
   const type = fn(a, forall([shadow], fn(shadow, a)));
-  assert.equal(show(substitute(type, new Map([[a, number], [shadow, boolean]]))),
-    "(number -> (forall a. (a -> number)))");
-  assert.equal(show(substitute(forall([a], fn(a, a)), new Map([[a, number]]))),
-    "(forall a. (a -> a))");
+  assert.equal(
+    show(
+      substitute(
+        type,
+        new Map([
+          [a, number],
+          [shadow, boolean],
+        ]),
+      ),
+    ),
+    "(number -> (forall a. (a -> number)))",
+  );
+  assert.equal(
+    show(substitute(forall([a], fn(a, a)), new Map([[a, number]]))),
+    "(forall a. (a -> a))",
+  );
 });
 
 test("advanced types: instantiation opens only outer explicit forall", () => {
@@ -191,7 +244,15 @@ for (const expected of [number, fn(number, number)]) {
     const s = freshRow(["x", "y"]);
     const rType = record(row(new Map(), r));
     // Matching x solves r to { y: boolean | s }, exposing y on the right.
-    const left = record(row(new Map([["x", rType], ["y", expected]]), s));
+    const left = record(
+      row(
+        new Map([
+          ["x", rType],
+          ["y", expected],
+        ]),
+        s,
+      ),
+    );
     const right = record(row(new Map([["x", record(row(new Map([["y", boolean]]), s))]]), r));
     reject(unify(left, right), /Cannot unify/);
   });
@@ -200,7 +261,15 @@ for (const expected of [number, fn(number, number)]) {
 test("advanced types: equal newly exposed fields still unify", () => {
   const r = freshRow();
   const s = freshRow(["x", "y"]);
-  const left = record(row(new Map([["x", record(row(new Map(), r))], ["y", boolean]]), s));
+  const left = record(
+    row(
+      new Map([
+        ["x", record(row(new Map(), r))],
+        ["y", boolean],
+      ]),
+      s,
+    ),
+  );
   const right = record(row(new Map([["x", record(row(new Map([["y", boolean]]), s))]]), r));
   accept(unify(left, right));
 });

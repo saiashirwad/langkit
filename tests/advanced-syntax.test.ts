@@ -8,6 +8,7 @@ const parsed = (source: string) => {
   assert.ok(result.success, result.success ? "" : result.error.message);
   return result.value;
 };
+
 const expr = (source: string): Expr => parsed(source).body;
 
 test("advanced syntax: datatype declarations, fields, parameters, and exact name spans", () => {
@@ -18,11 +19,23 @@ test("advanced syntax: datatype declarations, fields, parameters, and exact name
   assert.equal(option.name, "Option");
   assert.deepEqual(option.parameters, ["a"]);
   assert.deepEqual(option.nameSpan, { start: 5, end: 11 });
-  assert.deepEqual(option.constructors.map(c => [c.name, c.fields.length]), [["None", 0], ["Some", 1]]);
+  assert.deepEqual(
+    option.constructors.map((c) => [c.name, c.fields.length]),
+    [
+      ["None", 0],
+      ["Some", 1],
+    ],
+  );
   for (const declaration of module.types) {
-    assert.equal(source.slice(declaration.nameSpan.start, declaration.nameSpan.end), declaration.name);
+    assert.equal(
+      source.slice(declaration.nameSpan.start, declaration.nameSpan.end),
+      declaration.name,
+    );
     for (const constructor of declaration.constructors)
-      assert.equal(source.slice(constructor.nameSpan.start, constructor.nameSpan.end), constructor.name);
+      assert.equal(
+        source.slice(constructor.nameSpan.start, constructor.nameSpan.end),
+        constructor.name,
+      );
   }
   assert.deepEqual(module.types[1]!.parameters, []);
   assert.equal(module.body.kind, "call");
@@ -62,7 +75,8 @@ test("advanced syntax: higher-rank parameter annotations and grouped expression 
   assert.equal(result.kind, "fn");
   if (result.kind !== "fn") return;
   assert.equal(result.annotation?.kind, "forall");
-  if (result.annotation?.kind === "forall") assert.deepEqual(result.annotation.parameters, ["a", "b"]);
+  if (result.annotation?.kind === "forall")
+    assert.deepEqual(result.annotation.parameters, ["a", "b"]);
   assert.equal(result.body.kind, "annotated");
   if (result.body.kind === "annotated") assert.equal(result.body.annotation.kind, "forall");
   const source = "(fn(x) => x : forall a. a -> a)";
@@ -78,7 +92,10 @@ test("advanced syntax: parenthesized function domains and closed record annotati
   assert.equal(result.annotation.param.kind, "function");
   assert.equal(result.annotation.result.kind, "record");
   if (result.annotation.result.kind === "record")
-    assert.deepEqual(result.annotation.result.fields.map(f => f.name), ["x", "flag"]);
+    assert.deepEqual(
+      result.annotation.result.fields.map((f) => f.name),
+      ["x", "flag"],
+    );
 });
 
 test("advanced syntax: constructor patterns, wildcard payloads, binding fallback and trailing comma", () => {
@@ -90,8 +107,12 @@ test("advanced syntax: constructor patterns, wildcard payloads, binding fallback
   const some = result.cases[1]!.pattern;
   assert.equal(some.kind, "constructor");
   if (some.kind === "constructor") {
-    assert.deepEqual(some.fields.map(f => f.name), ["x", "_"]);
-    for (const field of some.fields) assert.equal(source.slice(field.span.start, field.span.end), field.name);
+    assert.deepEqual(
+      some.fields.map((f) => f.name),
+      ["x", "_"],
+    );
+    for (const field of some.fields)
+      assert.equal(source.slice(field.span.start, field.span.end), field.name);
   }
   assert.equal(result.cases[2]!.pattern.kind, "binding");
   assert.equal(expr("match value { _ => 1 }").kind, "match");
@@ -120,17 +141,21 @@ test("advanced syntax: rows records, grouping, and nested match expressions", ()
     assert.equal(result.fields[0]!.value.kind, "match");
     assert.equal(result.base?.kind, "name");
   }
-  assert.equal(expr("(match x { Some(y) => match y { Some(z) => z, _ => 0 }, _ => 0 }) + 1").kind, "binary");
+  assert.equal(
+    expr("(match x { Some(y) => match y { Some(z) => z, _ => 0 }, _ => 0 }) + 1").kind,
+    "binary",
+  );
 });
 
 test("advanced syntax: comments are trivia and do not highlight their contents", () => {
-  const source = '// type Fake = Bogus\ntype Option(a) = None // comment\n| Some(a)\nlet x = "// not a comment" in // ignored\nx';
+  const source =
+    '// type Fake = Bogus\ntype Option(a) = None // comment\n| Some(a)\nlet x = "// not a comment" in // ignored\nx';
   const result = parsed(source);
   assert.equal(result.types.length, 1);
   assert.equal(result.body.kind, "let");
   const highlighted = highlight(source, tokens);
-  assert.ok(highlighted.every(token => token.span.start >= source.indexOf("\n") + 1));
-  assert.equal(highlighted.filter(token => token.kind === "string").length, 1);
+  assert.ok(highlighted.every((token) => token.span.start >= source.indexOf("\n") + 1));
+  assert.equal(highlighted.filter((token) => token.kind === "string").length, 1);
   assert.equal(parsed("42 // final comment").body.kind, "number");
 });
 
@@ -141,14 +166,37 @@ test("advanced syntax: JSON string escapes decode without raw controls", () => {
 });
 
 for (const source of [
-  "", "type Option(a) =", "type Option() = None None", "type Option(a) = None | 1",
-  "type lower = Bad Bad", "type Option(A) = None None", "type Option(a) = some(a) None",
-  "let rec = 1 in 1", "let type = 1 in type", "fn(x: forall . x) => x",
-  "fn(x: number ->) => x", "fn(x: {x: number | r}) => x", "fn(x: Option()) => x",
-  "match x { Some(Some(y)) => y }", "match x { Some(1) => 1 }", "match x { some(y) => y }",
-  "match x { Some(X) => X }", "match x { None => }", "match x { None 1 }",
-  "f()", "f(1,)", "(x :)", "x : number", "{x = 1 | }", "1 garbage",
-  '"bad\\q"', '"bad\\u12"', '"unterminated', '"raw\nnewline"', '"raw\tcontrol"', '"raw\u0000control"',
+  "",
+  "type Option(a) =",
+  "type Option() = None None",
+  "type Option(a) = None | 1",
+  "type lower = Bad Bad",
+  "type Option(A) = None None",
+  "type Option(a) = some(a) None",
+  "let rec = 1 in 1",
+  "let type = 1 in type",
+  "fn(x: forall . x) => x",
+  "fn(x: number ->) => x",
+  "fn(x: {x: number | r}) => x",
+  "fn(x: Option()) => x",
+  "match x { Some(Some(y)) => y }",
+  "match x { Some(1) => 1 }",
+  "match x { some(y) => y }",
+  "match x { Some(X) => X }",
+  "match x { None => }",
+  "match x { None 1 }",
+  "f()",
+  "f(1,)",
+  "(x :)",
+  "x : number",
+  "{x = 1 | }",
+  "1 garbage",
+  '"bad\\q"',
+  '"bad\\u12"',
+  '"unterminated',
+  '"raw\nnewline"',
+  '"raw\tcontrol"',
+  '"raw\u0000control"',
 ]) {
   test(`advanced syntax rejects ${JSON.stringify(source)}`, () => {
     const result = program.parse(source);

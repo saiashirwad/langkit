@@ -49,30 +49,42 @@ export type Type =
   | Variable;
 
 type Variable = { readonly kind: "variable"; instance?: Type };
+
 type RowVariable = { readonly kind: "row-variable"; readonly lacks: Set<string>; instance?: Row };
+
 type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null };
+
 type FreeVariable = Variable | RowVariable;
+
 type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable> };
+
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
 
 const number: Type = { kind: "number" };
 const boolean: Type = { kind: "boolean" };
 const string: Type = { kind: "string" };
+
 const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
+
 const record = (row: Row): Type => ({ kind: "record", row });
+
 const row = (
   fields: ReadonlyMap<string, Type> = new Map(),
   tail: RowVariable | null = null,
 ): Row => ({ fields, tail });
+
 const fresh = (): Variable => ({ kind: "variable" });
+
 const freshRow = (lacks: Iterable<string> = []): RowVariable => ({
   kind: "row-variable",
   lacks: new Set(lacks),
 });
+
 const prune = (type: Type): Type => {
   if (type.kind !== "variable" || !type.instance) return type;
   return (type.instance = prune(type.instance));
 };
+
 const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);
   let tail = input.tail;
@@ -122,6 +134,7 @@ const freeRow = (input: Row, found: Set<FreeVariable>): void => {
   for (const type of fields.values()) free(type, found);
   if (tail) found.add(tail);
 };
+
 const free = (type: Type, found = new Set<FreeVariable>()): Set<FreeVariable> => {
   type = prune(type);
   if (type.kind === "variable") found.add(type);
@@ -142,6 +155,7 @@ const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
       tail?.lacks.add(label);
     }
   });
+
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
     const target = flatten(input);
@@ -154,6 +168,7 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
     variable.instance = target;
   });
+
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function* () {
     let a = flatten(left);
@@ -187,6 +202,7 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
     else if (b.tail) yield* solveRow(b.tail, row(onlyA));
   });
+
 const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
     const a = prune(left);
@@ -204,6 +220,7 @@ const unify = (left: Type, right: Type): Check<void> =>
   });
 
 const mono = (type: Type): Scheme => ({ type, variables: new Set() });
+
 const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme => {
   const variables = free(type);
   for (const { scheme } of environment.values()) {
@@ -213,6 +230,7 @@ const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme
   }
   return { type, variables };
 };
+
 const instantiate = (scheme: Scheme): Type => {
   const replacements = new Map<Variable, Variable>();
   const rows = new Map<RowVariable, RowVariable>();
@@ -287,6 +305,7 @@ const name = identifier.withSpan((name, span) => ({
 
 // Reuse lexical patterns without requiring a successful parse for highlighting.
 const strings = /"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/;
+
 const tokens: readonly TokenRule[] = [
   { pattern: strings, kind: "string" },
   {
@@ -559,95 +578,165 @@ const parse = (source: string): Result<Expr> => {
 };
 
 type Origin = { readonly uri: string; readonly span: Span; readonly name: string };
+
 type Export = Entry & { readonly identity: symbol; readonly origin: Origin };
 
 // Locate exported record helpers without adding dependency spans to root hovers.
 const exportOrigins = (expr: Expr, source: string): Map<string, Span> => {
   const locals = new Map<string, Span>();
-  while (expr.kind === "let") { locals.set(expr.name, expr.nameSpan); expr = expr.body; }
-  const result = new Map<string, Span>();
-  if (expr.kind === "record") for (const field of expr.fields) {
-    const local = field.value.kind === "name" ? locals.get(field.value.name) : undefined;
-    const offset = source.lastIndexOf(field.name, field.value.span.start - 1);
-    result.set(field.name, local ?? (offset >= 0 ? { start: offset, end: offset + field.name.length } : field.value.span));
+  while (expr.kind === "let") {
+    locals.set(expr.name, expr.nameSpan);
+    expr = expr.body;
   }
+  const result = new Map<string, Span>();
+  if (expr.kind === "record")
+    for (const field of expr.fields) {
+      const local = field.value.kind === "name" ? locals.get(field.value.name) : undefined;
+      const offset = source.lastIndexOf(field.name, field.value.span.start - 1);
+      result.set(
+        field.name,
+        local ??
+          (offset >= 0 ? { start: offset, end: offset + field.name.length } : field.value.span),
+      );
+    }
   return result;
 };
 
-const buildModules = (graph: { root: string; modules: readonly ModuleSource[] }, external: Map<symbol, Export>): Check<Body<Type>> =>
-  code.body(check(function* () {
-    const param = code.binding("value", fresh());
-    const unit = record(row());
-    const printed = yield* code.declare("print", code.fn(fn(param.type, unit), param, {
-      declarations: [], result: code.print(unit, code.ref(param)),
-    }));
-    const primitive: Entry = { binding: printed.node.binding, scheme: generalize(printed.type, new Map()) };
-    const completed = new Map<string, ReadonlyMap<string, Export>>();
-    for (const module of graph.modules) {
-      const imported = new Map<string, Export>();
-      for (const dependency of module.imports) for (const [name, entry] of completed.get(dependency.uri)!) {
-        const previous = imported.get(name);
-        if (previous && previous.identity !== entry.identity)
-          return yield* fail(`Conflicting imported name: ${name}`).at(dependency.span).context(module.uri);
-        imported.set(name, entry);
+const buildModules = (
+  graph: { root: string; modules: readonly ModuleSource[] },
+  external: Map<symbol, Export>,
+): Check<Body<Type>> =>
+  code.body(
+    check(function* () {
+      const param = code.binding("value", fresh());
+      const unit = record(row());
+      const printed = yield* code.declare(
+        "print",
+        code.fn(fn(param.type, unit), param, {
+          declarations: [],
+          result: code.print(unit, code.ref(param)),
+        }),
+      );
+      const primitive: Entry = {
+        binding: printed.node.binding,
+        scheme: generalize(printed.type, new Map()),
+      };
+      const completed = new Map<string, ReadonlyMap<string, Export>>();
+      for (const module of graph.modules) {
+        const imported = new Map<string, Export>();
+        for (const dependency of module.imports)
+          for (const [name, entry] of completed.get(dependency.uri)!) {
+            const previous = imported.get(name);
+            if (previous && previous.identity !== entry.identity)
+              return yield* fail(`Conflicting imported name: ${name}`)
+                .at(dependency.span)
+                .context(module.uri);
+            imported.set(name, entry);
+          }
+        const environment = new Map<string, Entry>([["print", primitive], ...imported]);
+        const parsed = parse(module.source);
+        if (!parsed.success)
+          return yield* fail(parsed.error.message).at(parsed.error.span).context(module.uri);
+        if (module.uri === graph.root) {
+          for (const entry of imported.values()) external.set(entry.binding.id, entry);
+          return yield* within(env, environment, elaborate(parsed.value));
+        }
+        const initial = yield* within(
+          observe,
+          false,
+          within(env, environment, elaborate(parsed.value)),
+        ).context(module.uri);
+        const type = prune(initial.type);
+        if (type.kind !== "record")
+          return yield* fail(`Imported module must return a record: ${module.uri}`).context(
+            module.uri,
+          );
+        const value = yield* code.declare("module", initial);
+        const entries = new Map(imported);
+        const origins = exportOrigins(parsed.value, module.original);
+        for (const [name, fieldType] of flatten(type.row).fields) {
+          if (entries.has(name))
+            return yield* fail(`Conflicting exported name: ${name}`).context(module.uri);
+          const reference = yield* code.declare(name, code.field(fieldType, value, name));
+          entries.set(name, {
+            binding: reference.node.binding,
+            scheme: generalize(fieldType, environment),
+            identity: Symbol(name),
+            origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.span },
+          });
+        }
+        completed.set(module.uri, entries);
       }
-      const environment = new Map<string, Entry>([["print", primitive], ...imported]);
-      const parsed = parse(module.source);
-      if (!parsed.success) return yield* fail(parsed.error.message).at(parsed.error.span).context(module.uri);
-      if (module.uri === graph.root) {
-        for (const entry of imported.values()) external.set(entry.binding.id, entry);
-        return yield* within(env, environment, elaborate(parsed.value));
-      }
-      const initial = yield* within(observe, false, within(env, environment, elaborate(parsed.value))).context(module.uri);
-      const type = prune(initial.type);
-      if (type.kind !== "record") return yield* fail(`Imported module must return a record: ${module.uri}`).context(module.uri);
-      const value = yield* code.declare("module", initial);
-      const entries = new Map(imported);
-      const origins = exportOrigins(parsed.value, module.original);
-      for (const [name, fieldType] of flatten(type.row).fields) {
-        if (entries.has(name)) return yield* fail(`Conflicting exported name: ${name}`).context(module.uri);
-        const reference = yield* code.declare(name, code.field(fieldType, value, name));
-        entries.set(name, { binding: reference.node.binding, scheme: generalize(fieldType, environment),
-          identity: Symbol(name), origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.span } });
-      }
-      completed.set(module.uri, entries);
-    }
-    throw new Error("Module graph has no root");
-  }));
+      throw new Error("Module graph has no root");
+    }),
+  );
 
 // Dependency diagnostics point at the importing directive in the current file,
 // while their context retains the actual failing module URI.
-const moduleDiagnostic = (error: Diagnostic, graph: { root: string; modules: readonly ModuleSource[] }): Diagnostic => {
-  const byUri = new Map(graph.modules.map(module => [module.uri, module]));
-  const failed = error.context.find(context => byUri.has(context) && context !== graph.root);
+const moduleDiagnostic = (
+  error: Diagnostic,
+  graph: { root: string; modules: readonly ModuleSource[] },
+): Diagnostic => {
+  const byUri = new Map(graph.modules.map((module) => [module.uri, module]));
+  const failed = error.context.find((context) => byUri.has(context) && context !== graph.root);
   if (!failed) return error;
-  const reaches = (uri: string): boolean => uri === failed || byUri.get(uri)!.imports.some(dependency => reaches(dependency.uri));
-  const directive = byUri.get(graph.root)!.imports.find(dependency => reaches(dependency.uri));
+  const reaches = (uri: string): boolean =>
+    uri === failed || byUri.get(uri)!.imports.some((dependency) => reaches(dependency.uri));
+  const directive = byUri.get(graph.root)!.imports.find((dependency) => reaches(dependency.uri));
   return directive ? { ...error, span: directive.span } : error;
 };
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const graph = loadModules(source, options, "rows");
   const lexical = highlight(source, tokens);
-  if (!graph.success) return { diagnostics: [graph.error], types: [], definitions: [], references: [], tokens: lexical };
+  if (!graph.success)
+    return {
+      diagnostics: [graph.error],
+      types: [],
+      definitions: [],
+      references: [],
+      tokens: lexical,
+    };
   const external = new Map<symbol, Export>();
   const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
-  return { ...analysis, diagnostics: analysis.diagnostics.map(error => moduleDiagnostic(error, graph.value)), sources: new Map(graph.value.modules.map(module => [module.uri, module.original])),
-    definitions: [...analysis.definitions, ...[...external.values()].filter(entry => analysis.references.some(reference => reference.id === entry.binding.id)).map(entry => ({
-      ...entry.binding, span: entry.origin.span, uri: entry.origin.uri,
-      kind: prune(entry.scheme.type).kind === "function" ? "function" as const : "variable" as const,
-    }))] };
+  return {
+    ...analysis,
+    diagnostics: analysis.diagnostics.map((error) => moduleDiagnostic(error, graph.value)),
+    sources: new Map(graph.value.modules.map((module) => [module.uri, module.original])),
+    definitions: [
+      ...analysis.definitions,
+      ...[...external.values()]
+        .filter((entry) =>
+          analysis.references.some((reference) => reference.id === entry.binding.id),
+        )
+        .map((entry) => ({
+          ...entry.binding,
+          span: entry.origin.span,
+          uri: entry.origin.uri,
+          kind:
+            prune(entry.scheme.type).kind === "function"
+              ? ("function" as const)
+              : ("variable" as const),
+        })),
+    ],
+  };
 };
+
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
   const graph = loadModules(source, options, "rows");
   if (!graph.success) return graph;
   const built = run(buildModules(graph.value, new Map()));
   if (!built.success) return { success: false, error: moduleDiagnostic(built.error, graph.value) };
-  return { success: true, value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) } };
+  return {
+    success: true,
+    value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
+  };
 };
 
 if (import.meta.main) {
-  const file = process.argv[2] ? pathToFileURL(resolve(process.argv[2])) : new URL("./main.rows", import.meta.url);
+  const file = process.argv[2]
+    ? pathToFileURL(resolve(process.argv[2]))
+    : new URL("./main.rows", import.meta.url);
   const source = readFileSync(file, "utf8");
   const result = compile(source, { uri: file.href });
   if (!result.success) {

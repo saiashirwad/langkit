@@ -7,14 +7,26 @@ import { validate } from "langkit/ir";
 import * as rows from "../examples/rows/rows.ts";
 import * as advanced from "../examples/advanced/advanced.ts";
 
-for (const [extension, language] of [["rows", rows], ["advanced", advanced]] as const) {
+for (const [extension, language] of [
+  ["rows", rows],
+  ["advanced", advanced],
+] as const) {
   const uri = `file:///modules/main.${extension}`;
-  const options = (files: Record<string, string>) => ({ uri, read: (path: string) => {
-    const source = files[path];
-    if (source === undefined) throw new Error(`Missing fixture: ${path}`);
-    return source;
-  } });
-  const evaluate = (source: string, files: Record<string, string>, log: (value: unknown) => void = () => {}) => {
+
+  const options = (files: Record<string, string>) => ({
+    uri,
+    read: (path: string) => {
+      const source = files[path];
+      if (source === undefined) throw new Error(`Missing fixture: ${path}`);
+      return source;
+    },
+  });
+
+  const evaluate = (
+    source: string,
+    files: Record<string, string>,
+    log: (value: unknown) => void = () => {},
+  ) => {
     const result = language.compile(source, options(files));
     assert.ok(result.success, result.success ? "" : result.error.message);
     validate<unknown>(result.value.ir);
@@ -35,7 +47,7 @@ for (const [extension, language] of [["rows", rows], ["advanced", advanced]] as 
     assert.deepEqual(analysis.diagnostics, []);
     assert.ok(analysis.types.length > 0);
     assert.ok(analysis.definitions.length > 0);
-    assert.ok(analysis.definitions.every(definition => definition.uri === undefined));
+    assert.ok(analysis.definitions.every((definition) => definition.uri === undefined));
     const result = language.compile(`import "./stdlib.${extension}"; id(42)`, {
       uri: new URL(`../examples/${extension}/main.${extension}`, import.meta.url).href,
     });
@@ -51,24 +63,27 @@ for (const [extension, language] of [["rows", rows], ["advanced", advanced]] as 
     assert.equal(evaluate(source, files), 42);
     const analysis = language.analyze(source, options(files));
     assert.deepEqual(analysis.diagnostics, []);
-    assert.equal(analysis.tokens.find(token => token.span.start === 0)?.kind, "keyword");
+    assert.equal(analysis.tokens.find((token) => token.span.start === 0)?.kind, "keyword");
     const use = source.lastIndexOf("id");
     const definition = definitionAt<unknown>(analysis, use);
     assert.equal(definition?.uri, libraryUri);
     assert.deepEqual(definition?.span, { start: 4, end: 6 });
     assert.equal(analysis.sources?.get(libraryUri), library);
     assert.ok(typeAt<unknown>(analysis, use));
-    assert.ok(analysis.types.every(fact => fact.span.start >= source.indexOf("if")));
+    assert.ok(analysis.types.every((fact) => fact.span.start >= source.indexOf("if")));
   });
 
   test(`${extension} imported aliases navigate to the exported label, not its initializer`, () => {
     const aliasUri = `file:///modules/alias.${extension}`;
     const alias = `import "./base.${extension}"; { x = xyz }`;
     const source = `import "./alias.${extension}"; x`;
-    const analysis = language.analyze(source, options({
-      [`file:///modules/base.${extension}`]: "{ xyz = 42 }",
-      [aliasUri]: alias,
-    }));
+    const analysis = language.analyze(
+      source,
+      options({
+        [`file:///modules/base.${extension}`]: "{ xyz = 42 }",
+        [aliasUri]: alias,
+      }),
+    );
     assert.deepEqual(analysis.diagnostics, []);
     const definition = definitionAt<unknown>(analysis, source.lastIndexOf("x"));
     assert.equal(definition?.uri, aliasUri);
@@ -86,7 +101,14 @@ for (const [extension, language] of [["rows", rows], ["advanced", advanced]] as 
       [right]: `import "./base.${extension}"; { right = answer }`,
     };
     const output: unknown[] = [];
-    assert.equal(evaluate(`import "./left.${extension}"; import "./right.${extension}"; answer`, files, value => output.push(value)), 42);
+    assert.equal(
+      evaluate(
+        `import "./left.${extension}"; import "./right.${extension}"; answer`,
+        files,
+        (value) => output.push(value),
+      ),
+      42,
+    );
     assert.deepEqual(output, [1]);
   });
 
@@ -95,12 +117,16 @@ for (const [extension, language] of [["rows", rows], ["advanced", advanced]] as 
       [`file:///modules/a.${extension}`]: "{ x = 1 }",
       [`file:///modules/b.${extension}`]: "{ x = 2 }",
     };
-    const conflict = language.compile(`import "./a.${extension}"; import "./b.${extension}"; x`, options(files));
+    const conflict = language.compile(
+      `import "./a.${extension}"; import "./b.${extension}"; x`,
+      options(files),
+    );
     assert.equal(conflict.success, false);
     if (!conflict.success) assert.match(conflict.error.message, /Conflicting imported name/);
-    const isolated = language.compile(`import "./a.${extension}"; import "./b.${extension}"; x`, options({ ...files,
-      [`file:///modules/b.${extension}`]: "{ y = x }",
-    }));
+    const isolated = language.compile(
+      `import "./a.${extension}"; import "./b.${extension}"; x`,
+      options({ ...files, [`file:///modules/b.${extension}`]: "{ y = x }" }),
+    );
     assert.equal(isolated.success, false);
     if (!isolated.success) assert.match(isolated.error.message, /Unbound variable/);
   });
@@ -122,9 +148,12 @@ for (const [extension, language] of [["rows", rows], ["advanced", advanced]] as 
   });
 
   test(`${extension} rejects non-record imported modules`, () => {
-    const result = language.compile(`import "./value.${extension}"; 42`, options({
-      [`file:///modules/value.${extension}`]: "42",
-    }));
+    const result = language.compile(
+      `import "./value.${extension}"; 42`,
+      options({
+        [`file:///modules/value.${extension}`]: "42",
+      }),
+    );
     assert.equal(result.success, false);
     if (!result.success) assert.match(result.error.message, /must return a record/);
   });
@@ -136,7 +165,8 @@ test("advanced constructor exports cannot overwrite an imported ordinary value",
     "file:///modules/constructor.advanced": 'import "./value.advanced"; type T = Box {}',
   };
   const result = advanced.compile('import "./constructor.advanced"; Box', {
-    uri: "file:///modules/main.advanced", read: uri => files[uri]!,
+    uri: "file:///modules/main.advanced",
+    read: (uri) => files[uri]!,
   });
   assert.equal(result.success, false);
   if (!result.success) assert.match(result.error.message, /Conflicting exported name: Box/);
@@ -144,7 +174,8 @@ test("advanced constructor exports cannot overwrite an imported ordinary value",
 
 test("advanced imports nominal datatype constructors and definitions", () => {
   const source = 'import "./box.advanced"; match Box(42) { Box(x) => unbox(Box(x)) }';
-  const dependency = "type Box(a) = Box(a) let unbox = fn(box) => match box { Box(x) => x } in { unbox = unbox }";
+  const dependency =
+    "type Box(a) = Box(a) let unbox = fn(box) => match box { Box(x) => x } in { unbox = unbox }";
   const options = { uri: "file:///modules/main.advanced", read: () => dependency };
   const result = advanced.compile(source, options);
   assert.ok(result.success, result.success ? "" : result.error.message);

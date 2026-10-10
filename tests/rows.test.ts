@@ -5,11 +5,19 @@ import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { typeAt, definitionAt } from "langkit/analysis";
 import { create, validate } from "langkit/ir";
-import { analyze, compile as compileSource, elaborate, program, show, type Type } from "../examples/rows/rows.ts";
+import {
+  analyze,
+  compile as compileSource,
+  elaborate,
+  program,
+  show,
+  type Type,
+} from "../examples/rows/rows.ts";
 
-const compile = (source: string) => compileSource('import "./stdlib.rows";\n' + source, {
-  uri: new URL("../examples/rows/test.rows", import.meta.url).href,
-});
+const compile = (source: string) =>
+  compileSource('import "./stdlib.rows";\n' + source, {
+    uri: new URL("../examples/rows/test.rows", import.meta.url).href,
+  });
 
 const compiled = (source: string) => {
   const result = compile(source);
@@ -17,6 +25,7 @@ const compiled = (source: string) => {
   validate(result.value.ir);
   return result.value;
 };
+
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
   runInNewContext(compiled(source).javascript, { console: { log } }, { timeout: 1000 });
 
@@ -25,7 +34,10 @@ for (const [source, expected] of [
   ["fn(r) => { flag = true | r }", "({ | r } -> { flag: boolean | r }) where r lacks flag"],
   ["fn(r) => r.x + r.y", "({ x: number, y: number | r } -> number) where r lacks x, y"],
   ["fn(r) => { copy = r.x | r }", "({ x: a | r } -> { copy: a, x: a | r }) where r lacks copy, x"],
-  ["fn(r) => if true then { x = 1 | r } else { x = 2 | r }", "({ | r } -> { x: number | r }) where r lacks x"],
+  [
+    "fn(r) => if true then { x = 1 | r } else { x = 2 | r }",
+    "({ | r } -> { x: number | r }) where r lacks x",
+  ],
   ["{}", "{}"],
   ['"hello"', "string"],
   ["compose", "((a -> b) -> ((c -> a) -> (c -> b)))"],
@@ -35,7 +47,10 @@ for (const [source, expected] of [
 }
 
 for (const [source, expected] of [
-  ["let getX = fn(r) => r.x in let a = getX({ x = true }) in if a then getX({ y = false, x = 42 }) else 0", 42],
+  [
+    "let getX = fn(r) => r.x in let a = getX({ x = true }) in if a then getX({ y = false, x = 42 }) else 0",
+    42,
+  ],
   ["let add = fn(r) => { flag = true | r } in let a = add({ x = 1 }) in add({ y = 42 }).y", 42],
   ["let add = fn(r) => { flag = true | r } in let alias = add in alias({ x = 42 }).x", 42],
   ["(if true then { x = 42, y = true } else { y = false, x = 1 }).x", 42],
@@ -47,8 +62,14 @@ for (const [source, expected] of [
   ["{ __proto__ = 42, constructor = 1 }.__proto__", 42],
   ['"hello\\nworld"', "hello\nworld"],
   ["let print = fn(x) => x in print(42)", 42],
-  ["(fn(r) => fn(s) => (if false then { x = r, y = false | s } else { x = { y = true | s } | r }).y)({ y = true })({})", true],
-  ["(fn(r) => fn(s) => (if true then { x = { y = true | s } | r } else { x = r, y = false | s }).y)({ y = true })({})", true],
+  [
+    "(fn(r) => fn(s) => (if false then { x = r, y = false | s } else { x = { y = true | s } | r }).y)({ y = true })({})",
+    true,
+  ],
+  [
+    "(fn(r) => fn(s) => (if true then { x = { y = true | s } | r } else { x = r, y = false | s }).y)({ y = true })({})",
+    true,
+  ],
 ] as const) {
   test(`rows execution: ${source}`, () => assert.equal(evaluate(source), expected));
 }
@@ -59,9 +80,15 @@ for (const [source, error] of [
   ["{ x = 1, x = true }", /Duplicate field/],
   ["{ x = 1 | { x = true } }", /Duplicate field/],
   ["let add = fn(r) => { x = 1 | r } in add({ x = false })", /Duplicate field/],
-  ["let add = fn(r) => { x = 1 | r } in let alias = add in alias({ x = false })", /Duplicate field/],
+  [
+    "let add = fn(r) => { x = 1 | r } in let alias = add in alias({ x = false })",
+    /Duplicate field/,
+  ],
   ["fn(r) => let alias = r in let a = { x = 1 | alias } in r.x", /Duplicate field/],
-  ["fn(r) => let get = fn(ignored) => r.x in let a = get(1) + 1 in if get(true) then 1 else 0", /Cannot unify/],
+  [
+    "fn(r) => let get = fn(ignored) => r.x in let a = get(1) + 1 in if get(true) then 1 else 0",
+    /Cannot unify/,
+  ],
   ["fn(f) => let a = f({ x = 1 }) in f({ x = true })", /Cannot unify/],
   ["fn(r) => if true then r else { x = 1 | r }", /Infinite row/],
   ["fn(r) => if true then r else r.x", /Infinite type/],
@@ -69,8 +96,14 @@ for (const [source, error] of [
   ["fn(r) => if true then { x = 1 | r } else { y = 1 | r }", /Infinite row/],
   ["if true then { x = 1 } else { x = true }", /Cannot unify/],
   // Unifying x exposes y through a solved tail; that newly shared field must also unify.
-  ["(fn(r) => fn(s) => (if false then { x = r, y = 1 | s } else { x = { y = true | s } | r }).y)({ y = true })({})", /Cannot unify/],
-  ["(fn(r) => fn(s) => (if false then { x = r, y = fn(z) => z | s } else { x = { y = true | s } | r }).y(42))({ y = true })({})", /Cannot unify/],
+  [
+    "(fn(r) => fn(s) => (if false then { x = r, y = 1 | s } else { x = { y = true | s } | r }).y)({ y = true })({})",
+    /Cannot unify/,
+  ],
+  [
+    "(fn(r) => fn(s) => (if false then { x = r, y = fn(z) => z | s } else { x = { y = true | s } | r }).y(42))({ y = true })({})",
+    /Cannot unify/,
+  ],
   ["{ x = 1 | 42 }", /Cannot unify/],
   ["1.x", /Cannot unify/],
 ] as const) {
@@ -81,13 +114,25 @@ for (const [source, error] of [
   });
 }
 
-for (const source of ['"unterminated', '"bad\\q"', '"raw\tcontrol"', '"raw\u0000control"', "{ x = }", "{ x = 1 | }", "{}. ", "{ x = 1, }"]) {
+for (const source of [
+  '"unterminated',
+  '"bad\\q"',
+  '"raw\tcontrol"',
+  '"raw\u0000control"',
+  "{ x = }",
+  "{ x = 1 | }",
+  "{}. ",
+  "{ x = 1, }",
+]) {
   test(`rows malformed syntax: ${source}`, () => assert.equal(compile(source).success, false));
 }
 
 test("rows print is polymorphic, ordered, and returns the empty record", () => {
   const output: unknown[] = [];
-  const result = evaluate('let a = print("hello") in let b = print(42) in let c = print(true) in print({ x = 1 })', x => output.push(x));
+  const result = evaluate(
+    'let a = print("hello") in let b = print(42) in let c = print(true) in print({ x = 1 })',
+    (x) => output.push(x),
+  );
   assert.deepEqual(output.slice(0, 3), ["hello", 42, true]);
   assert.equal((output[3] as { x: number }).x, 1);
   assert.deepEqual(Object.keys(result), []);
@@ -95,14 +140,19 @@ test("rows print is polymorphic, ordered, and returns the empty record", () => {
 
 test("rows effect order follows fields before the extension base, once each", () => {
   const output: unknown[] = [];
-  evaluate('{ x = print(1), y = print(2) | (let ignored = print(3) in {}) }', x => output.push(x));
+  evaluate("{ x = print(1), y = print(2) | (let ignored = print(3) in {}) }", (x) =>
+    output.push(x),
+  );
   assert.deepEqual(output, [1, 2, 3]);
 });
 
 test("rows sample evaluates to 42 and prints its answer", () => {
   const output: unknown[] = [];
   const source = readFileSync(new URL("../examples/rows/main.rows", import.meta.url), "utf8");
-  assert.equal(evaluate(source, x => output.push(x)), 42);
+  assert.equal(
+    evaluate(source, (x) => output.push(x)),
+    42,
+  );
   assert.deepEqual(output, ["The answer is:", 42]);
 });
 
@@ -111,10 +161,16 @@ test("rows analysis keeps library spans out of user facts and never prints", () 
   const analysis = analyze(source);
   assert.deepEqual(analysis.diagnostics, []);
   assert.equal(analysis.definitions.length, 2);
-  assert.equal(show(typeAt(analysis, source.lastIndexOf("get"))!.type), "({ flag: boolean, x: number } -> number)");
+  assert.equal(
+    show(typeAt(analysis, source.lastIndexOf("get"))!.type),
+    "({ flag: boolean, x: number } -> number)",
+  );
   assert.equal(definitionAt(analysis, source.lastIndexOf("get"))?.span.start, 4);
   assert.deepEqual(analyze('print("hello")').diagnostics, []);
-  assert.deepEqual(analyze('"let fake = 1"').tokens.map(token => token.kind), ["string"]);
+  assert.deepEqual(
+    analyze('"let fake = 1"').tokens.map((token) => token.kind),
+    ["string"],
+  );
 });
 
 test("rows reusable checking allocates fresh ordinary and row variables", () => {

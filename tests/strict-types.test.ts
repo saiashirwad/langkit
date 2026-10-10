@@ -2,28 +2,65 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { check, run, type Check } from "langkit";
 import {
-  number, boolean, string, fn, record, row, fresh, freshRow, prune, flatten,
-  free, exclude, unify, mono, generalize, instantiate, show, data, generic,
-  forall, substitute, instantiateForall, skolemize, subsume,
-  typeKind, kindArrow, freshKind, pruneKind, unifyKinds, showKind, kindOf,
-  apply, constructorType, decompose, qualified, sameType, defaultKind,
-  type Type, type TypeConstructor,
+  number,
+  boolean,
+  string,
+  fn,
+  record,
+  row,
+  fresh,
+  freshRow,
+  prune,
+  flatten,
+  free,
+  exclude,
+  unify,
+  mono,
+  generalize,
+  instantiate,
+  show,
+  data,
+  generic,
+  forall,
+  substitute,
+  instantiateForall,
+  skolemize,
+  subsume,
+  typeKind,
+  kindArrow,
+  freshKind,
+  pruneKind,
+  unifyKinds,
+  showKind,
+  kindOf,
+  apply,
+  constructorType,
+  decompose,
+  qualified,
+  sameType,
+  defaultKind,
+  type Type,
+  type TypeConstructor,
 } from "../examples/strict/strict-types.ts";
 
 const accept = (body: Check<unknown>) => {
   const result = run(body);
   assert.ok(result.success, result.success ? "" : result.error.message);
 };
+
 const reject = (body: Check<unknown>, message: RegExp) => {
   const result = run(body);
   assert.equal(result.success, false);
   if (!result.success) assert.match(result.error.message, message);
 };
+
 const option: TypeConstructor = { id: Symbol("Option"), name: "Option", arity: 1 };
+
 const identity = () => {
   const a = generic("a");
   return forall([a], fn(a, a));
 };
+
 const field = (label: string, type: Type) => record(row(new Map([[label, type]])));
 
 test("strict types: ordinary and row polymorphism freshen together", () => {
@@ -35,7 +72,22 @@ test("strict types: ordinary and row polymorphism freshen together", () => {
   const first = instantiate(scheme, 2);
   const second = instantiate(scheme, 2);
   accept(unify(first, fn(field("x", number), number)));
-  accept(unify(second, fn(record(row(new Map([["x", boolean], ["y", string]]))), boolean)));
+  accept(
+    unify(
+      second,
+      fn(
+        record(
+          row(
+            new Map([
+              ["x", boolean],
+              ["y", string],
+            ]),
+          ),
+        ),
+        boolean,
+      ),
+    ),
+  );
   assert.equal(show(type), "({ x: a | r } -> a) where r lacks x");
 });
 
@@ -80,10 +132,22 @@ test("strict types: forall substitution respects binder identities and shadowing
   const a = generic("a");
   const shadow = generic("a");
   const type = fn(a, forall([shadow], fn(shadow, a)));
-  assert.equal(show(substitute(type, new Map([[a, number], [shadow, boolean]]))),
-    "(number -> (forall a. (a -> number)))");
-  assert.equal(show(substitute(forall([a], fn(a, a)), new Map([[a, number]]))),
-    "(forall a. (a -> a))");
+  assert.equal(
+    show(
+      substitute(
+        type,
+        new Map([
+          [a, number],
+          [shadow, boolean],
+        ]),
+      ),
+    ),
+    "(number -> (forall a. (a -> number)))",
+  );
+  assert.equal(
+    show(substitute(forall([a], fn(a, a)), new Map([[a, number]]))),
+    "(forall a. (a -> a))",
+  );
 });
 
 test("strict types: instantiation opens only outer explicit forall", () => {
@@ -194,7 +258,15 @@ for (const expected of [number, fn(number, number)]) {
     const s = freshRow(["x", "y"]);
     const rType = record(row(new Map(), r));
     // Matching x solves r to { y: boolean | s }, exposing y on the right.
-    const left = record(row(new Map([["x", rType], ["y", expected]]), s));
+    const left = record(
+      row(
+        new Map([
+          ["x", rType],
+          ["y", expected],
+        ]),
+        s,
+      ),
+    );
     const right = record(row(new Map([["x", record(row(new Map([["y", boolean]]), s))]]), r));
     reject(unify(left, right), /Cannot unify/);
   });
@@ -203,7 +275,15 @@ for (const expected of [number, fn(number, number)]) {
 test("strict types: equal newly exposed fields still unify", () => {
   const r = freshRow();
   const s = freshRow(["x", "y"]);
-  const left = record(row(new Map([["x", record(row(new Map(), r))], ["y", boolean]]), s));
+  const left = record(
+    row(
+      new Map([
+        ["x", record(row(new Map(), r))],
+        ["y", boolean],
+      ]),
+      s,
+    ),
+  );
   const right = record(row(new Map([["x", record(row(new Map([["y", boolean]]), s))]]), r));
   accept(unify(left, right));
 });
@@ -238,6 +318,7 @@ const applied = (head: Type, arg: Type): Type => {
   assert.ok(result.success, result.success ? "" : result.error.message);
   return result.value;
 };
+
 const unaryKind = () => kindArrow(typeKind, typeKind);
 
 test("strict kinds: arrows, occurs checks, and kind mismatches", () => {
@@ -265,7 +346,12 @@ test("strict kinds: source application errors use Check, not exceptions", () => 
 });
 
 test("strict kinds: inferred constructor parameter kinds can be higher kinded", () => {
-  const higher: TypeConstructor = { id: Symbol("Fix"), name: "Fix", arity: 1, parameters: [unaryKind()] };
+  const higher: TypeConstructor = {
+    id: Symbol("Fix"),
+    name: "Fix",
+    arity: 1,
+    parameters: [unaryKind()],
+  };
   const fixed = applied(constructorType(higher), constructorType(option));
   assert.equal(show(fixed), "Fix(Option)");
   reject(apply(constructorType(higher), number), /Kind mismatch/);
@@ -286,7 +372,12 @@ test("strict types: application occurs checks include heads and arguments", () =
   const a = fresh();
   reject(unify(a, applied(constructorType(option), a)), /Infinite type/);
   const f = fresh(0, unaryKind());
-  const higher: TypeConstructor = { id: Symbol("Compose"), name: "Compose", arity: 2, parameters: [unaryKind(), typeKind] };
+  const higher: TypeConstructor = {
+    id: Symbol("Compose"),
+    name: "Compose",
+    arity: 2,
+    parameters: [unaryKind(), typeKind],
+  };
   reject(unify(f, applied(constructorType(higher), f)), /Infinite type/);
 });
 
@@ -377,7 +468,12 @@ test("strict kinds: generalized metas copy shared kind graphs within each instan
   const first = instantiate(scheme);
   const second = instantiate(scheme);
   accept(unify(first, data(option, [number])));
-  const higher: TypeConstructor = { id: Symbol("Fix"), name: "Fix", arity: 1, parameters: [unaryKind()] };
+  const higher: TypeConstructor = {
+    id: Symbol("Fix"),
+    name: "Fix",
+    arity: 1,
+    parameters: [unaryKind()],
+  };
   accept(unify(second, data(higher, [constructorType(option)])));
   assert.equal(pruneKind(k).kind, "kind-variable");
 });
@@ -415,7 +511,10 @@ test("strict sameType is non-solving and respects nominal and rigid identities",
   assert.equal(a.instance, undefined);
   assert.equal(b.instance, undefined);
   assert.ok(sameType(data(option, [number]), data(option, [number])));
-  assert.equal(sameType(data(option, [number]), data({ ...option, id: Symbol("Option") }, [number])), false);
+  assert.equal(
+    sameType(data(option, [number]), data({ ...option, id: Symbol("Option") }, [number])),
+    false,
+  );
   const rigid = skolemize(forall([generic("a")], number), 1);
   assert.ok(sameType(rigid, number));
   const g = generic("a");
@@ -424,7 +523,9 @@ test("strict sameType is non-solving and respects nominal and rigid identities",
   assert.equal(sameType(one, two), false);
   assert.equal(sameType(generic("a"), generic("a")), false);
   const tail = freshRow();
-  assert.ok(sameType(record(row(new Map([["x", a]]), tail)), record(row(new Map([["x", a]]), tail))));
+  assert.ok(
+    sameType(record(row(new Map([["x", a]]), tail)), record(row(new Map([["x", a]]), tail))),
+  );
   assert.equal(sameType(record(row(new Map(), tail)), record(row(new Map(), freshRow()))), false);
   // Even existing indirection chains are not path-compressed by equality.
   const end = fresh();
@@ -456,4 +557,3 @@ test("strict substitution alpha-renames binders that would capture a replacement
   assert.notEqual(result.variables[0], b);
   assert.equal(result.body.result, result.variables[0]);
 });
-

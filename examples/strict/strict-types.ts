@@ -4,13 +4,18 @@ export type Kind =
   | { readonly kind: "type" }
   | { readonly kind: "arrow"; readonly param: Kind; readonly result: Kind }
   | { readonly kind: "kind-variable"; instance?: Kind };
+
 export const typeKind: Kind = { kind: "type" };
+
 export const kindArrow = (param: Kind, result: Kind): Kind => ({ kind: "arrow", param, result });
+
 export const freshKind = (): Kind => ({ kind: "kind-variable" });
+
 export const pruneKind = (kind: Kind): Kind => {
   if (kind.kind !== "kind-variable" || !kind.instance) return kind;
   return (kind.instance = pruneKind(kind.instance));
 };
+
 export const showKind = (kind: Kind): string => {
   const names = new Map<Kind, string>();
   const visit = (kind: Kind): string => {
@@ -22,6 +27,7 @@ export const showKind = (kind: Kind): string => {
   };
   return visit(kind);
 };
+
 /** Finalize a declaration's inferred kinds; call only after the whole group is checked. */
 export const defaultKind = (input: Kind): void => {
   const kind = pruneKind(input);
@@ -31,6 +37,7 @@ export const defaultKind = (input: Kind): void => {
     defaultKind(kind.result);
   }
 };
+
 const kindOccurs = (variable: Kind, input: Kind): boolean => {
   const kind = pruneKind(input);
   return (
@@ -39,6 +46,7 @@ const kindOccurs = (variable: Kind, input: Kind): boolean => {
       (kindOccurs(variable, kind.param) || kindOccurs(variable, kind.result)))
   );
 };
+
 export const unifyKinds = (left: Kind, right: Kind): Check<void> =>
   check(function* () {
     const a = pruneKind(left);
@@ -73,75 +81,94 @@ export type Type =
     }
   | Generic
   | Variable;
+
 export type Predicate = { readonly className: string; readonly arg: Type };
+
 export type Generic = {
   readonly kind: "generic";
   readonly name: string;
   readonly id: symbol;
   readonly typeKind: Kind;
 };
+
 export type TypeConstructor = {
   readonly id: symbol;
   readonly name: string;
   readonly arity: number;
   readonly parameters?: readonly Kind[];
 };
+
 export type Variable = {
   readonly kind: "variable";
   readonly typeKind: Kind;
   level: number;
   instance?: Type;
 };
+
 export type RowVariable = {
   readonly kind: "row-variable";
   readonly lacks: Set<string>;
   level: number;
   instance?: Row;
 };
+
 export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null };
+
 type FreeVariable = Variable | RowVariable;
+
 export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable> };
 
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
 export const string: Type = { kind: "string" };
+
 export const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
+
 export const record = (row: Row): Type => ({ kind: "record", row });
+
 export const row = (
   fields: ReadonlyMap<string, Type> = new Map(),
   tail: RowVariable | null = null,
 ): Row => ({ fields, tail });
+
 export const fresh = (level = 0, kind: Kind = typeKind): Variable => ({
   kind: "variable",
   level,
   typeKind: kind,
 });
+
 export const freshRow = (lacks: Iterable<string> = [], level = 0): RowVariable => ({
   kind: "row-variable",
   level,
   lacks: new Set(lacks),
 });
+
 export const generic = (name: string, kind: Kind = typeKind): Generic => ({
   kind: "generic",
   name,
   typeKind: kind,
   id: Symbol(name),
 });
+
 export const forall = (variables: readonly Generic[], body: Type): Type => ({
   kind: "forall",
   variables,
   body,
 });
+
 export const qualified = (predicates: readonly Predicate[], type: Type): Type =>
   predicates.length ? { kind: "qualified", predicates, type } : type;
+
 export const constructorType = (constructor: TypeConstructor): Type => ({
   kind: "constructor",
   constructor,
 });
+
 export const prune = (type: Type): Type => {
   if (type.kind !== "variable" || !type.instance) return type;
   return (type.instance = prune(type.instance));
 };
+
 export const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);
   let tail = input.tail;
@@ -151,6 +178,7 @@ export const flatten = (input: Row): Row => {
   }
   return row(fields, tail);
 };
+
 export const kindOf = (input: Type): Kind => {
   const type = prune(input);
   switch (type.kind) {
@@ -173,12 +201,14 @@ export const kindOf = (input: Type): Kind => {
       return typeKind;
   }
 };
+
 export const apply = (head: Type, arg: Type): Check<Type> =>
   check(function* () {
     const result = freshKind();
     yield* unifyKinds(kindOf(head), kindArrow(kindOf(arg), result));
     return { kind: "application", fn: head, arg, typeKind: result };
   });
+
 /** Internal convenience; source applications should use apply for diagnostics. */
 export const data = (constructor: TypeConstructor, args: readonly Type[]): Type => {
   let type = constructorType(constructor);
@@ -189,6 +219,7 @@ export const data = (constructor: TypeConstructor, args: readonly Type[]): Type 
   }
   return type;
 };
+
 export const decompose = (input: Type): { head: Type; args: readonly Type[] } => {
   const args: Type[] = [];
   let head = prune(input);
@@ -258,6 +289,7 @@ const freeRow = (input: Row, found: Set<FreeVariable>): void => {
   for (const type of fields.values()) free(type, found);
   if (tail) found.add(tail);
 };
+
 export const free = (input: Type, found = new Set<FreeVariable>()): Set<FreeVariable> => {
   const type = prune(input);
   switch (type.kind) {
@@ -293,6 +325,7 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
       tail?.lacks.add(label);
     }
   });
+
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
     const target = flatten(input);
@@ -305,6 +338,7 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
     variable.instance = target;
   });
+
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function* () {
     let a = flatten(left);
@@ -336,6 +370,7 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
     else if (b.tail) yield* solveRow(b.tail, row(onlyA));
   });
+
 export const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
     const a = prune(left);
@@ -374,7 +409,8 @@ export const unify = (left: Type, right: Type): Check<void> =>
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
       const ac = instantiate(mono(a));
       const bc = instantiate(mono(b));
-      if (ac.kind !== "forall" || bc.kind !== "forall") throw new Error("Expected copied quantifier");
+      if (ac.kind !== "forall" || bc.kind !== "forall")
+        throw new Error("Expected copied quantifier");
       const witnesses: Type[] = [];
       for (let i = 0; i < ac.variables.length; i++) {
         const kind = ac.variables[i]!.typeKind;
@@ -392,6 +428,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
   });
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
+
 export const generalize = (type: Type, environment: Iterable<Scheme>): Scheme => {
   const variables = free(type);
   for (const scheme of environment)
@@ -411,6 +448,7 @@ const kindVariables = (input: Kind, found: Set<Kind>): void => {
     kindVariables(kind.result, found);
   }
 };
+
 const cloneKindsFor = (
   type: Type,
   quantified: ReadonlySet<FreeVariable> = new Set(),
@@ -462,6 +500,7 @@ const cloneKindsFor = (
   };
   return copy;
 };
+
 // Rebuilding an application derives its result kind from the substituted head.
 const application = (head: Type, arg: Type): Type => {
   const kind = pruneKind(kindOf(head));
@@ -472,6 +511,7 @@ const application = (head: Type, arg: Type): Type => {
     typeKind: kind.kind === "arrow" ? kind.result : freshKind(),
   };
 };
+
 export const instantiate = (scheme: Scheme, level = 0): Type => {
   const replacements = new Map<Variable, Variable>();
   const rows = new Map<RowVariable, RowVariable>();
@@ -561,6 +601,7 @@ const lower = (input: Type, level: number, bound: ReadonlySet<Generic> = new Set
       }
     }
   });
+
 const maxLevel = (input: Type): number => {
   const type = prune(input);
   switch (type.kind) {
@@ -584,18 +625,34 @@ const maxLevel = (input: Type): number => {
   }
 };
 
-const freeGenerics = (input: Type, found = new Set<Generic>(), bound: ReadonlySet<Generic> = new Set()): Set<Generic> => {
+const freeGenerics = (
+  input: Type,
+  found = new Set<Generic>(),
+  bound: ReadonlySet<Generic> = new Set(),
+): Set<Generic> => {
   const type = prune(input);
   switch (type.kind) {
-    case "generic": if (!bound.has(type)) found.add(type); break;
-    case "function": freeGenerics(type.param, found, bound); freeGenerics(type.result, found, bound); break;
-    case "application": freeGenerics(type.fn, found, bound); freeGenerics(type.arg, found, bound); break;
+    case "generic":
+      if (!bound.has(type)) found.add(type);
+      break;
+    case "function":
+      freeGenerics(type.param, found, bound);
+      freeGenerics(type.result, found, bound);
+      break;
+    case "application":
+      freeGenerics(type.fn, found, bound);
+      freeGenerics(type.arg, found, bound);
+      break;
     case "qualified":
       for (const predicate of type.predicates) freeGenerics(predicate.arg, found, bound);
       freeGenerics(type.type, found, bound);
       break;
-    case "forall": freeGenerics(type.body, found, new Set([...bound, ...type.variables])); break;
-    case "record": for (const field of flatten(type.row).fields.values()) freeGenerics(field, found, bound); break;
+    case "forall":
+      freeGenerics(type.body, found, new Set([...bound, ...type.variables]));
+      break;
+    case "record":
+      for (const field of flatten(type.row).fields.values()) freeGenerics(field, found, bound);
+      break;
   }
   return found;
 };
@@ -633,7 +690,7 @@ export const substitute = (input: Type, replacements: ReadonlyMap<Generic, Type>
       const captures = new Set<Generic>();
       for (const replacement of local.values()) freeGenerics(replacement, captures);
       const renaming = new Map<Generic, Type>();
-      const variables = type.variables.map(variable => {
+      const variables = type.variables.map((variable) => {
         if (!captures.has(variable)) return variable;
         const renamed = generic(variable.name, variable.typeKind);
         renaming.set(variable, renamed);
@@ -646,20 +703,20 @@ export const substitute = (input: Type, replacements: ReadonlyMap<Generic, Type>
       return type;
   }
 };
+
 export const instantiateForall = (input: Type, level = 0): Type => {
   let type = prune(instantiate(mono(input), level));
   while (type.kind === "forall") {
     type = prune(
       substitute(
         type.body,
-        new Map(
-          type.variables.map((variable) => [variable, fresh(level, variable.typeKind)]),
-        ),
+        new Map(type.variables.map((variable) => [variable, fresh(level, variable.typeKind)])),
       ),
     );
   }
   return type;
 };
+
 const skolem = (name: string, level: number, kind: Kind): Type => ({
   kind: "skolem",
   name,
@@ -667,6 +724,7 @@ const skolem = (name: string, level: number, kind: Kind): Type => ({
   typeKind: kind,
   id: Symbol(name),
 });
+
 export const skolemize = (input: Type, level: number): Type => {
   let type = prune(instantiate(mono(input), level));
   while (type.kind === "forall") {
@@ -684,6 +742,7 @@ export const skolemize = (input: Type, level: number): Type => {
   }
   return type;
 };
+
 export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
   check(function* () {
     const target = prune(expected);

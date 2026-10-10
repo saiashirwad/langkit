@@ -42,14 +42,19 @@ export type Type =
   | Variable;
 
 type Variable = { readonly kind: "variable"; instance?: Type };
+
 type Scheme = { readonly type: Type; readonly variables: ReadonlySet<Variable> };
+
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
 
 const number: Type = { kind: "number" };
 const boolean: Type = { kind: "boolean" };
+
 const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
+
 // Called only while a check is running, never while constructing a reusable Check.
 const fresh = (): Variable => ({ kind: "variable" });
+
 const prune = (type: Type): Type => {
   if (type.kind !== "variable" || !type.instance) return type;
   return (type.instance = prune(type.instance));
@@ -64,7 +69,7 @@ export const show = (type: Type): string => {
     let name = names.get(type);
     if (!name) {
       const index = names.size;
-      name = String.fromCharCode(97 + index % 26) + (index >= 26 ? Math.floor(index / 26) : "");
+      name = String.fromCharCode(97 + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : "");
       names.set(type, name);
     }
     return name;
@@ -82,24 +87,26 @@ const free = (type: Type, found = new Set<Variable>()): Set<Variable> => {
   return found;
 };
 
-const unify = (left: Type, right: Type): Check<void> => check(function* () {
-  const a = prune(left);
-  const b = prune(right);
-  if (a === b) return;
-  if (a.kind === "variable") {
-    if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-    a.instance = b;
-  } else if (b.kind === "variable") {
-    yield* unify(b, a);
-  } else if (a.kind === "function" && b.kind === "function") {
-    yield* unify(a.param, b.param);
-    yield* unify(a.result, b.result);
-  } else if (a.kind !== b.kind) {
-    return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-  }
-});
+const unify = (left: Type, right: Type): Check<void> =>
+  check(function* () {
+    const a = prune(left);
+    const b = prune(right);
+    if (a === b) return;
+    if (a.kind === "variable") {
+      if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
+      a.instance = b;
+    } else if (b.kind === "variable") {
+      yield* unify(b, a);
+    } else if (a.kind === "function" && b.kind === "function") {
+      yield* unify(a.param, b.param);
+      yield* unify(a.result, b.result);
+    } else if (a.kind !== b.kind) {
+      return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
+    }
+  });
 
 const mono = (type: Type): Scheme => ({ type, variables: new Set() });
+
 const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme => {
   const variables = free(type);
   for (const { scheme } of environment.values()) {
@@ -157,16 +164,7 @@ const located = (p: Parser<Syntax>): Parser<Expr> =>
 
 const words = /[a-zA-Z_]\w*/;
 const digits = /\d+(?:\.\d+)?/;
-const keywords = [
-  "let",
-  "in",
-  "fn",
-  "if",
-  "then",
-  "else",
-  "true",
-  "false",
-] as const;
+const keywords = ["let", "in", "fn", "if", "then", "else", "true", "false"] as const;
 const reserved: ReadonlySet<string> = new Set(keywords);
 const lex = createLexemes({
   trivia: regex(/\s*/),
@@ -183,7 +181,7 @@ const name = identifier.withSpan((name, span) => ({
 const tokens: readonly TokenRule[] = [
   {
     pattern: words,
-    kind: (text) => reserved.has(text) ? "keyword" : "variable",
+    kind: (text) => (reserved.has(text) ? "keyword" : "variable"),
   },
   { pattern: digits, kind: "number" },
   { pattern: /==|=>|->|[+\-*/>=]/, kind: "operator" },

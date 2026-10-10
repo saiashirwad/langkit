@@ -8,6 +8,7 @@ import { loadModules } from "../examples/modules.ts";
 import { definitionAt, semanticTokens, type Analysis } from "langkit/analysis";
 
 const root = "file:///workspace/main.strict";
+
 const sources = (files: Record<string, string>) => (uri: string) => {
   const source = files[uri];
   if (source === undefined) throw new Error(`Missing: ${uri}`);
@@ -16,9 +17,17 @@ const sources = (files: Record<string, string>) => (uri: string) => {
 
 test("module loader strips directives without changing offsets or newlines", () => {
   const source = '-- heading\r\nimport "./a.strict";\r\nimport "./b.strict";\nmain = 42;';
-  const result = loadModules(source, { uri: root, read: sources({
-    "file:///workspace/a.strict": "a = 1;", "file:///workspace/b.strict": "b = 2;",
-  }) }, "strict");
+  const result = loadModules(
+    source,
+    {
+      uri: root,
+      read: sources({
+        "file:///workspace/a.strict": "a = 1;",
+        "file:///workspace/b.strict": "b = 2;",
+      }),
+    },
+    "strict",
+  );
   assert.ok(result.success);
   const module = result.value.modules.at(-1)!;
   assert.equal(module.source.length, source.length);
@@ -37,13 +46,27 @@ test("module loader uses topological once-only order for diamonds", () => {
     "file:///workspace/b.strict": 'import "./shared.strict"; b = 1;',
     "file:///workspace/shared.strict": "shared = 1;",
   });
-  const result = loadModules('import "./a.strict"; import "./b.strict"; main = 1;', {
-    uri: root, read: uri => { counts.set(uri, (counts.get(uri) ?? 0) + 1); return files(uri); },
-  }, "strict");
+  const result = loadModules(
+    'import "./a.strict"; import "./b.strict"; main = 1;',
+    {
+      uri: root,
+      read: (uri) => {
+        counts.set(uri, (counts.get(uri) ?? 0) + 1);
+        return files(uri);
+      },
+    },
+    "strict",
+  );
   assert.ok(result.success);
-  assert.deepEqual(result.value.modules.map(module => module.uri), [
-    "file:///workspace/shared.strict", "file:///workspace/a.strict", "file:///workspace/b.strict", root,
-  ]);
+  assert.deepEqual(
+    result.value.modules.map((module) => module.uri),
+    [
+      "file:///workspace/shared.strict",
+      "file:///workspace/a.strict",
+      "file:///workspace/b.strict",
+      root,
+    ],
+  );
   assert.equal(counts.get("file:///workspace/shared.strict"), 1);
 });
 
@@ -66,9 +89,16 @@ for (const [source, message] of [
 
 test("module loader reports cycles at the root import, retaining the dependency path", () => {
   const source = '\n\nimport "./a.strict"; main = 1;';
-  const result = loadModules(source, { uri: root, read: sources({
-    "file:///workspace/a.strict": '\n'.repeat(50) + 'import "./main.strict"; a = 1;',
-  }) }, "strict");
+  const result = loadModules(
+    source,
+    {
+      uri: root,
+      read: sources({
+        "file:///workspace/a.strict": "\n".repeat(50) + 'import "./main.strict"; a = 1;',
+      }),
+    },
+    "strict",
+  );
   assert.equal(result.success, false);
   if (!result.success) {
     assert.match(result.error.message, /Import cycle/);
@@ -78,9 +108,16 @@ test("module loader reports cycles at the root import, retaining the dependency 
 });
 
 test("module loader translates nested read and parse errors to the importing span", () => {
-  for (const dependency of ['\n'.repeat(30) + 'import "./missing.strict";', 'import "unterminated']) {
+  for (const dependency of [
+    "\n".repeat(30) + 'import "./missing.strict";',
+    'import "unterminated',
+  ]) {
     const source = 'import "./a.strict"; main = 42;';
-    const result = loadModules(source, { uri: root, read: sources({ "file:///workspace/a.strict": dependency }) }, "strict");
+    const result = loadModules(
+      source,
+      { uri: root, read: sources({ "file:///workspace/a.strict": dependency }) },
+      "strict",
+    );
     assert.equal(result.success, false);
     if (!result.success) {
       assert.equal(result.error.span?.start, 0);
@@ -90,15 +127,22 @@ test("module loader translates nested read and parse errors to the importing spa
 });
 
 test("module loader supports unsaved snapshots and literal spaces in filenames", () => {
-  const result = loadModules('import "./some file.strict"; main = value;', {
-    uri: "file:///workspace/some%20directory/main.strict",
-    read: uri => { assert.equal(uri, "file:///workspace/some%20directory/some%20file.strict"); return "value = 42;"; },
-  }, "strict");
+  const result = loadModules(
+    'import "./some file.strict"; main = value;',
+    {
+      uri: "file:///workspace/some%20directory/main.strict",
+      read: (uri) => {
+        assert.equal(uri, "file:///workspace/some%20directory/some%20file.strict");
+        return "value = 42;";
+      },
+    },
+    "strict",
+  );
   assert.ok(result.success);
   assert.equal(result.value.modules[0]!.source, "value = 42;");
 });
 
-test("module loader defaults to local filesystem and never reads the supplied root", t => {
+test("module loader defaults to local filesystem and never reads the supplied root", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "langkit-modules-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   writeFileSync(join(directory, "child.strict"), "child = 42;");
@@ -108,24 +152,43 @@ test("module loader defaults to local filesystem and never reads the supplied ro
   assert.equal(result.value.root, uri);
   assert.equal(result.value.modules[0]!.original, "child = 42;");
   assert.ok(loadModules("main = 42;", {}, "strict").success);
-  assert.equal(loadModules("main = 42;", { uri: "https://example.com/root.strict" }, "strict").success, false);
+  assert.equal(
+    loadModules("main = 42;", { uri: "https://example.com/root.strict" }, "strict").success,
+    false,
+  );
 });
 
 test("external definitions resolve references without claiming local declaration offsets", () => {
   const id = Symbol("external");
   const analysis: Analysis<string> = {
-    diagnostics: [], types: [],
-    definitions: [{ id, name: "external", type: "number", kind: "function", uri: "file:///dep.strict", span: { start: 0, end: 5 } }],
+    diagnostics: [],
+    types: [],
+    definitions: [
+      {
+        id,
+        name: "external",
+        type: "number",
+        kind: "function",
+        uri: "file:///dep.strict",
+        span: { start: 0, end: 5 },
+      },
+    ],
     references: [{ id, span: { start: 10, end: 15 } }],
-    tokens: [{ kind: "variable", span: { start: 0, end: 5 } }, { kind: "variable", span: { start: 10, end: 15 } }],
+    tokens: [
+      { kind: "variable", span: { start: 0, end: 5 } },
+      { kind: "variable", span: { start: 10, end: 15 } },
+    ],
   };
   assert.equal(definitionAt(analysis, 0), undefined);
   assert.equal(definitionAt(analysis, 10)?.uri, "file:///dep.strict");
-  assert.deepEqual(semanticTokens(analysis).map(token => token.kind), ["variable", "function"]);
+  assert.deepEqual(
+    semanticTokens(analysis).map((token) => token.kind),
+    ["variable", "function"],
+  );
 });
 
 test("module loader leaves body strings and identifier prefixes intact", () => {
-  for (const source of ['important = 42;', 'main = "import \\"./x.strict\\";";']) {
+  for (const source of ["important = 42;", 'main = "import \\"./x.strict\\";";']) {
     const result = loadModules(source, { uri: root }, "strict");
     assert.ok(result.success);
     assert.equal(result.value.modules[0]!.source, source);

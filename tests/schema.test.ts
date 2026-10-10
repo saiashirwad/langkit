@@ -12,6 +12,7 @@ const compiled = (source: string) => {
   if (!result.success) assert.fail(render(result.error, source));
   return result.value;
 };
+
 const database = (source: string, body: (db: DatabaseSync) => void) => {
   const db = new DatabaseSync(":memory:");
   try {
@@ -21,6 +22,7 @@ const database = (source: string, body: (db: DatabaseSync) => void) => {
     db.close();
   }
 };
+
 const row = (db: DatabaseSync, sql: string) => ({ ...db.prepare(sql).get() });
 
 const sample = `
@@ -49,12 +51,19 @@ test("schema: the publishing platform example creates a working SQLite schema", 
   const source = readFileSync(new URL("../examples/schema/main.schema", import.meta.url), "utf8");
   const schema = compiled(source).schema;
   assert.equal(schema.models.length, 190);
-  for (const [prefix, count] of [["Editorial", 43], ["Community", 43], ["Commerce", 43], ["Operations", 42]] as const) {
-    assert.equal(schema.models.filter(model => model.name.name.startsWith(prefix)).length, count);
+  for (const [prefix, count] of [
+    ["Editorial", 43],
+    ["Community", 43],
+    ["Commerce", 43],
+    ["Operations", 42],
+  ] as const) {
+    assert.equal(schema.models.filter((model) => model.name.name.startsWith(prefix)).length, count);
   }
   assert.deepEqual(analyze(source).diagnostics, []);
-  database(source, db => {
-    const tables = db.prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'").all();
+  database(source, (db) => {
+    const tables = db
+      .prepare("SELECT name FROM sqlite_schema WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")
+      .all();
     assert.equal(tables.length, schema.models.length);
     // Preparing DML also catches foreign-key mismatches that CREATE TABLE allows.
     for (const table of tables) db.prepare(`EXPLAIN INSERT INTO "${table.name}" DEFAULT VALUES`);
@@ -75,73 +84,121 @@ test("schema: the publishing platform example creates a working SQLite schema", 
     assert.equal(row(db, "SELECT status FROM Subscription").status, "Active");
     assert.equal(row(db, "SELECT parentId FROM Comment WHERE id = 2").parentId, 1);
     assert.throws(() => db.exec("INSERT INTO TeamMember (teamId, userId) VALUES (1, 1)"), /UNIQUE/);
-    assert.throws(() => db.exec("INSERT INTO Comment (postId, parentId, body, authorId) VALUES (1, 999, 'Orphan', 1)"), /FOREIGN KEY/);
+    assert.throws(
+      () =>
+        db.exec(
+          "INSERT INTO Comment (postId, parentId, body, authorId) VALUES (1, 999, 'Orphan', 1)",
+        ),
+      /FOREIGN KEY/,
+    );
     assert.deepEqual(db.prepare("PRAGMA foreign_key_check").all(), []);
   });
 });
 
 test("schema: generated SQLite executes defaults, helpers, indexes and foreign keys", () => {
   const result = compiled(sample);
-  assert.deepEqual(result.schema.models[0]!.fields.map(field => field.name.name),
-    ["id", "title", "authorId", "published", "createdAt", "updatedAt"]);
+  assert.deepEqual(
+    result.schema.models[0]!.fields.map((field) => field.name.name),
+    ["id", "title", "authorId", "published", "createdAt", "updatedAt"],
+  );
   assert.equal(result.sql, compiled(sample).sql);
-  database(sample, db => {
+  database(sample, (db) => {
     assert.equal(row(db, "PRAGMA foreign_keys").foreign_keys, 1);
-    db.exec("INSERT INTO User (email) VALUES ('one@example.com'); INSERT INTO User (email) VALUES ('two@example.com');");
-    assert.deepEqual(row(db, "SELECT id, name, role FROM User WHERE id = 1"), { id: 1, name: null, role: "User" });
+    db.exec(
+      "INSERT INTO User (email) VALUES ('one@example.com'); INSERT INTO User (email) VALUES ('two@example.com');",
+    );
+    assert.deepEqual(row(db, "SELECT id, name, role FROM User WHERE id = 1"), {
+      id: 1,
+      name: null,
+      role: "User",
+    });
     assert.equal(row(db, "SELECT id FROM User WHERE email = 'two@example.com'").id, 2);
-    assert.match(String(row(db, "SELECT createdAt FROM User WHERE id = 1").createdAt), /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/);
+    assert.match(
+      String(row(db, "SELECT createdAt FROM User WHERE id = 1").createdAt),
+      /^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d$/,
+    );
     db.exec("INSERT INTO Post (title, authorId) VALUES ('Hello', 1)");
     assert.equal(row(db, "SELECT published FROM Post").published, 0);
-    assert.throws(() => db.exec("INSERT INTO Post (title, authorId) VALUES ('Orphan', 999)"), /FOREIGN KEY/);
+    assert.throws(
+      () => db.exec("INSERT INTO Post (title, authorId) VALUES ('Orphan', 999)"),
+      /FOREIGN KEY/,
+    );
     assert.throws(() => db.exec("DELETE FROM User WHERE id = 1"), /FOREIGN KEY/);
     assert.throws(() => db.exec("INSERT INTO User (email) VALUES ('one@example.com')"), /UNIQUE/);
     assert.throws(() => db.exec("INSERT INTO User (email, role) VALUES ('bad', 'Owner')"), /CHECK/);
     assert.throws(() => db.exec("INSERT INTO User (email) VALUES (NULL)"), /NOT NULL/);
-    assert.throws(() => db.exec("INSERT INTO Post (title, authorId, published) VALUES ('Bad', 1, 2)"), /CHECK/);
-    assert.throws(() => db.exec("INSERT INTO Post (title, authorId) VALUES ('Bad', 'not an integer')"), /cannot store TEXT/);
-    const indexes = db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL").all();
+    assert.throws(
+      () => db.exec("INSERT INTO Post (title, authorId, published) VALUES ('Bad', 1, 2)"),
+      /CHECK/,
+    );
+    assert.throws(
+      () => db.exec("INSERT INTO Post (title, authorId) VALUES ('Bad', 'not an integer')"),
+      /cannot store TEXT/,
+    );
+    const indexes = db
+      .prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND sql IS NOT NULL")
+      .all();
     assert.equal(indexes.length, 3);
-    const columns = indexes.map(index => db.prepare(`PRAGMA index_info('${index.name}')`).all().map(column => column.name));
-    assert.ok(columns.some(names => names.join(",") === "authorId,createdAt"));
+    const columns = indexes.map((index) =>
+      db
+        .prepare(`PRAGMA index_info('${index.name}')`)
+        .all()
+        .map((column) => column.name),
+    );
+    assert.ok(columns.some((names) => names.join(",") === "authorId,createdAt"));
   });
 });
 
 test("schema: composite uniqueness, nullable enum/bool and singleton unique references", () => {
-  database(`
+  database(
+    `
     type State = Open | Closed
     model Child = { parent : String? |> references Parent.code, state : State?, flag : Bool? }
     model Parent = { code : String, region : String } |> unique [.code] |> unique [.code, .region]
     model Pair = { a : Int, b : Int } |> unique [.a, .b]
-  `, db => {
-    db.exec("INSERT INTO Child DEFAULT VALUES; INSERT INTO Parent VALUES ('x', 'north'); INSERT INTO Child (parent) VALUES ('x');");
-    assert.deepEqual(row(db, "SELECT parent, state, flag FROM Child WHERE parent IS NULL"), { parent: null, state: null, flag: null });
-    assert.throws(() => db.exec("INSERT INTO Child (parent) VALUES ('missing')"), /FOREIGN KEY/);
-    db.exec("INSERT INTO Pair VALUES (1, 1), (1, 2), (2, 1)");
-    assert.throws(() => db.exec("INSERT INTO Pair VALUES (1, 1)"), /UNIQUE/);
-  });
+  `,
+    (db) => {
+      db.exec(
+        "INSERT INTO Child DEFAULT VALUES; INSERT INTO Parent VALUES ('x', 'north'); INSERT INTO Child (parent) VALUES ('x');",
+      );
+      assert.deepEqual(row(db, "SELECT parent, state, flag FROM Child WHERE parent IS NULL"), {
+        parent: null,
+        state: null,
+        flag: null,
+      });
+      assert.throws(() => db.exec("INSERT INTO Child (parent) VALUES ('missing')"), /FOREIGN KEY/);
+      db.exec("INSERT INTO Pair VALUES (1, 1), (1, 2), (2, 1)");
+      assert.throws(() => db.exec("INSERT INTO Pair VALUES (1, 1)"), /UNIQUE/);
+    },
+  );
 });
 
 test("schema: literals are quoted safely and SQL identifier keywords work", () => {
   const text = "O'Reilly'); DROP TABLE select; --\n\u0000end";
-  database(`model select = {
+  database(
+    `model select = {
     from : String |> default ${JSON.stringify(text)},
     n : Int |> default -42,
     f : Float |> default 1.25,
     b : Bool |> default true
-  }`, db => {
-    db.exec('INSERT INTO "select" DEFAULT VALUES');
-    assert.deepEqual(row(db, 'SELECT * FROM "select"'), { from: text, n: -42, f: 1.25, b: 1 });
-  });
+  }`,
+    (db) => {
+      db.exec('INSERT INTO "select" DEFAULT VALUES');
+      assert.deepEqual(row(db, 'SELECT * FROM "select"'), { from: text, n: -42, f: 1.25, b: 1 });
+    },
+  );
 });
 
 test("schema: generated index names cannot collide with table names", () => {
-  database(`
+  database(
+    `
     model __schema_index_0 = { id : Int } |> index [.id]
     model __schema_index_1 = { id : Int } |> index [.id]
-  `, db => {
-    assert.equal(row(db, "SELECT count(*) AS n FROM sqlite_master WHERE type = 'index'").n, 2);
-  });
+  `,
+    (db) => {
+      assert.equal(row(db, "SELECT count(*) AS n FROM sqlite_master WHERE type = 'index'").n, 2);
+    },
+  );
 });
 
 test("schema: pipelines preserve the input and can select later extensions", () => {
@@ -151,8 +208,11 @@ test("schema: pipelines preserve the input and can select later extensions", () 
     model Item = { id : Int } |> identity |> indexed |> extend { extra : String }
   `;
   const model = compiled(source).schema.models[0]!;
-  assert.deepEqual(model.fields.map(field => field.name.name), ["id", "extra"]);
-  database(source, db => db.exec("INSERT INTO Item VALUES (1, 'ok')"));
+  assert.deepEqual(
+    model.fields.map((field) => field.name.name),
+    ["id", "extra"],
+  );
+  database(source, (db) => db.exec("INSERT INTO Item VALUES (1, 'ok')"));
 });
 
 for (const [source, message] of [
@@ -173,8 +233,14 @@ for (const [source, message] of [
   ["let f = fn(x) => { y : Int }", /must start from its parameter/],
   ["model A = other", /must start with a field block/],
   ["let extend = fn(x) => x", /Duplicate or reserved/],
-  ["let extra = fn(x) => x |> extend { id : Int } model A = { id : Int } |> extra", /Duplicate field/],
-  ["let extra = fn(x) => x |> extend { id : Int } model A = { a : Int } |> extra |> extra", /Duplicate field/],
+  [
+    "let extra = fn(x) => x |> extend { id : Int } model A = { id : Int } |> extra",
+    /Duplicate field/,
+  ],
+  [
+    "let extra = fn(x) => x |> extend { id : Int } model A = { a : Int } |> extra |> extra",
+    /Duplicate field/,
+  ],
   ["let unused = fn(x) => x |> extend { y : Unknown }", /Unknown field type/],
   ["model A = { x : Int |> default true }", /Invalid default/],
   ["model A = { x : Int |> default 1.5 }", /Invalid default/],
@@ -182,7 +248,10 @@ for (const [source, message] of [
   ["model A = { x : String |> default now }", /Invalid default/],
   ["model A = { x : Bool |> default 1 }", /Invalid default/],
   ["type Role = User model A = { x : Role |> default Role.Missing }", /Unknown enum value/],
-  ["type Role = User type Other = User model A = { x : Role |> default Other.User }", /Invalid default/],
+  [
+    "type Role = User type Other = User model A = { x : Role |> default Other.User }",
+    /Invalid default/,
+  ],
   ["model A = { x : Int |> default 1 |> default 2 }", /Duplicate field operation/],
   ["model A = { x : Int? |> primaryKey }", /cannot be optional/],
   ["model A = { x : Int |> primaryKey, y : Int |> primaryKey }", /only one primary key/],
@@ -190,8 +259,14 @@ for (const [source, message] of [
   ["model A = { x : String |> primaryKey |> autoIncrement }", /requires an Int primary key/],
   ["model A = { x : Int |> primaryKey |> autoIncrement |> default 1 }", /cannot have a default/],
   ["model A = { x : Int |> references Missing.id }", /Unknown model/],
-  ["model A = { x : Int |> references B.missing } model B = { id : Int |> primaryKey }", /Unknown field/],
-  ["model A = { x : String |> references B.id } model B = { id : Int |> primaryKey }", /Foreign key types differ/],
+  [
+    "model A = { x : Int |> references B.missing } model B = { id : Int |> primaryKey }",
+    /Unknown field/,
+  ],
+  [
+    "model A = { x : String |> references B.id } model B = { id : Int |> primaryKey }",
+    /Foreign key types differ/,
+  ],
   ["model A = { x : Int |> references B.id } model B = { id : Int }", /primary key or unique/],
   ["model A = { x : Int } |> index [.missing]", /Unknown field/],
   ["model A = { x : Int } |> index [.x, .x]", /Repeated field/],
@@ -257,7 +332,8 @@ test("schema: analysis resolves helper, parameter, enum, foreign key and selecto
 });
 
 test("schema: unused helper fields have type hovers", () => {
-  const source = "let timestamps = fn(m) => m |> extend { createdAt : DateTime |> default now, label : String? }";
+  const source =
+    "let timestamps = fn(m) => m |> extend { createdAt : DateTime |> default now, label : String? }";
   const analysis = analyze(source);
   assert.deepEqual(analysis.diagnostics, []);
   assert.equal(typeAt(analysis, source.indexOf("createdAt"))?.type, "DateTime");
@@ -268,7 +344,9 @@ test("schema: repeated compilation and analysis do not leak facts", () => {
   const first = analyze("model A = { x : Int }");
   compiled(sample);
   const second = analyze("model B = { y : String }");
-  assert.ok(first.definitions.some(definition => definition.name === "A"));
-  assert.ok(!second.definitions.some(definition => definition.name === "A" || definition.name === "x"));
+  assert.ok(first.definitions.some((definition) => definition.name === "A"));
+  assert.ok(
+    !second.definitions.some((definition) => definition.name === "A" || definition.name === "x"),
+  );
   assert.deepEqual(second.diagnostics, []);
 });

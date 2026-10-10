@@ -13,6 +13,7 @@ const compiled = (source: string) => {
   validate(result.value.ir);
   return result.value;
 };
+
 const evaluate = (source: string): unknown =>
   runInNewContext(compiled(source).javascript, {}, { timeout: 1000 });
 
@@ -89,7 +90,8 @@ for (const source of ["fn(x) => x(x)", "fn(f) => fn(x) => let y = f(x) in f(f)"]
 }
 
 for (const source of ["", "fn(x) =>", "let x = in x", "fn(x: number) => x", "1 garbage"]) {
-  test(`HM syntax failure: ${JSON.stringify(source)}`, () => assert.equal(compile(source).success, false));
+  test(`HM syntax failure: ${JSON.stringify(source)}`, () =>
+    assert.equal(compile(source).success, false));
 }
 
 for (const source of ["missing", "let x = x in x", "(let x = 1 in x) + x"]) {
@@ -140,7 +142,10 @@ test("HM analysis distinguishes a generic declaration from instantiated uses", (
   assert.equal(show(typeAt(analysis, second)!.type), "(number -> number)");
   assert.equal(definitionAt(analysis, first)?.id, definitionAt(analysis, second)?.id);
   assert.deepEqual(definitionAt(analysis, second)?.span, { start: 4, end: 6 });
-  assert.equal(semanticTokens(analysis).find(token => token.span.start === first)?.kind, "function");
+  assert.equal(
+    semanticTokens(analysis).find((token) => token.span.start === first)?.kind,
+    "function",
+  );
 });
 
 test("HM IR references preserve binding identity while carrying independent types", () => {
@@ -153,17 +158,37 @@ test("HM IR references preserve binding identity while carrying independent type
   const visit = (value: Value<Type>): void => {
     const node = value.node;
     switch (node.kind) {
-      case "ref": if (node.binding.name === "id") uses.push(value); return;
-      case "literal": return;
-      case "binary": visit(node.left); visit(node.right); return;
-      case "call": visit(node.fn); visit(node.arg); return;
-      case "fn": body(node.body); return;
-      case "block": body(node.body); return;
-      case "if": visit(node.cond); body(node.then); body(node.else); return;
+      case "ref":
+        if (node.binding.name === "id") uses.push(value);
+        return;
+      case "literal":
+        return;
+      case "binary":
+        visit(node.left);
+        visit(node.right);
+        return;
+      case "call":
+        visit(node.fn);
+        visit(node.arg);
+        return;
+      case "fn":
+        body(node.body);
+        return;
+      case "block":
+        body(node.body);
+        return;
+      case "if":
+        visit(node.cond);
+        body(node.then);
+        body(node.else);
+        return;
     }
   };
   body(compiled(source).ir);
-  assert.deepEqual(uses.map(value => show(value.type)), ["(boolean -> boolean)", "(number -> number)"]);
+  assert.deepEqual(
+    uses.map((value) => show(value.type)),
+    ["(boolean -> boolean)", "(number -> number)"],
+  );
   assert.ok(uses[0]!.node.kind === "ref" && uses[1]!.node.kind === "ref");
   assert.equal(uses[0]!.node.binding, uses[1]!.node.binding);
   assert.equal(show(uses[0]!.node.binding.type), "(a -> a)");
@@ -179,7 +204,10 @@ test("HM hovers resolve later constraints on parameters and references", () => {
 test("HM shadowing keeps definition identities distinct", () => {
   const source = "let x = 1 in (let x = true in x)";
   const analysis = analyze(source);
-  assert.equal(definitionAt(analysis, source.lastIndexOf("x"))?.span.start, source.indexOf("x = true"));
+  assert.equal(
+    definitionAt(analysis, source.lastIndexOf("x"))?.span.start,
+    source.indexOf("x = true"),
+  );
   assert.notEqual(analysis.definitions[0]!.id, analysis.definitions[1]!.id);
 });
 
@@ -189,7 +217,7 @@ test("HM malformed input still highlights but does not expose stale semantic fac
   assert.equal(analysis.diagnostics.length, 1);
   assert.deepEqual(analysis.types, []);
   assert.deepEqual(analysis.references, []);
-  assert.ok(analysis.tokens.some(token => token.kind === "keyword"));
+  assert.ok(analysis.tokens.some((token) => token.kind === "keyword"));
 });
 
 test("HM analysis retains completed expression facts after a checking failure", () => {

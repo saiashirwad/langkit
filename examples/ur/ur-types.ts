@@ -2,11 +2,14 @@ import { check, fail, type Check } from "langkit";
 import type { TypeExpr } from "./ur-syntax.ts";
 
 export type Parameter = { readonly id: symbol; readonly name: string; readonly row: boolean };
+
 export type Row = {
   readonly fields: ReadonlyMap<string, Type>;
   readonly variables: readonly Parameter[];
 };
+
 export type Constraint = { readonly left: Row; readonly right: Row };
+
 export type Type =
   | { readonly kind: "number" | "boolean" | "string" }
   | { readonly kind: "variable"; readonly parameter: Parameter }
@@ -18,21 +21,27 @@ export type Type =
       readonly generics: readonly Parameter[];
       readonly constraints: readonly Constraint[];
     };
+
 export type FunctionType = Extract<Type, { kind: "function" }>;
+
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
 export const string: Type = { kind: "string" };
+
 export const row = (
   fields: ReadonlyMap<string, Type> = new Map(),
   variables: readonly Parameter[] = [],
 ): Row => ({ fields, variables });
+
 export const record = (row: Row): Type => ({ kind: "record", row });
+
 export const fn = (
   params: readonly Type[],
   result: Type,
   generics: readonly Parameter[] = [],
   constraints: readonly Constraint[] = [],
 ): FunctionType => ({ kind: "function", params, result, generics, constraints });
+
 const showRow = (row: Row): string =>
   [
     ...(row.fields.size
@@ -40,6 +49,7 @@ const showRow = (row: Row): string =>
       : []),
     ...row.variables.map((variable) => variable.name),
   ].join(" ++ ") || "{}";
+
 export const show = (type: Type): string => {
   switch (type.kind) {
     case "variable":
@@ -52,11 +62,13 @@ export const show = (type: Type): string => {
       return type.kind;
   }
 };
+
 export const sameRow = (a: Row, b: Row): boolean =>
   a.fields.size === b.fields.size &&
   a.variables.length === b.variables.length &&
   [...a.fields].every(([name, type]) => b.fields.has(name) && same(type, b.fields.get(name)!)) &&
   a.variables.every((v) => b.variables.some((w) => v.id === w.id));
+
 export const same = (a: Type, b: Type): boolean => {
   if (a.kind !== b.kind) return false;
   if (a.kind === "variable" && b.kind === "variable") return a.parameter.id === b.parameter.id;
@@ -76,6 +88,7 @@ export const same = (a: Type, b: Type): boolean => {
     );
   return true;
 };
+
 export const expect = (actual: Type, expected: Type): Check<void> =>
   check(function* () {
     if (!same(actual, expected)) yield* fail(`Expected ${show(expected)}, found ${show(actual)}`);
@@ -84,7 +97,9 @@ export const expect = (actual: Type, expected: Type): Check<void> =>
 // A row is a disjoint union of known labels and rigid unknown rows. A hypothesis
 // about unions implies disjointness of each pair of components, never equality.
 type Component = string | symbol;
+
 const components = (r: Row): Component[] => [...r.fields.keys(), ...r.variables.map((v) => v.id)];
+
 const proves = (a: Component, b: Component, constraints: readonly Constraint[]): boolean => {
   if (typeof a === "string" && typeof b === "string") return a !== b;
   return constraints.some((c) => {
@@ -93,6 +108,7 @@ const proves = (a: Component, b: Component, constraints: readonly Constraint[]):
     return (left.includes(a) && right.includes(b)) || (left.includes(b) && right.includes(a));
   });
 };
+
 export const disjoint = (a: Row, b: Row, constraints: readonly Constraint[]): Check<void> =>
   check(function* () {
     for (const x of components(a))
@@ -109,6 +125,7 @@ export const disjoint = (a: Row, b: Row, constraints: readonly Constraint[]): Ch
           );
       }
   });
+
 export const concat = (a: Row, b: Row, constraints: readonly Constraint[]): Check<Row> =>
   check(function* () {
     yield* disjoint(a, b, constraints);
@@ -116,6 +133,7 @@ export const concat = (a: Row, b: Row, constraints: readonly Constraint[]): Chec
   });
 
 export type TypeScope = ReadonlyMap<string, Parameter>;
+
 export const resolveRow = (
   expr: TypeExpr,
   scope: TypeScope,
@@ -146,6 +164,7 @@ export const resolveRow = (
     }
     return yield* fail("Expected a row (Row<Type>)");
   }).at(expr.span);
+
 export const resolve = (
   expr: TypeExpr,
   scope: TypeScope,
@@ -182,6 +201,7 @@ export const resolve = (
 // Call-site inference only substitutes the callee's quantified parameters. The
 // caller's generic parameters stay rigid. No body is specialized or rechecked.
 type Substitution = { types: Map<symbol, Type>; rows: Map<symbol, Row> };
+
 const substituteRow = (
   r: Row,
   sub: Substitution,
@@ -201,6 +221,7 @@ const substituteRow = (
     }
     return result;
   });
+
 const substitute = (
   type: Type,
   sub: Substitution,
@@ -228,6 +249,7 @@ const substitute = (
     }
     return type;
   });
+
 const matchRow = (
   pattern: Row,
   actual: Row,
@@ -271,6 +293,7 @@ const matchRow = (
     else if (fields.size || variables.length)
       return yield* fail("Record rows do not match (unexpected fields or row parameters)");
   });
+
 const match = (
   pattern: Type,
   actual: Type,
@@ -307,10 +330,12 @@ const match = (
     }
     yield* expect(actual, pattern);
   });
+
 const polymorphic = (type: Type): boolean =>
   type.kind === "function"
     ? !!type.generics.length || type.params.some(polymorphic) || polymorphic(type.result)
     : type.kind === "record" && [...type.row.fields.values()].some(polymorphic);
+
 export const apply = (
   callee: FunctionType,
   args: readonly Type[],

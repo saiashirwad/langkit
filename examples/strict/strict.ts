@@ -84,6 +84,7 @@ type Entry = {
   readonly scheme: Scheme;
   readonly identity?: symbol;
 };
+
 type Constructor = {
   readonly binding: Binding<Type>;
   readonly type: Type;
@@ -91,6 +92,7 @@ type Constructor = {
   readonly tag: string;
   readonly owner: TypeConstructor;
 };
+
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[] };
 
 const code = create<Type>();
@@ -100,6 +102,7 @@ const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
 const constructors = scoped<ReadonlyMap<string, Constructor>>(new Map());
 const level = scoped(0);
 const observe = scoped(true);
+
 type Origin = {
   readonly id: symbol;
   readonly name: string;
@@ -108,8 +111,10 @@ type Origin = {
   readonly kind: "variable" | "parameter" | "function";
   readonly uri: string;
 };
+
 const currentModule = scoped("");
 const origins = scoped<Map<symbol, Origin>>(new Map());
+
 const define = (
   binding: Binding<Type>,
   span: Span,
@@ -124,12 +129,15 @@ const define = (
     });
     if (yield* get(observe)) yield* facts.define(binding, span, kind);
   });
+
 type Class = { readonly parameter: Generic; readonly methods: ReadonlyMap<string, Type> };
+
 type Evidence = {
   readonly predicate: Predicate;
   readonly value: Value<Type>;
   readonly identity?: symbol;
 };
+
 type Wanted = {
   readonly predicate: Predicate;
   readonly binding: Binding<Type>;
@@ -137,13 +145,16 @@ type Wanted = {
   readonly instances: readonly Evidence[];
   readonly span: Span;
 };
+
 const classes = scoped<ReadonlyMap<string, Class>>(new Map());
 const instances = scoped<readonly Evidence[]>([]);
 const givens = scoped<readonly Evidence[]>([]);
 const wanted = scoped<Wanted[]>([]);
 const solutions = scoped<Map<symbol, Value<Type>>>(new Map());
 const effectConstructor: TypeConstructor = { id: Symbol("Effect"), name: "Effect", arity: 1 };
+
 const effect = (type: Type) => data(effectConstructor, [type]);
+
 const kind = (syntax: KindExpr): Kind =>
   syntax.kind === "type" ? typeKind : kindArrow(kind(syntax.param), kind(syntax.result));
 
@@ -235,6 +246,7 @@ const resolve = (
       }
     }
   }).at(syntax.span);
+
 const resolveValueType = (
   syntax: TypeExpr,
   parameters: ReadonlyMap<string, Type> = new Map(),
@@ -244,6 +256,7 @@ const resolveValueType = (
     yield* unifyKinds(kindOf(type), typeKind);
     return type;
   }).at(syntax.span);
+
 const containsConstraints = (input: Type): boolean => {
   const type = prune(input);
   return type.kind === "qualified" || (type.kind === "forall" && containsConstraints(type.body));
@@ -263,12 +276,14 @@ const dictionaryType = (predicate: Predicate): Check<Type> =>
       ),
     );
   });
+
 const evidence = (want: Wanted): Value<Type> | undefined =>
   [...want.givens, ...want.instances].find(
     (candidate) =>
       candidate.predicate.className === want.predicate.className &&
       sameType(candidate.predicate.arg, want.predicate.arg),
   )?.value;
+
 const demand = (predicate: Predicate, span: Span): Check<Value<Type>> =>
   check(function* () {
     const binding = code.binding("dictionary", yield* dictionaryType(predicate));
@@ -281,6 +296,7 @@ const demand = (predicate: Predicate, span: Span): Check<Value<Type>> =>
     });
     return code.ref(binding);
   });
+
 const useValue = (value: Value<Type>, span: Span): Check<Value<Type>> =>
   check(function* () {
     let type = instantiateForall(value.type, yield* get(level));
@@ -293,6 +309,7 @@ const useValue = (value: Value<Type>, span: Span): Check<Value<Type>> =>
     }
     return result;
   });
+
 const discharge = (wants: readonly Wanted[]): Check<Wanted[]> =>
   check(function* () {
     const remaining: Wanted[] = [];
@@ -304,6 +321,7 @@ const discharge = (wants: readonly Wanted[]): Check<Wanted[]> =>
     }
     return remaining;
   });
+
 const requireEvidence = (wants: readonly Wanted[]): Check<void> =>
   check(function* () {
     const remaining = yield* discharge(wants);
@@ -999,6 +1017,7 @@ const withBindings = (module: Module, continuation: Check<Value<Type>>): Check<V
     }
     return yield* result;
   });
+
 const withModule = (module: Module, body: Check<Value<Type>>): Check<Value<Type>> =>
   withTypes(
     module.types,
@@ -1141,6 +1160,7 @@ export type Compiled = {
   readonly ir: Body<Type>;
   readonly javascript: string;
 };
+
 const parse = (source: string): Result<Module> => {
   const result = program.parse(source);
   return result.success
@@ -1154,6 +1174,7 @@ const parse = (source: string): Result<Module> => {
         },
       };
 };
+
 type Exports = {
   values: Map<string, Entry>;
   types: Map<string, Definition>;
@@ -1161,7 +1182,9 @@ type Exports = {
   classes: Map<string, Class>;
   instances: Evidence[];
 };
+
 type Graph = { readonly root: string; readonly modules: readonly ModuleSource[] };
+
 const emptyExports = (): Exports => ({
   values: new Map(),
   types: new Map(),
@@ -1169,6 +1192,7 @@ const emptyExports = (): Exports => ({
   classes: new Map(),
   instances: [],
 });
+
 const mergeImports = (
   source: ModuleSource,
   modules: ReadonlyMap<string, Exports>,
@@ -1392,6 +1416,7 @@ const moduleError = (
   const imported = root.imports.find((imported) => reaches(imported.uri));
   return imported ? { ...error, span: imported.span } : error;
 };
+
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const loaded = loadModules(source, options, "strict");
   const lexical = highlight(source, tokens);
@@ -1419,6 +1444,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
     sources: new Map(loaded.value.modules.map((module) => [module.uri, module.original])),
   };
 };
+
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
   const loaded = loadModules(source, options, "strict");
   if (!loaded.success) return loaded;

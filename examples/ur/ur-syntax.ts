@@ -19,7 +19,9 @@ import type { Operator } from "langkit/ir";
 import type { TokenRule } from "langkit/analysis";
 
 type Located<T> = T & { readonly span: Span };
+
 export type Name = { readonly name: string; readonly span: Span };
+
 export type TypeExpr = Located<
   | { readonly kind: "name"; readonly name: string }
   | {
@@ -30,9 +32,13 @@ export type TypeExpr = Located<
   | { readonly kind: "concat"; readonly left: TypeExpr; readonly right: TypeExpr }
   | { readonly kind: "function"; readonly param: TypeExpr; readonly result: TypeExpr }
 >;
+
 export type Generic = Name & { readonly row: boolean };
+
 export type Parameter = Name & { readonly type: TypeExpr };
+
 export type Constraint = Located<{ readonly left: TypeExpr; readonly right: TypeExpr }>;
+
 export type Expr = Located<
   | { readonly kind: "literal"; readonly value: number | boolean | string }
   | { readonly kind: "name"; readonly name: string }
@@ -58,6 +64,7 @@ export type Expr = Located<
     }
   | { readonly kind: "if"; readonly cond: Expr; readonly then: Expr; readonly else: Expr }
 >;
+
 export type Declaration = Located<
   | {
       readonly kind: "let";
@@ -99,18 +106,24 @@ const keywords = [
   "import",
 ] as const;
 const reserved: ReadonlySet<string> = new Set(keywords);
+
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
   identifier: regex(words),
   keywords,
 });
+
 const { keyword, symbol, identifier } = lex;
+
 const located = <T>(p: Parser<T>): Parser<Located<T>> =>
   p.withSpan((value, span) => ({ ...value, span }));
+
 const name = identifier.withSpan(
   (name, span): Name => ({ name, span: { start: span.start, end: span.start + name.length } }),
 );
+
 const commaList = <T>(p: Parser<T>) => sepEndBy(p, symbol(","));
+
 export const tokens: readonly TokenRule[] = [
   { pattern: comments, kind: () => undefined },
   { pattern: strings, kind: "string" },
@@ -180,6 +193,7 @@ export const annotation: Parser<TypeExpr> = recursive<TypeExpr>((type) => {
     },
   ]);
 });
+
 const parameters = between(
   symbol("("),
   symbol(")"),
@@ -191,6 +205,7 @@ const parameters = between(
     }),
   ),
 );
+
 const optionalAnnotation = optional(
   parser(function* () {
     yield* symbol(":");
@@ -403,4 +418,5 @@ const declaration: Parser<Declaration> = choice(
     }),
   ),
 );
+
 export const program = lex.complete(many(declaration));

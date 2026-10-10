@@ -43,6 +43,7 @@ export type Type =
 
 const number: Type = { kind: "number" };
 const boolean: Type = { kind: "boolean" };
+
 const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
 
 export const show = (type: Type): string =>

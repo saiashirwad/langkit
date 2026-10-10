@@ -12,39 +12,68 @@ export type Type =
   | Variable;
 
 export type Generic = { readonly kind: "generic"; readonly name: string; readonly id: symbol };
-export type TypeConstructor = { readonly id: symbol; readonly name: string; readonly arity: number };
+
+export type TypeConstructor = {
+  readonly id: symbol;
+  readonly name: string;
+  readonly arity: number;
+};
+
 export const generic = (name: string): Generic => ({ kind: "generic", name, id: Symbol(name) });
+
 export const data = (constructor: TypeConstructor, args: readonly Type[]): Type => {
-  if (constructor.arity !== args.length) throw new Error(`Type ${constructor.name} expects ${constructor.arity} arguments`);
+  if (constructor.arity !== args.length)
+    throw new Error(`Type ${constructor.name} expects ${constructor.arity} arguments`);
   return { kind: "data", constructor, args };
 };
-export const forall = (variables: readonly Generic[], body: Type): Type => ({ kind: "forall", variables, body });
+
+export const forall = (variables: readonly Generic[], body: Type): Type => ({
+  kind: "forall",
+  variables,
+  body,
+});
 
 export type Variable = { readonly kind: "variable"; level: number; instance?: Type };
-export type RowVariable = { readonly kind: "row-variable"; readonly lacks: Set<string>; level: number; instance?: Row };
+
+export type RowVariable = {
+  readonly kind: "row-variable";
+  readonly lacks: Set<string>;
+  level: number;
+  instance?: Row;
+};
+
 export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null };
+
 type FreeVariable = Variable | RowVariable;
+
 export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable> };
 
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
 export const string: Type = { kind: "string" };
+
 export const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
+
 export const record = (row: Row): Type => ({ kind: "record", row });
+
 export const row = (
   fields: ReadonlyMap<string, Type> = new Map(),
   tail: RowVariable | null = null,
 ): Row => ({ fields, tail });
+
 export const fresh = (level = 0): Variable => ({ kind: "variable", level });
+
 export const freshRow = (lacks: Iterable<string> = [], level = 0): RowVariable => ({
   level,
   kind: "row-variable",
   lacks: new Set(lacks),
 });
+
 export const prune = (type: Type): Type => {
   if (type.kind !== "variable" || !type.instance) return type;
   return (type.instance = prune(type.instance));
 };
+
 export const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);
   let tail = input.tail;
@@ -74,8 +103,12 @@ export const show = (type: Type): string => {
     }
     if (type.kind === "generic") return type.name;
     if (type.kind === "skolem") return `^${type.name}`;
-    if (type.kind === "forall") return `(forall ${type.variables.map(v => v.name).join(" ")}. ${visit(type.body)})`;
-    if (type.kind === "data") return type.constructor.name + (type.args.length ? `(${type.args.map(visit).join(", ")})` : "");
+    if (type.kind === "forall")
+      return `(forall ${type.variables.map((v) => v.name).join(" ")}. ${visit(type.body)})`;
+    if (type.kind === "data")
+      return (
+        type.constructor.name + (type.args.length ? `(${type.args.map(visit).join(", ")})` : "")
+      );
     if (type.kind !== "variable") return type.kind;
     if (!names.has(type)) {
       const index = names.size;
@@ -98,6 +131,7 @@ const freeRow = (input: Row, found: Set<FreeVariable>): void => {
   for (const type of fields.values()) free(type, found);
   if (tail) found.add(tail);
 };
+
 export const free = (type: Type, found = new Set<FreeVariable>()): Set<FreeVariable> => {
   type = prune(type);
   if (type.kind === "variable") found.add(type);
@@ -120,6 +154,7 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
       tail?.lacks.add(label);
     }
   });
+
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
     const target = flatten(input);
@@ -133,6 +168,7 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
     variable.instance = target;
   });
+
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function* () {
     let a = flatten(left);
@@ -166,6 +202,7 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
     else if (b.tail) yield* solveRow(b.tail, row(onlyA));
   });
+
 export const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
     const a = prune(left);
@@ -173,7 +210,10 @@ export const unify = (left: Type, right: Type): Check<void> =>
     if (a === b) return;
     if (a.kind === "variable") {
       if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-      if (b.kind === "forall") return yield* fail("Cannot infer an impredicative type; add an explicit polymorphic annotation");
+      if (b.kind === "forall")
+        return yield* fail(
+          "Cannot infer an impredicative type; add an explicit polymorphic annotation",
+        );
       yield* lower(b, a.level);
       a.instance = b;
     } else if (b.kind === "variable") yield* unify(b, a);
@@ -183,12 +223,18 @@ export const unify = (left: Type, right: Type): Check<void> =>
     } else if (a.kind === "record" && b.kind === "record") yield* unifyRows(a.row, b.row);
     else if (a.kind === "data" && b.kind === "data" && a.constructor.id === b.constructor.id) {
       for (let i = 0; i < a.args.length; i++) yield* unify(a.args[i]!, b.args[i]!);
-    } else if (a.kind === "forall" && b.kind === "forall" && a.variables.length === b.variables.length) {
+    } else if (
+      a.kind === "forall" &&
+      b.kind === "forall" &&
+      a.variables.length === b.variables.length
+    ) {
       // Alpha-equivalence uses fresh rigid witnesses outside every existing meta's scope.
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
-      const witnesses = a.variables.map(v => skolem(v.name, level));
-      yield* unify(substitute(a.body, new Map(a.variables.map((v, i) => [v, witnesses[i]!]))),
-        substitute(b.body, new Map(b.variables.map((v, i) => [v, witnesses[i]!]))));
+      const witnesses = a.variables.map((v) => skolem(v.name, level));
+      yield* unify(
+        substitute(a.body, new Map(a.variables.map((v, i) => [v, witnesses[i]!]))),
+        substitute(b.body, new Map(b.variables.map((v, i) => [v, witnesses[i]!]))),
+      );
     } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
     else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
     else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind))
@@ -196,6 +242,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
   });
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
+
 export const generalize = (type: Type, environment: Iterable<Scheme>): Scheme => {
   const variables = free(type);
   for (const scheme of environment) {
@@ -205,6 +252,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Scheme =>
   }
   return { type, variables };
 };
+
 export const instantiate = (scheme: Scheme, level = 0): Type => {
   const replacements = new Map<Variable, Variable>();
   const rows = new Map<RowVariable, RowVariable>();
@@ -230,7 +278,6 @@ export const instantiate = (scheme: Scheme, level = 0): Type => {
   return visit(scheme.type);
 };
 
-
 // Levels are lexical skolem scopes, not let-generalization levels. Connecting an
 // outer meta to an inner structure lowers every reachable unsolved meta, including
 // row tails, so a later assignment cannot smuggle a rigid type out of its scope.
@@ -238,7 +285,9 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
   check(function* () {
     type = prune(type);
     switch (type.kind) {
-      case "variable": type.level = Math.min(type.level, level); return;
+      case "variable":
+        type.level = Math.min(type.level, level);
+        return;
       case "skolem":
         if (type.level > level) return yield* fail(`Skolem escape: ${show(type)}`);
         return;
@@ -267,56 +316,89 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
 const maxLevel = (type: Type): number => {
   type = prune(type);
   switch (type.kind) {
-    case "variable": case "skolem": return type.level;
-    case "function": return Math.max(maxLevel(type.param), maxLevel(type.result));
-    case "forall": return maxLevel(type.body);
-    case "data": return Math.max(0, ...type.args.map(maxLevel));
+    case "variable":
+    case "skolem":
+      return type.level;
+    case "function":
+      return Math.max(maxLevel(type.param), maxLevel(type.result));
+    case "forall":
+      return maxLevel(type.body);
+    case "data":
+      return Math.max(0, ...type.args.map(maxLevel));
     case "record": {
       const { fields, tail } = flatten(type.row);
       return Math.max(tail?.level ?? 0, ...[...fields.values()].map(maxLevel));
     }
-    default: return 0;
+    default:
+      return 0;
   }
 };
 
 /** Capture-avoiding substitution of explicitly bound ordinary type parameters. */
+
 export const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type => {
   type = prune(type);
   switch (type.kind) {
-    case "generic": return replacements.get(type) ?? type;
-    case "function": return fn(substitute(type.param, replacements), substitute(type.result, replacements));
-    case "data": return data(type.constructor, type.args.map(arg => substitute(arg, replacements)));
+    case "generic":
+      return replacements.get(type) ?? type;
+    case "function":
+      return fn(substitute(type.param, replacements), substitute(type.result, replacements));
+    case "data":
+      return data(
+        type.constructor,
+        type.args.map((arg) => substitute(arg, replacements)),
+      );
     case "record": {
       const { fields, tail } = flatten(type.row);
-      return record(row(new Map([...fields].map(([name, field]) => [name, substitute(field, replacements)])), tail));
+      return record(
+        row(
+          new Map([...fields].map(([name, field]) => [name, substitute(field, replacements)])),
+          tail,
+        ),
+      );
     }
     case "forall": {
       const local = new Map(replacements);
       for (const variable of type.variables) local.delete(variable);
       return forall(type.variables, substitute(type.body, local));
     }
-    default: return type;
+    default:
+      return type;
   }
 };
 
 export const instantiateForall = (type: Type, level = 0): Type => {
   type = prune(type);
   while (type.kind === "forall") {
-    type = prune(substitute(type.body, new Map(type.variables.map(variable => [variable, fresh(level)]))));
+    type = prune(
+      substitute(type.body, new Map(type.variables.map((variable) => [variable, fresh(level)]))),
+    );
   }
   return type;
 };
 
-const skolem = (name: string, level: number): Type => ({ kind: "skolem", name, level, id: Symbol(name) });
+const skolem = (name: string, level: number): Type => ({
+  kind: "skolem",
+  name,
+  level,
+  id: Symbol(name),
+});
+
 export const skolemize = (type: Type, level: number): Type => {
   type = prune(type);
   while (type.kind === "forall") {
-    type = prune(substitute(type.body, new Map(type.variables.map(variable => [variable, skolem(variable.name, level)]))));
+    type = prune(
+      substitute(
+        type.body,
+        new Map(type.variables.map((variable) => [variable, skolem(variable.name, level)])),
+      ),
+    );
   }
   return type;
 };
 
 /** Predicative subsumption; expected polymorphism is checked using rigid witnesses. */
+
 export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
   check(function* () {
     const target = prune(expected);

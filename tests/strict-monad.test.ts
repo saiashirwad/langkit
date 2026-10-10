@@ -6,18 +6,32 @@ import { typeAt } from "langkit/analysis";
 import { analyze, compile as rawCompile, show } from "../examples/strict/strict.ts";
 
 const withStdlib = (source: string) => `import "./examples/strict/stdlib.strict";\n${source}`;
+
 const compile = (source: string) => rawCompile(withStdlib(source));
+
 const compiled = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
   validate(result.value.ir);
   return result.value;
 };
+
 const evaluate = (source: string, output: unknown[] = []): unknown =>
-  runInNewContext(compiled(source).javascript, { console: { log: (value: unknown) => output.push(value) } }, { timeout: 1000 });
+  runInNewContext(
+    compiled(source).javascript,
+    { console: { log: (value: unknown) => output.push(value) } },
+    { timeout: 1000 },
+  );
+
 const execute = (source: string, output: unknown[] = []): unknown =>
-  runInNewContext(`(${compiled(source).javascript})({})`, { console: { log: (value: unknown) => output.push(value) } }, { timeout: 1000 });
+  runInNewContext(
+    `(${compiled(source).javascript})({})`,
+    { console: { log: (value: unknown) => output.push(value) } },
+    { timeout: 1000 },
+  );
+
 const plain = (value: unknown): unknown => JSON.parse(JSON.stringify(value));
+
 const some = (value: unknown) => ({ tag: "Option.Some", fields: [value] });
 const none = { tag: "Option.None", fields: [] };
 
@@ -31,10 +45,17 @@ for (const [source, expected] of [
   ["main = do { Some 42; };", some(42)],
   ["main : Option number; main = pure 42;", some(42)],
   ["main : Option number; main = do { x <- Some 20; let y = x + 22; pure y; };", some(42)],
-  ["main : Option number; main = let bind = \\x y -> None in do { x <- Some 41; pure (x + 1); };", some(42)],
-  ["main : Option number; main = do { x <- do { y <- Some 20; pure (y + 1); }; pure (x * 2); };", some(42)],
+  [
+    "main : Option number; main = let bind = \\x y -> None in do { x <- Some 41; pure (x + 1); };",
+    some(42),
+  ],
+  [
+    "main : Option number; main = do { x <- do { y <- Some 20; pure (y + 1); }; pure (x * 2); };",
+    some(42),
+  ],
 ] as const) {
-  test(`monadic Option execution: ${source}`, () => assert.deepEqual(plain(evaluate(source)), expected));
+  test(`monadic Option execution: ${source}`, () =>
+    assert.deepEqual(plain(evaluate(source)), expected));
 }
 
 for (const tail of [
@@ -49,7 +70,8 @@ for (const tail of [
 }
 
 test("Some still evaluates ordinary expressions strictly", () => {
-  const source = "rec loop x = loop x; main : Option number; main = do { x <- Some 1; pure (const 42 (loop {})); };";
+  const source =
+    "rec loop x = loop x; main : Option number; main = do { x <- Some 1; pure (const 42 (loop {})); };";
   assert.throws(() => evaluate(source), /stack|timed out/i);
 });
 
@@ -79,7 +101,9 @@ test("generic aliases and local captures preserve Monad dictionaries", () => {
 });
 
 test("inferred monadic helpers expose higher-kinded constraints in analysis", () => {
-  const source = withStdlib("lift f action = do { x <- action; pure (f x); }; main = lift id (Some 42);");
+  const source = withStdlib(
+    "lift f action = do { x <- action; pure (f x); }; main = lift id (Some 42);",
+  );
   const analysis = analyze(source);
   assert.deepEqual(analysis.diagnostics, []);
   assert.match(show(typeAt(analysis, source.indexOf("lift"))!.type), /Monad/);
@@ -87,7 +111,8 @@ test("inferred monadic helpers expose higher-kinded constraints in analysis", ()
 
 test("do matches explicit bind for Option", () => {
   const viaDo = "main : Option number; main = do { x <- Some 20; y <- Some 22; pure (x + y); };";
-  const viaBind = "main : Option number; main = bind (Some 20) (\\x -> bind (Some 22) (\\y -> pure (x + y)));";
+  const viaBind =
+    "main : Option number; main = bind (Some 20) (\\x -> bind (Some 22) (\\y -> pure (x + y)));";
   assert.deepEqual(plain(evaluate(viaDo)), plain(evaluate(viaBind)));
 });
 
@@ -140,10 +165,22 @@ for (const [source, message] of [
   ["data Box a = Box a; main = do { x <- Box 42; Box x; };", /instance|Monad/i],
   ["main : Option number; main = do { x <- Some 42; };", /last|final|action/i],
   ["main : Option number; main = do { let x = 42; };", /last|final|action/i],
-  ["main : Option number; main = let action : Option number = do { x <- Some 42; pure x; } in pure x;", /Unbound variable/],
-  ["data Identity a = Identity a; instance Monad Identity where { pure x = Identity x; } main = 0;", /Missing.*bind/i],
-  ["data Identity a = Identity a; instance Monad Identity where { pure x = Identity true; bind action next = case action of { Identity x -> next x; }; } main = 0;", /unify|skolem|rigid/i],
-  ["instance Monad Option where { pure x = Some x; bind action next = None; } main = 0;", /duplicate|overlap/i],
+  [
+    "main : Option number; main = let action : Option number = do { x <- Some 42; pure x; } in pure x;",
+    /Unbound variable/,
+  ],
+  [
+    "data Identity a = Identity a; instance Monad Identity where { pure x = Identity x; } main = 0;",
+    /Missing.*bind/i,
+  ],
+  [
+    "data Identity a = Identity a; instance Monad Identity where { pure x = Identity true; bind action next = case action of { Identity x -> next x; }; } main = 0;",
+    /unify|skolem|rigid/i,
+  ],
+  [
+    "instance Monad Option where { pure x = Some x; bind action next = None; } main = 0;",
+    /duplicate|overlap/i,
+  ],
 ] as const) {
   test(`monadic do rejects: ${source}`, () => {
     const result = compile(source);
