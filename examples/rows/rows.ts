@@ -18,7 +18,6 @@ import {
   fail,
   get,
   lookup,
-  render,
   run,
   scoped,
   within,
@@ -35,10 +34,6 @@ import {
   type TokenRule,
 } from "langkit/analysis";
 import { emit } from "langkit/javascript";
-import { runInNewContext } from "node:vm";
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
 import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
 
 // Inference belongs to this language, not the IR or the checking runner.
@@ -732,15 +727,3 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
     value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
   };
 };
-
-if (import.meta.main) {
-  const file = process.argv[2]
-    ? pathToFileURL(resolve(process.argv[2]))
-    : new URL("./main.rows", import.meta.url);
-  const source = readFileSync(file, "utf8");
-  const result = compile(source, { uri: file.href });
-  if (!result.success) {
-    console.error(render(result.error, source));
-    process.exitCode = 1;
-  } else console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
-}

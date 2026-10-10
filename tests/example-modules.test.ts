@@ -50,6 +50,7 @@ for (const [extension, language] of [
     assert.ok(analysis.definitions.every((definition) => definition.uri === undefined));
     const result = language.compile(`import "./stdlib.${extension}"; id(42)`, {
       uri: new URL(`../examples/${extension}/main.${extension}`, import.meta.url).href,
+      read: (uri) => readFileSync(new URL(uri), "utf8"),
     });
     assert.ok(result.success, result.success ? "" : result.error.message);
     assert.equal(runInNewContext(result.value.javascript, {}, { timeout: 1000 }), 42);

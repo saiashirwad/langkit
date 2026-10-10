@@ -4,7 +4,6 @@ import {
   fail,
   get,
   lookup,
-  render,
   run,
   scoped,
   within,
@@ -16,11 +15,7 @@ import {
 import { create, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { emit } from "langkit/javascript";
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-import { resolve as resolvePath } from "node:path";
 import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
-import { runInNewContext } from "node:vm";
 import {
   program,
   tokens,
@@ -769,15 +764,3 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
     value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
   };
 };
-
-if (import.meta.main) {
-  const file = process.argv[2]
-    ? pathToFileURL(resolvePath(process.argv[2]))
-    : new URL("./main.advanced", import.meta.url);
-  const source = readFileSync(file, "utf8");
-  const result = compile(source, { uri: file.href });
-  if (!result.success) {
-    console.error(render(result.error, source));
-    process.exitCode = 1;
-  } else console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
-}

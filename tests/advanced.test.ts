@@ -14,9 +14,12 @@ import {
   type Type,
 } from "../examples/advanced/advanced.ts";
 
+const read = (uri: string): string => readFileSync(new URL(uri), "utf8");
+
 const compile = (source: string) =>
   compileSource('import "./stdlib.advanced";\n' + source, {
     uri: new URL("../examples/advanced/test.advanced", import.meta.url).href,
+    read,
   });
 
 const compiled = (source: string) => {
@@ -226,6 +229,7 @@ test("advanced analysis excludes stdlib facts and keeps pattern definitions", ()
   const source = 'import "./stdlib.advanced";\nmatch Some(42) { None => 0, Some(value) => value }';
   const analysis = analyze(source, {
     uri: new URL("../examples/advanced/test.advanced", import.meta.url).href,
+    read,
   });
   assert.deepEqual(analysis.diagnostics, []);
   assert.equal(analysis.definitions.filter((definition) => !definition.uri).length, 1);

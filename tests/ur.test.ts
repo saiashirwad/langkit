@@ -438,7 +438,7 @@ test("Ur analysis tracks block local references and shadowing", () => {
 test("Ur CLI executes statement main without an extra result and preserves value entries", () => {
   const directory = mkdtempSync(join(tmpdir(), "langkit-ur-blocks-"));
   const file = join(directory, "main.ur");
-  const cli = fileURLToPath(new URL("../examples/ur/ur.ts", import.meta.url));
+  const cli = fileURLToPath(new URL("../examples/ur/ur-run.ts", import.meta.url));
   try {
     for (const [source, expected] of [
       ['fn main() { print("first"); print(42); }', "first\n42\n"],

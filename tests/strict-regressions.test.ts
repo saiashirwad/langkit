@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { compile as rawCompile, show } from "../examples/strict/strict.ts";
 import { validate } from "langkit/ir";
 
+const read = (uri: string): string => readFileSync(new URL(uri), "utf8");
+const options = { uri: new URL("../input.strict", import.meta.url).href, read };
+
 const compile = (source: string) =>
-  rawCompile(`import "./examples/strict/stdlib.strict";\n${source}`);
+  rawCompile(`import "./examples/strict/stdlib.strict";\n${source}`, options);
 
 const build = (source: string) => {
   const result = compile(source);

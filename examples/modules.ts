@@ -1,6 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
 import { commit, createLexemes, many, parser, regex } from "langkit/parse";
 import type { Diagnostic, Result, Span } from "langkit";
 
@@ -56,16 +53,20 @@ export const loadModules = (
     const uri = new URL(input);
     if (uri.protocol !== "file:" || uri.search || uri.hash)
       throw new Error("Modules require local file URLs without query strings or fragments");
-    return pathToFileURL(resolve(fileURLToPath(uri))).href;
+    return uri.href;
   };
 
   let root: string;
   try {
-    root = normalize(options.uri ?? pathToFileURL(resolve(`input.${extension}`)).href);
+    root = normalize(options.uri ?? `file:///input.${extension}`);
   } catch (cause) {
     return error(`Invalid module URI: ${String(cause)}`);
   }
-  const read = options.read ?? ((uri: string) => readFileSync(fileURLToPath(uri), "utf8"));
+  const read =
+    options.read ??
+    (() => {
+      throw new Error("Imports need a read callback");
+    });
   const completed = new Map<string, ModuleSource>();
   const active = new Set<string>();
   const modules: ModuleSource[] = [];
@@ -83,7 +84,7 @@ export const loadModules = (
         if (!imported.path.startsWith("./") && !imported.path.startsWith("../"))
           throw new Error("Import paths must start with ./ or ../");
         target = normalize(new URL(imported.path, uri).href);
-        if (!fileURLToPath(target).endsWith(`.${extension}`))
+        if (!new URL(target).pathname.endsWith(`.${extension}`))
           throw new Error(`Imports must use .${extension} files`);
       } catch (cause) {
         return error(

@@ -17,7 +17,6 @@ import {
   fail,
   lookup,
   pure,
-  render,
   run,
   scoped,
   type Check,
@@ -32,8 +31,6 @@ import {
   type TokenRule,
 } from "langkit/analysis";
 import { emit } from "langkit/javascript";
-import { runInNewContext } from "node:vm";
-import { readFileSync } from "node:fs";
 
 // Our type system. Nothing in the kit knows what these types mean.
 export type Type =
@@ -364,15 +361,3 @@ export const compile = (source: string): Result<Compiled> => {
     },
   };
 };
-
-if (import.meta.main) {
-  const file = process.argv[2] ?? new URL("./main.toy", import.meta.url);
-  const source = readFileSync(file, "utf8");
-  const result = compile(source);
-  if (!result.success) {
-    console.error(render(result.error, source));
-    process.exitCode = 1;
-  } else {
-    console.log(runInNewContext(result.value.javascript, {}, { timeout: 1000 }));
-  }
-}

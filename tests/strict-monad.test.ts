@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { validate } from "langkit/ir";
@@ -7,7 +8,10 @@ import { analyze, compile as rawCompile, show } from "../examples/strict/strict.
 
 const withStdlib = (source: string) => `import "./examples/strict/stdlib.strict";\n${source}`;
 
-const compile = (source: string) => rawCompile(withStdlib(source));
+const read = (uri: string): string => readFileSync(new URL(uri), "utf8");
+const options = { uri: new URL("../input.strict", import.meta.url).href, read };
+
+const compile = (source: string) => rawCompile(withStdlib(source), options);
 
 const compiled = (source: string) => {
   const result = compile(source);
@@ -104,7 +108,7 @@ test("inferred monadic helpers expose higher-kinded constraints in analysis", ()
   const source = withStdlib(
     "lift f action = do { x <- action; pure (f x); }; main = lift id (Some 42);",
   );
-  const analysis = analyze(source);
+  const analysis = analyze(source, options);
   assert.deepEqual(analysis.diagnostics, []);
   assert.match(show(typeAt(analysis, source.indexOf("lift"))!.type), /Monad/);
 });
@@ -141,7 +145,7 @@ test("Effect dictionary delays and repeats each selected action in order", () =>
     };`;
   assert.equal(typeof evaluate(source, output), "function");
   assert.equal(output.length, 0);
-  assert.deepEqual(analyze(withStdlib(source)).diagnostics, []);
+  assert.deepEqual(analyze(withStdlib(source), options).diagnostics, []);
   assert.equal(output.length, 0);
   assert.equal(execute(source, output), 42);
   assert.deepEqual(output, ["first", "repeat", "repeat", 42]);

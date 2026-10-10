@@ -1,6 +1,5 @@
-import { check, fail, render, run, type Check, type Result } from "langkit";
+import { check, fail, run, type Check, type Result } from "langkit";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
-import { readFileSync } from "node:fs";
 import {
   parse,
   tokens,
@@ -409,13 +408,3 @@ export const analyze = (source: string): Analysis<Type> => {
     };
   return facts.collect(elaborate(parsed.value), lexical).analysis;
 };
-
-if (import.meta.main) {
-  const source = readFileSync(process.argv[2] ?? new URL("./main.schema", import.meta.url), "utf8");
-  const result = compile(source);
-  if (result.success) process.stdout.write(result.value.sql);
-  else {
-    console.error(render(result.error, source));
-    process.exitCode = 1;
-  }
-}

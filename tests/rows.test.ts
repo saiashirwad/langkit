@@ -14,9 +14,12 @@ import {
   type Type,
 } from "../examples/rows/rows.ts";
 
+const read = (uri: string): string => readFileSync(new URL(uri), "utf8");
+
 const compile = (source: string) =>
   compileSource('import "./stdlib.rows";\n' + source, {
     uri: new URL("../examples/rows/test.rows", import.meta.url).href,
+    read,
   });
 
 const compiled = (source: string) => {

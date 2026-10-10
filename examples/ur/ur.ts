@@ -1,9 +1,7 @@
-import { check, fail, render, run, type Check, type Result } from "langkit";
+import { check, fail, run, type Check, type Result } from "langkit";
 import { create, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { emit } from "langkit/javascript";
-import { readFileSync } from "node:fs";
-import { runInNewContext } from "node:vm";
 import {
   program,
   tokens,
@@ -520,25 +518,3 @@ export const analyze = (source: string): Analysis<Type> => {
     };
   return facts.collect(build(parsed.value, false), lexical).analysis;
 };
-
-if (import.meta.main) {
-  const file = process.argv[2] ?? new URL("./main.ur", import.meta.url);
-  try {
-    const source = readFileSync(file, "utf8"),
-      result = compile(source);
-    if (!result.success) {
-      console.error(render(result.error, source));
-      process.exitCode = 1;
-    } else {
-      const value = runInNewContext(
-        result.value.javascript,
-        { console: { log: (...values: unknown[]) => console.log(...values) } },
-        { timeout: 1000 },
-      );
-      if (result.value.entry === "value") console.log(value);
-    }
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
-  }
-}

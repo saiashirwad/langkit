@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -142,12 +142,16 @@ test("module loader supports unsaved snapshots and literal spaces in filenames",
   assert.equal(result.value.modules[0]!.source, "value = 42;");
 });
 
-test("module loader defaults to local filesystem and never reads the supplied root", (t) => {
+test("module loader reads imports only through read and never reads the supplied root", (t) => {
   const directory = mkdtempSync(join(tmpdir(), "langkit-modules-"));
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   writeFileSync(join(directory, "child.strict"), "child = 42;");
   const uri = pathToFileURL(join(directory, "root.strict")).href;
-  const result = loadModules('import "./child.strict"; main = child;', { uri }, "strict");
+  const unread = loadModules('import "./child.strict"; main = child;', { uri }, "strict");
+  assert.equal(unread.success, false);
+  assert.match(unread.success ? "" : unread.error.message, /Imports need a read callback/);
+  const read = (target: string): string => readFileSync(new URL(target), "utf8");
+  const result = loadModules('import "./child.strict"; main = child;', { uri, read }, "strict");
   assert.ok(result.success);
   assert.equal(result.value.root, uri);
   assert.equal(result.value.modules[0]!.original, "child = 42;");

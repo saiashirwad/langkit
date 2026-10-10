@@ -356,7 +356,7 @@ test("Ur folders support unusual record keys without prototype lookup", () => {
 test("Ur folder example prints the heterogeneous report from the actual CLI", () => {
   const source = readFileSync(new URL("../examples/ur/folders.ur", import.meta.url), "utf8");
   assert.deepEqual(execute(source).output, ["Station: north; Temperature: warm; Active: yes; "]);
-  const result = spawnSync(process.execPath, ["examples/ur/ur.ts", "examples/ur/folders.ur"], {
+  const result = spawnSync(process.execPath, ["examples/ur/ur-run.ts", "examples/ur/folders.ur"], {
     cwd: new URL("../", import.meta.url),
     encoding: "utf8",
     timeout: 10000,

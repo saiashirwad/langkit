@@ -8,10 +8,13 @@ import { analyze, compile as rawCompile, show } from "../examples/strict/strict.
 
 const withStdlib = (source: string) => `import "./examples/strict/stdlib.strict";\n${source}`;
 
-const compile = (source: string) => rawCompile(withStdlib(source));
+const read = (uri: string): string => readFileSync(new URL(uri), "utf8");
+const options = { uri: new URL("../input.strict", import.meta.url).href, read };
+
+const compile = (source: string) => rawCompile(withStdlib(source), options);
 
 const compiled = (source: string, uri?: string) => {
-  const result = uri ? rawCompile(source, { uri }) : compile(source);
+  const result = uri ? rawCompile(source, { uri, read }) : compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
   validate(result.value.ir);
   return result.value;
@@ -159,7 +162,7 @@ test("strict print constructs an opaque action without executing it", () => {
   const action = evaluate('main = print "hello";', (value) => output.push(value));
   assert.equal(typeof action, "function");
   assert.equal(output.length, 0);
-  assert.deepEqual(analyze(withStdlib('main = print "hello";')).diagnostics, []);
+  assert.deepEqual(analyze(withStdlib('main = print "hello";'), options).diagnostics, []);
   assert.equal(output.length, 0);
   execute('main = print "hello";', (value) => output.push(value));
   assert.deepEqual(output, ["hello"]);
@@ -218,7 +221,7 @@ test("strict Functor instance methods are checked even if unused", () => {
 
 test("strict constrained functions expose inferred predicates in analysis", () => {
   const source = withStdlib("bump xs = map (\\x -> x + 1) xs; main = bump (Some 41);");
-  const analysis = analyze(source);
+  const analysis = analyze(source, options);
   assert.deepEqual(analysis.diagnostics, []);
   assert.match(show(typeAt(analysis, source.indexOf("bump"))!.type), /Functor/);
   assert.equal(

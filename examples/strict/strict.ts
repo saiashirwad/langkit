@@ -4,7 +4,6 @@ import {
   fail,
   get,
   lookup,
-  render,
   run,
   scoped,
   within,
@@ -15,11 +14,7 @@ import {
 import { create, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { emit } from "langkit/javascript";
-import { readFileSync } from "node:fs";
-import { resolve as resolvePath } from "node:path";
-import { pathToFileURL } from "node:url";
 import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
-import { runInNewContext } from "node:vm";
 import {
   program,
   tokens,
@@ -151,7 +146,11 @@ const instances = scoped<readonly Evidence[]>([]);
 const givens = scoped<readonly Evidence[]>([]);
 const wanted = scoped<Wanted[]>([]);
 const solutions = scoped<Map<symbol, Value<Type>>>(new Map());
-const effectConstructor: TypeConstructor = { id: Symbol("Effect"), name: "Effect", arity: 1 };
+export const effectConstructor: TypeConstructor = {
+  id: Symbol("Effect"),
+  name: "Effect",
+  arity: 1,
+};
 
 const effect = (type: Type) => data(effectConstructor, [type]);
 
@@ -1469,20 +1468,3 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
     value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
   };
 };
-
-if (import.meta.main) {
-  const uri = process.argv[2]
-    ? pathToFileURL(resolvePath(process.argv[2])).href
-    : new URL("./main.strict", import.meta.url).href;
-  const source = readFileSync(new URL(uri), "utf8");
-  const result = compile(source, { uri });
-  if (!result.success) {
-    console.error(render(result.error, source));
-    process.exitCode = 1;
-  } else {
-    const { head } = decompose(result.value.type);
-    if (head.kind === "constructor" && head.constructor.id === effectConstructor.id)
-      runInNewContext(`(${result.value.javascript})({})`, { console }, { timeout: 1000 });
-    else console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
-  }
-}

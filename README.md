@@ -6,7 +6,7 @@ There is no `defineLanguage` object. Parsing returns your tree. Checking can con
 
 ## Start here
 
-Requires Node 24.2+ (the example uses `import.meta.main`) and pnpm.
+Requires Node 24.2+ and pnpm.
 
 ```sh
 pnpm install
@@ -16,7 +16,7 @@ pnpm typecheck
 pnpm test
 ```
 
-Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, `ur/`, and `schema/`. Its compiler, language server, sample, and any syntax/types/stdlib files live together. The shared import loader stays at `examples/modules.ts`.
+Each language has its own folder under `examples/`: `toy/`, `hm/`, `rows/`, `advanced/`, `strict/`, `ur/`, and `schema/`. Its compiler, runner (`<language>-run.ts`), language server (`<language>-lsp.ts`), sample, and any syntax/types/stdlib files live together. Only the runner and language server import Node; the language modules themselves also load in a browser. The shared import loader stays at `examples/modules.ts`.
 
 The whole toy language is in **[examples/toy/toy.ts](examples/toy/toy.ts)**, in reading order:
 
@@ -24,9 +24,9 @@ The whole toy language is in **[examples/toy/toy.ts](examples/toy/toy.ts)**, in 
 2. Its parser.
 3. Its checking rules, which construct IR values.
 4. Its ordinary `compile(source)` function.
-5. A source analysis entry point and a runner that evaluates the emitted JavaScript.
+5. A source analysis entry point.
 
-The runner reads [examples/toy/main.toy](examples/toy/main.toy) by default; pass another file path to run a different program. The default program uses higher-order functions and closures to compute `42`:
+The runner, [examples/toy/toy-run.ts](examples/toy/toy-run.ts), evaluates the emitted JavaScript. It reads [examples/toy/main.toy](examples/toy/main.toy) by default; pass another file path to run a different program. The default program uses higher-order functions and closures to compute `42`:
 
 ```text
 let twice = fn(f: number -> number) => fn(x: number) => f(f(x)) in
@@ -184,7 +184,8 @@ This example is split by responsibility rather than growing a single file:
 
 - [advanced-syntax.ts](examples/advanced/advanced-syntax.ts): syntax trees, parsers, and lexical highlighting.
 - [advanced-types.ts](examples/advanced/advanced-types.ts): types, rows, unification, generalization, rigid variables, and subsumption.
-- [advanced.ts](examples/advanced/advanced.ts): bidirectional checking, datatype declarations, IR construction, analysis, and the runner.
+- [advanced.ts](examples/advanced/advanced.ts): bidirectional checking, datatype declarations, IR construction, and analysis.
+- [advanced-run.ts](examples/advanced/advanced-run.ts): the runner.
 - [stdlib.advanced](examples/advanced/stdlib.advanced): ordinary source-language datatypes and functions.
 
 ### Data types and matching
@@ -604,7 +605,7 @@ Use `.rows` or `.advanced` for those languages. Paths must start with `./` or `.
 - Imports bring names directly into scope, without namespaces. Imported names are re-exported transitively; local value definitions may shadow imports. There are no explicit export lists or qualified names yet.
 - Standard libraries are ordinary modules. Opening one in the editor analyzes that file directly, rather than injecting another copy of itself.
 
-`compile(source, { uri })` and `analyze(source, { uri })` use a file URI as the import base. Without it, the base is `input.<language>` in the working directory. An optional `read(uri)` callback supplies dependency text, useful for virtual files and unsaved editor buffers. The CLI supplies the actual input file URI. Imports do not execute code during checking or analysis; emitted programs evaluate module definitions, but imported `Effect` values are not automatically run.
+`compile(source, { uri, read })` and `analyze(source, { uri, read })` use a file URI as the import base. Without it, the base is `file:///input.<language>`. The `read(uri)` callback supplies dependency text: the runners read files from disk, while the language servers and the playground read open buffers and virtual files. There is no filesystem fallback; without `read`, an import is a diagnostic. The CLI supplies the actual input file URI. Imports do not execute code during checking or analysis; emitted programs evaluate module definitions, but imported `Effect` values are not automatically run.
 
 ## Editor support
 
