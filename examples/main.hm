@@ -1,0 +1,6 @@
+let id = fn(x) => x in
+let twice = fn(f) => fn(x) => f(f(x)) in
+
+
+
+if id(true) then twice(fn(x) => x + 1)(id(40)) else 0

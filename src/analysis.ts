@@ -74,9 +74,9 @@ export const create = <T>() => {
         facts?.definitions.push({ ...binding, span, kind })
         facts?.types.push({ type: binding.type, span })
       }),
-    reference: (binding: Binding<T>, span: Span): Check<void> => get(current).map(facts => {
+    // Identity comes from the declaration; the use-site type is reported by typed.
+    reference: (binding: { readonly id: symbol }, span: Span): Check<void> => get(current).map(facts => {
       facts?.references.push({ id: binding.id, span })
-      facts?.types.push({ type: binding.type, span })
     }),
     collect: <A>(body: Check<A>, tokens: readonly Token[] = []): { result: Result<A>; analysis: Analysis<T> } => {
       const facts: Facts<T> = { types: [], definitions: [], references: [] }

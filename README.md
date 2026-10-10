@@ -103,13 +103,37 @@ No recursion, polymorphism, records, optimization passes, modules, or LLVM backe
 
 `emit(body)` returns a JavaScript **expression**, not a complete module. The example evaluates trusted demonstrations using `node:vm`; that is not a security sandbox for untrusted code.
 
+## Hindley–Milner inference
+
+**[examples/hm.ts](examples/hm.ts)** is a second, self-contained language compiler. It keeps toy's expression syntax, but writes functions as `fn(x) => body` without annotations:
+
+```text
+let id = fn(x) => x in
+let twice = fn(f) => fn(x) => f(f(x)) in
+if id(true) then twice(fn(x) => x + 1)(id(40)) else 0
+```
+
+```sh
+pnpm hm examples/main.hm
+# Or: pnpm hm path-to-file
+```
+
+`id` has the generic type `a -> a`. Each use gets fresh type variables, so the same binding accepts a boolean and a number. `let` generalizes only variables not free in the surrounding environment; function parameters remain monomorphic. Unification includes an occurs check, rejecting infinite types such as `fn(x) => x(x)`.
+
+Inference belongs to this example, not the library: type variables, unification, generalization, and instantiation are ordinary functions cooperating with `Check`. The original toy compiler still uses explicit parameter annotations and structural type equality. Neither language has recursion or mutable source-language state.
+
+HM's arithmetic, `>`, and `==` operate on numbers. Unlike toy, HM does not support boolean equality: excluding functions from generic equality would require constraints beyond plain Hindley–Milner inference.
+
+The shared IR supports `code.ref(binding, instantiatedType)`. This keeps declaration identity while allowing a different type at each use; omitting the second argument preserves the original behavior. Editor reference facts likewise track identity only. Both compilers report expression types separately, so a generic declaration's hover does not mask a specialized use's type.
+
 ## Editor support
 
-The toy language has a small stdio LSP server:
+Both languages have small stdio LSP servers:
 
 ```sh
 node examples/toy-lsp.ts --stdio
-# Also available as pnpm toy:lsp; configure editors with the direct node command.
+node examples/hm-lsp.ts --stdio
+# Also available as pnpm toy:lsp / pnpm hm:lsp; use direct node commands in editors.
 ```
 
 It provides syntax/type diagnostics, type hover, same-file go-to-definition, and semantic highlighting. It only analyzes text; it never emits or executes a program. The server uses the standard `vscode-languageserver` packages, imported only through `langkit/lsp`.
@@ -135,6 +159,8 @@ yield* facts.reference(binding, referenceSpan)
 yield* facts.typed(value.type, expressionSpan)
 ```
 
+`reference` records only the binding identity and source span; call `typed` with the actual expression type to supply hover information.
+
 These operations retain nothing during ordinary compilation. `facts.collect(checker, tokens)` runs a check with observation enabled, returning its result and an `Analysis<Type>`. Completed facts survive a later checking failure. Binding identities distinguish shadowed names and captured references. `show` remains language-specific; analysis carries the actual language types, not preformatted hover strings.
 
 `highlight(source, rules)` applies ordered lexical rules and skips unknown characters. The example shares identifier/number patterns and keyword vocabulary with its parser. Successful checking refines identifier tokens into function and parameter roles. Highlighting does not require the parser to accept the whole file.
@@ -143,7 +169,7 @@ This is deliberately an explicit, small integration, not automatic extraction of
 
 ### Neovim 0.11+
 
-[.nvim.lua](.nvim.lua) configures the server and recognizes `.toy` / `.tpy` files only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
+[.nvim.lua](.nvim.lua) configures both servers and recognizes `.toy` / `.tpy` files as toy and `.hm` files as HM, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
 
 ```lua
 vim.opt.exrc = true
@@ -154,6 +180,7 @@ Start Neovim from the project directory:
 ```sh
 cd ~/code/langkit
 nvim examples/main.toy
+# Or: nvim examples/main.hm
 ```
 
 Review and trust `.nvim.lua` when prompted. Neovim records trust for that file's contents; changes require approval again. Enabling `exrc` does not silently trust other projects. On Neovim 0.12, starting in a subdirectory also discovers the parent config.

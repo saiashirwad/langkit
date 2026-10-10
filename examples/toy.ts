@@ -246,11 +246,8 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         return code.literal(number, expr.value);
       case "boolean":
         return code.literal(boolean, expr.value);
-      case "name": {
-        const binding = yield* lookup(env, expr.name);
-        yield* facts.reference(binding, expr.span);
-        return code.ref(binding);
-      }
+      case "name":
+        return code.ref(yield* lookup(env, expr.name));
       case "binary": {
         const left = yield* elaborate(expr.left);
         const right = yield* elaborate(expr.right);
@@ -309,7 +306,13 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       }
     }
   })
-    .flatMap((value) => facts.typed(value.type, expr.span).map(() => code.at(value, expr.span)))
+    .flatMap((value) =>
+      check(function* () {
+        if (value.node.kind === "ref") yield* facts.reference(value.node.binding, expr.span);
+        yield* facts.typed(value.type, expr.span);
+        return code.at(value, expr.span);
+      }),
+    )
     .at(expr.span);
 
 export type Compiled = {
@@ -332,7 +335,6 @@ const parse = (source: string): Result<Expr> => {
       };
 };
 
-// No emission or execution. Completed source facts survive a later checking error.
 export const analyze = (source: string): Analysis<Type> => {
   const lexical = highlight(source, tokens);
   const parsed = parse(source);

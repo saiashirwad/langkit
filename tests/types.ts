@@ -21,6 +21,10 @@ const value: Value<"number" | "boolean"> = code.literal("number", 1)
 void value
 // @ts-expect-error IR carries this language's type universe, not arbitrary labels.
 code.literal("string", 1)
+const binding = code.binding("x", "number")
+code.ref(binding, "boolean")
+// @ts-expect-error Instantiated references must still use the language's type universe.
+code.ref(binding, "string")
 // @ts-expect-error Language type universes cannot silently cross.
 const other: Value<"text"> = value
 void other

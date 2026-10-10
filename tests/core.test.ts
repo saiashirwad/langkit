@@ -90,6 +90,27 @@ test("body construction can be reused without accumulating declarations", () => 
   assert.equal(emit(first), emit(second))
 })
 
+test("reference types can vary without changing binding identity or scope", () => {
+  const code = create<string>()
+  const binding = code.binding("id", "a -> a")
+  const numeric = code.ref(binding, "number -> number")
+  const boolean = code.ref(binding, "boolean -> boolean")
+  assert.equal(code.ref(binding).type, "a -> a")
+  assert.equal(numeric.type, "number -> number")
+  assert.equal(boolean.type, "boolean -> boolean")
+  assert.equal(numeric.node.binding, binding)
+  assert.equal(boolean.node.binding, binding)
+  assert.equal(binding.type, "a -> a")
+  assert.throws(() => validate({ declarations: [], result: numeric }), /Out-of-scope/)
+  const param = code.binding("x", "a")
+  const initial = code.fn("a -> a", param, { declarations: [], result: code.ref(param) })
+  const body = {
+    declarations: [{ binding, value: initial }],
+    result: code.call("number", numeric, code.literal("number", 42))
+  }
+  assert.equal(runInNewContext(emit(body)), 42)
+})
+
 test("declare needs an explicit construction body", () => {
   const code = create<string>()
   assert.throws(() => run(code.declare("x", code.literal("number", 1))), /enclosing body/)

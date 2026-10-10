@@ -16,7 +16,9 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
     "toy": "node examples/toy.ts",
-    "toy:lsp": "node examples/toy-lsp.ts --stdio"
+    "toy:lsp": "node examples/toy-lsp.ts --stdio",
+    "hm": "node examples/hm.ts",
+    "hm:lsp": "node examples/hm-lsp.ts --stdio"
   },
   "dependencies": {
     "parserator": "0.3.0",

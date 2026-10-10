@@ -44,7 +44,9 @@ export const create = <T>() => {
   const output = scoped<Declaration<T>[] | undefined>(undefined)
   const value = (type: T, node: Node<T>): Value<T> => ({ type, node })
   const binding = (name: string, type: T): Binding<T> => ({ id: Symbol(name), name, type })
-  const ref = (binding: Binding<T>): Reference<T> => ({ type: binding.type, node: { kind: "ref", binding } })
+  // A polymorphic binding can have a different instantiated type at each use.
+  const ref = (binding: Binding<T>, type: T = binding.type): Reference<T> =>
+    ({ type, node: { kind: "ref", binding } })
 
   const body = (result: Check<Value<T>>): Check<Body<T>> => check(function* () {
     // Allocate on each run: a reusable Check never retains a previous body's statements.

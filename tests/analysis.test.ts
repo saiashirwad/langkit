@@ -105,6 +105,23 @@ test("highlight rules are ordered, reusable, and must consume input", () => {
   ]), [])
 })
 
+test("reference identity does not impose the declaration type on its use", () => {
+  const facts = create<string>()
+  const binding = { id: Symbol("id"), name: "id", type: "a -> a" }
+  const declaration = { start: 0, end: 2 }
+  const use = { start: 3, end: 5 }
+  const identityOnly = facts.collect(facts.reference(binding, use)).analysis
+  assert.deepEqual(identityOnly.types, [])
+  const analysis = facts.collect(check(function* () {
+    yield* facts.define(binding, declaration, "function")
+    yield* facts.reference({ id: binding.id }, use)
+    yield* facts.typed("number -> number", use)
+  })).analysis
+  assert.equal(typeAt(analysis, 0)!.type, "a -> a")
+  assert.equal(typeAt(analysis, 3)!.type, "number -> number")
+  assert.equal(definitionAt(analysis, 3)!.id, binding.id)
+})
+
 test("collect is optional and isolated between runs, including errors", () => {
   const facts = create<string>()
   const body = check(function* () {

@@ -157,6 +157,25 @@ test("stdio LSP: initialize, analyze, edit, clear and shut down", { timeout: 150
   await server.shutdown()
 })
 
+test("HM stdio LSP specializes uses without losing definition identity", { timeout: 10000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/hm-lsp.ts", import.meta.url)), "--stdio"])
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  const source = "let id = fn(x) => x in if id(true) then id(42) else 0"
+  server.notify("textDocument/didOpen", { textDocument: { uri, languageId: "hm", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1)).diagnostics, [])
+  const booleanUse = source.indexOf("id(true)")
+  const numberUse = source.indexOf("id(42)")
+  assert.equal((await server.request<Hover>("textDocument/hover", at(source, booleanUse)))?.contents.value, "(boolean -> boolean)")
+  assert.equal((await server.request<Hover>("textDocument/hover", at(source, numberUse)))?.contents.value, "(number -> number)")
+  const declaration = { uri, range: { start: { line: 0, character: 4 }, end: { line: 0, character: 6 } } }
+  assert.deepEqual(await server.request("textDocument/definition", at(source, booleanUse)), declaration)
+  assert.deepEqual(await server.request("textDocument/definition", at(source, numberUse)), declaration)
+  server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: "fn(x) => x(x)" }] })
+  assert.equal((await server.diagnostics(2)).diagnostics.length, 1)
+  await server.shutdown()
+})
+
 test("analyzer exceptions discard old facts without breaking the connection", { timeout: 10000 }, async t => {
   const source = `import { serve } from "langkit/lsp";
 serve(text => {
