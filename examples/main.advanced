@@ -1,0 +1,34 @@
+type Tree(a) = Leaf(a) | Branch(Tree(a), Tree(a))
+
+let rec sumTree = fn(tree) => match tree {
+  Leaf(value) => value,
+  Branch(left, right) => sumTree(left) + sumTree(right)
+} in
+
+let both = fn(f: forall a. a -> a) => { value = f(20), flag = f(true) } in
+
+
+
+let getValue = fn(record) => record.value in
+
+
+
+let start = getValue(both(id)) in
+
+
+
+let numbers = mapList(fn(n) => n + 1)(Cons(start, Cons(20, Nil))) in
+
+
+
+let total = foldList(fn(sum) => fn(n) => sum + n)(0)(numbers) in
+
+
+let answer = sumTree(Branch(Leaf(total), Leaf(0))) in
+
+
+let ignored = print("The answer is:") in
+
+
+let ignored = print(answer) in
+answer

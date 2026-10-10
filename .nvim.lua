@@ -8,10 +8,11 @@ vim.filetype.add({
     [vim.pesc(root) .. "/.*%.tpy"] = "toy",
     [vim.pesc(root) .. "/.*%.hm"] = "hm",
     [vim.pesc(root) .. "/.*%.rows"] = "rows",
+    [vim.pesc(root) .. "/.*%.advanced"] = "advanced",
   },
 })
 
-for _, language in ipairs({ "toy", "hm", "rows" }) do
+for _, language in ipairs({ "toy", "hm", "rows", "advanced" }) do
   vim.lsp.config(language, {
     cmd = { "node", root .. "/examples/" .. language .. "-lsp.ts", "--stdio" },
     filetypes = { language },

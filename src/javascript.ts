@@ -4,6 +4,7 @@ import { validate, type Binding, type Body, type Value } from "./ir.ts"
 export const emit = <T>(root: Body<T>): string => {
   validate(root)
   const names = new Map<symbol, string>()
+  let matchIndex = 0
 
   const name = (binding: Binding<T>): string => {
     const known = names.get(binding.id)
@@ -41,6 +42,23 @@ export const emit = <T>(root: Body<T>): string => {
     const node = value.node
     switch (node.kind) {
       case "literal": return literal(node.value)
+      case "variant":
+        return `({ __proto__: null, tag: ${JSON.stringify(node.tag)}, fields: [${node.fields.map(field => expr(field, depth)).join(", ")}] })`
+      case "match": {
+        // Binding names always begin with '_'; '$' temporaries cannot capture them.
+        const temporary = `$match${matchIndex++}`
+        const branches = node.cases.map(branch => {
+          const bindings = branch.bindings.map((binding, index) =>
+            `const ${name(binding)} = ${temporary}.fields[${index}];`
+          ).join(" ")
+          return `case ${JSON.stringify(branch.tag)}: { ${bindings} return (() => ${block(branch.body, depth + 1)})(); }`
+        })
+        if (node.fallback) {
+          const binding = node.fallback.binding
+          branches.push(`default: { ${binding ? `const ${name(binding)} = ${temporary};` : ""} return (() => ${block(node.fallback.body, depth + 1)})(); }`)
+        } else branches.push('default: throw new Error("Internal non-exhaustive match");')
+        return `((${temporary}) => { switch (${temporary}.tag) { ${branches.join(" ")} } })(${expr(node.value, depth)})`
+      }
       case "record": {
         // Evaluate fields before the base, but merge the base before fields.
         // Arguments run outside the temporary parameter scope, avoiding capture.

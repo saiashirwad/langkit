@@ -168,15 +168,96 @@ The following names are in scope automatically and can be shadowed:
 
 The runner uses `console.log` and also displays the program's final value. When evaluating emitted JavaScript yourself, provide a `console.log` implementation. Analysis never executes the program or prints. Built-in uses have type hovers but no same-file definition location; library source spans are not reported as user-source facts. As with the other examples, the VM runner is for trusted demonstrations, not a security sandbox.
 
+## Higher-rank polymorphism and data types
+
+**[examples/advanced.ts](examples/advanced.ts)** adds nominal algebraic data types, exhaustive pattern matching, recursive functions, and explicitly annotated higher-rank polymorphism, while keeping row-polymorphic records and HM let-inference.
+
+```sh
+pnpm advanced                         # runs examples/main.advanced
+pnpm advanced path/to/program.advanced
+```
+
+This example is split by responsibility rather than growing a single file:
+
+- [advanced-syntax.ts](examples/advanced-syntax.ts): syntax trees, parsers, and lexical highlighting.
+- [advanced-types.ts](examples/advanced-types.ts): types, rows, unification, generalization, rigid variables, and subsumption.
+- [advanced.ts](examples/advanced.ts): bidirectional checking, datatype declarations, IR construction, analysis, and the runner.
+- [stdlib.advanced](examples/stdlib.advanced): ordinary source-language datatypes and functions.
+
+### Data types and matching
+
+Datatype declarations come before the main expression. They may refer to themselves or other types declared in the same file. Types are **nominal**: two separately named types are distinct even if their constructors have the same shape.
+
+```text
+type Tree(a) = Leaf(a) | Branch(Tree(a), Tree(a))
+
+let rec sum = fn(tree) => match tree {
+  Leaf(value) => value,
+  Branch(left, right) => sum(left) + sum(right)
+} in
+sum(Branch(Leaf(20), Leaf(22)))
+```
+
+Constructors are ordinary curried values: `Branch(left, right)` is shorthand for `Branch(left)(right)`. A nullary constructor such as `None` or `Nil` is a value, not a zero-argument call. Match payloads bind variables or `_`; use another `match` for nested destructuring. A lowercase variable or `_` can catch the whole remaining value.
+
+The checker rejects missing constructors, duplicate cases, cases after a catch-all, wrong constructor arities, mixed datatype families, and repeated pattern bindings. Branches must agree on their result type. Matching evaluates the scrutinee once and executes only the selected branch.
+
+### Checking more than HM can infer
+
+An unannotated function parameter is still monomorphic. An explicit `forall` lets the caller supply a genuinely polymorphic function:
+
+```text
+let use = fn(f: forall a. a -> a) =>
+  if f(true) then f(42) else 0
+in
+use(id)
+```
+
+Unlike ordinary HM inference, `f` is used at both `boolean` and `number` inside the same function. `use(fn(x) => x)` also checks; `use(fn(x) => x + 1)` does not.
+
+Annotations can appear on let bindings, function parameters, or parenthesized expressions:
+
+```text
+let identity: forall a. a -> a = fn(x) => x in
+let use: (forall a. a -> a) -> number = fn(f) => f(42) in
+use(identity)
+```
+
+Types include `number`, `boolean`, `string`, named applications such as `List(number)`, closed records such as `{ value: number }`, right-associative arrows, and `forall a b. ...`. Quantifiers may nest under arrows; annotated higher-rank results and higher-rank arguments are supported. `forall` names are scoped to their type annotation, not subsequent source annotations.
+
+Checking a `forall` introduces fresh **rigid** types rather than choosing a convenient instance. Scope levels on ordinary and row inference variables prevent those rigid types escaping through captured values. For ordinary expressions, the checker still infers types and generalizes only variables not free in the environment. There is no automatic inference of polymorphic lambda parameters.
+
+`let rec` accepts only a direct function initializer. Without an annotation, recursive uses share one monomorphic type and the completed binding can then generalize. A complete `forall` annotation permits checked polymorphic recursion. Recursive evaluation uses JavaScript calls: termination is not checked and there is no tail-call optimization.
+
+### Standard library and limits
+
+The automatically available datatypes are `Option(a)` (`None`, `Some`), `Result(a, e)` (`Ok`, `Err`), and `List(a)` (`Nil`, `Cons`). Their names cannot be redeclared in a user file. Alongside `print`, `id`, `const`, and `compose`, the source-written library provides:
+
+| Helper | Calling convention |
+| --- | --- |
+| `mapOption`, `mapResult` | `mapOption(f)(option)`, `mapResult(f)(result)` |
+| `withDefault` | `withDefault(fallback)(option)` |
+| `andThen` | `andThen(f)(result)`; `f` returns another `Result` |
+| `mapList` | `mapList(f)(list)` |
+| `foldList` | `foldList(step)(initial)(list)`; `step(accumulator)(element)`, left to right |
+| `head` | `head(list)` returns an `Option` |
+| `length`, `append` | `length(list)`, `append(left)(right)` |
+| `range` | `range(start)(end)`, inclusive, increments by one |
+
+`print` remains the only intrinsic and returns `{}`. The runner prints the final result too. `//` comments and multiple call arguments are new syntax; all row-language record operations remain available.
+
+This is an explicitly annotated, predicative higher-rank example—not impredicative System F inference. Direct `forall` record fields, constructor payloads, and datatype arguments are intentionally unsupported. Record annotations are closed; open row types are inferred, not explicitly quantified in annotations. Patterns are flat constructor patterns or catch-alls, without guards or literal patterns. There are no type classes, subtyping, modules, mutable references, effect tracking, or mutually recursive term bindings. Numeric operations retain JavaScript semantics; use finite, practical ranges and lists. The VM runner remains a trusted-example runner, not an untrusted-code sandbox.
+
 ## Editor support
 
-All three languages have small stdio LSP servers:
+All four languages have small stdio LSP servers:
 
 ```sh
 node examples/toy-lsp.ts --stdio
 node examples/hm-lsp.ts --stdio
 node examples/rows-lsp.ts --stdio
-# Also available as pnpm toy:lsp / pnpm hm:lsp / pnpm rows:lsp; use direct node commands in editors.
+node examples/advanced-lsp.ts --stdio
+# Also available as pnpm <language>:lsp; use direct node commands in editors.
 ```
 
 It provides syntax/type diagnostics, type hover, same-file go-to-definition, and semantic highlighting. It only analyzes text; it never emits or executes a program. The server uses the standard `vscode-languageserver` packages, imported only through `langkit/lsp`.
@@ -212,7 +293,7 @@ This is deliberately an explicit, small integration, not automatic extraction of
 
 ### Neovim 0.11+
 
-[.nvim.lua](.nvim.lua) configures all three servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, and `.rows` files as rows, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
+[.nvim.lua](.nvim.lua) configures all four servers and recognizes `.toy` / `.tpy` files as toy, `.hm` files as HM, `.rows` files as rows, and `.advanced` files as advanced, only inside this checkout. Enable trusted project-local configuration in your Neovim settings:
 
 ```lua
 vim.opt.exrc = true

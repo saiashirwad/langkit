@@ -24,6 +24,8 @@ export type Node<T> =
   | { readonly kind: "record"; readonly fields: readonly { readonly name: string; readonly value: Value<T> }[]; readonly base?: Value<T> }
   | { readonly kind: "field"; readonly record: Value<T>; readonly name: string }
   | { readonly kind: "print"; readonly value: Value<T> }
+  | { readonly kind: "variant"; readonly tag: string; readonly fields: readonly Value<T>[] }
+  | { readonly kind: "match"; readonly value: Value<T>; readonly cases: readonly MatchCase<T>[]; readonly fallback?: MatchFallback<T> }
   | { readonly kind: "ref"; readonly binding: Binding<T> }
   | { readonly kind: "binary"; readonly op: Operator; readonly left: Value<T>; readonly right: Value<T> }
   | { readonly kind: "call"; readonly fn: Value<T>; readonly arg: Value<T> }
@@ -31,7 +33,19 @@ export type Node<T> =
   | { readonly kind: "if"; readonly cond: Value<T>; readonly then: Body<T>; readonly else: Body<T> }
   | { readonly kind: "block"; readonly body: Body<T> }
 
+export type MatchCase<T> = {
+  readonly tag: string
+  readonly bindings: readonly Binding<T>[]
+  readonly body: Body<T>
+}
+
+export type MatchFallback<T> = {
+  readonly binding?: Binding<T>
+  readonly body: Body<T>
+}
+
 export type Declaration<T> = {
+  readonly recursive?: true
   readonly binding: Binding<T>
   readonly value: Value<T>
 }
@@ -71,6 +85,17 @@ export const create = <T>() => {
     ref,
     body,
     declare,
+    declareRecursive: (target: Binding<T>, initial: Value<T>): Check<Reference<T>> => check(function* () {
+      if (initial.node.kind !== "fn") throw new Error("Recursive declarations require a function initializer")
+      const declarations = yield* get(output)
+      if (!declarations) throw new Error("IR declarations need an enclosing body")
+      declarations.push({ binding: target, value: initial, recursive: true })
+      return ref(target)
+    }),
+    variant: (type: T, tag: string, fields: readonly Value<T>[]): Value<T> =>
+      value(type, { kind: "variant", tag, fields }),
+    match: (type: T, matched: Value<T>, cases: readonly MatchCase<T>[], fallback?: MatchFallback<T>): Value<T> =>
+      value(type, fallback ? { kind: "match", value: matched, cases, fallback } : { kind: "match", value: matched, cases }),
     literal: (type: T, literal: number | boolean | string): Value<T> => value(type, { kind: "literal", value: literal }),
     // Fields evaluate in source order, followed by the optional base.
     record: (type: T, fields: readonly { readonly name: string; readonly value: Value<T> }[], base?: Value<T>): Value<T> =>
@@ -99,12 +124,16 @@ export const validate = <T>(root: Body<T>): void => {
     visible.add(binding.id)
   }
 
-  const body = (body: Body<T>, parent: ReadonlySet<symbol>, param?: Binding<T>) => {
+  const body = (body: Body<T>, parent: ReadonlySet<symbol>, params: readonly Binding<T>[] = []) => {
     const visible = new Set(parent)
-    if (param) introduce(param, visible)
+    for (const param of params) introduce(param, visible)
     for (const declaration of body.declarations) {
+      if (declaration.recursive) {
+        if (declaration.value.node.kind !== "fn") throw new Error("Recursive declarations require a function initializer")
+        introduce(declaration.binding, visible)
+      }
       visit(declaration.value, visible)
-      introduce(declaration.binding, visible)
+      if (!declaration.recursive) introduce(declaration.binding, visible)
     }
     visit(body.result, visible)
   }
@@ -113,6 +142,20 @@ export const validate = <T>(root: Body<T>): void => {
     const node = value.node
     switch (node.kind) {
       case "literal": return
+      case "variant":
+        for (const field of node.fields) visit(field, visible)
+        return
+      case "match": {
+        visit(node.value, visible)
+        const tags = new Set<string>()
+        for (const branch of node.cases) {
+          if (tags.has(branch.tag)) throw new Error(`Duplicate match tag: ${branch.tag}`)
+          tags.add(branch.tag)
+          body(branch.body, visible, branch.bindings)
+        }
+        if (node.fallback) body(node.fallback.body, visible, node.fallback.binding ? [node.fallback.binding] : [])
+        return
+      }
       case "record":
         for (const field of node.fields) visit(field.value, visible)
         if (node.base) visit(node.base, visible)
@@ -130,7 +173,7 @@ export const validate = <T>(root: Body<T>): void => {
         visit(node.fn, visible)
         visit(node.arg, visible)
         return
-      case "fn": return body(node.body, visible, node.param)
+      case "fn": return body(node.body, visible, [node.param])
       case "block": return body(node.body, visible)
       case "if":
         visit(node.cond, visible)

@@ -195,6 +195,22 @@ test("rows stdio LSP exposes row constraints and analyzes print without executin
   await server.shutdown()
 })
 
+test("advanced stdio LSP exposes higher-rank parameters and exhaustive-match diagnostics", { timeout: 10000 }, async t => {
+  const server = client(t, [fileURLToPath(new URL("../examples/advanced-lsp.ts", import.meta.url)), "--stdio"])
+  await server.request("initialize", { processId: null, capabilities: {} })
+  server.notify("initialized", {})
+  const source = 'let use = fn(f: forall a. a -> a) => if f(true) then f(42) else 0 in print(use(id))'
+  server.notify("textDocument/didOpen", { textDocument: { uri, languageId: "advanced", version: 1, text: source } })
+  assert.deepEqual((await server.diagnostics(1)).diagnostics, [])
+  assert.match((await server.request<Hover>("textDocument/hover", at(source, 4)))!.contents.value, /forall/)
+  assert.equal((await server.request<Hover>("textDocument/hover", at(source, source.indexOf("f(42)"))))?.contents.value, "(number -> number)")
+  assert.deepEqual(await server.request("textDocument/definition", at(source, source.lastIndexOf("use"))),
+    { uri, range: { start: { line: 0, character: 4 }, end: { line: 0, character: 7 } } })
+  server.notify("textDocument/didChange", { textDocument: { uri, version: 2 }, contentChanges: [{ text: "match Some(42) { Some(value) => value }" }] })
+  assert.match((await server.diagnostics(2)).diagnostics[0]!.message, /Non-exhaustive.*None/)
+  await server.shutdown()
+})
+
 test("analyzer exceptions discard old facts without breaking the connection", { timeout: 10000 }, async t => {
   const source = `import { serve } from "langkit/lsp";
 serve(text => {

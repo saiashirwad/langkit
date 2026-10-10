@@ -1,0 +1,393 @@
+import {
+  bind, check, fail, get, lookup, render, run, scoped, within,
+  type Check, type Result,
+} from "langkit";
+import { create, type Binding, type Body, type Value } from "langkit/ir";
+import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
+import { emit } from "langkit/javascript";
+import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
+import { program, tokens, type DataDecl, type Expr, type Module, type TypeExpr } from "./advanced-syntax.ts";
+import {
+  number, boolean, string, fn, record, row, fresh, freshRow, prune, flatten,
+  exclude, unify, mono, generalize, instantiate, instantiateForall, skolemize,
+  generic, forall, data, subsume,
+  type Type, type Scheme, type TypeConstructor,
+} from "./advanced-types.ts";
+
+export { program } from "./advanced-syntax.ts";
+export { show, type Type } from "./advanced-types.ts";
+export type { Expr } from "./advanced-syntax.ts";
+
+type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
+type Constructor = {
+  readonly binding: Binding<Type>;
+  readonly type: Type;
+  readonly arity: number;
+  readonly tag: string;
+  readonly owner: TypeConstructor;
+};
+type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[] };
+
+const code = create<Type>();
+const facts = createAnalysis<Type>();
+const env = scoped<ReadonlyMap<string, Entry>>(new Map());
+const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
+const constructors = scoped<ReadonlyMap<string, Constructor>>(new Map());
+const level = scoped(0);
+const observe = scoped(true);
+
+const resolve = (syntax: TypeExpr, parameters: ReadonlyMap<string, Type> = new Map()): Check<Type> =>
+  check(function* () {
+    switch (syntax.kind) {
+      case "name": {
+        const parameter = parameters.get(syntax.name);
+        const primitive = syntax.name === "number" ? number : syntax.name === "boolean" ? boolean : syntax.name === "string" ? string : undefined;
+        if (parameter || primitive) {
+          if (syntax.args.length) return yield* fail(`Type ${syntax.name} takes no arguments`);
+          return (parameter ?? primitive)!;
+        }
+        const definition = (yield* get(definitions)).get(syntax.name);
+        if (!definition) return yield* fail(`Unknown type: ${syntax.name}`);
+        if (syntax.args.length !== definition.type.arity)
+          return yield* fail(`Type ${syntax.name} expects ${definition.type.arity} arguments, found ${syntax.args.length}`);
+        const args: Type[] = [];
+        for (const arg of syntax.args) {
+          const type = yield* resolve(arg, parameters);
+          if (prune(type).kind === "forall") return yield* fail("Polymorphic data arguments are not supported");
+          args.push(type);
+        }
+        return data(definition.type, args);
+      }
+      case "function":
+        return fn(yield* resolve(syntax.param, parameters), yield* resolve(syntax.result, parameters));
+      case "record": {
+        const fields = new Map<string, Type>();
+        for (const field of syntax.fields) {
+          if (fields.has(field.name)) return yield* fail(`Duplicate field: ${field.name}`);
+          const type = yield* resolve(field.type, parameters);
+          if (prune(type).kind === "forall") return yield* fail("Polymorphic record fields are not supported");
+          fields.set(field.name, type);
+        }
+        return record(row(fields));
+      }
+      case "forall": {
+        if (new Set(syntax.parameters).size !== syntax.parameters.length)
+          return yield* fail("Duplicate forall parameter");
+        const variables = syntax.parameters.map(generic);
+        const nested = new Map(parameters);
+        for (const variable of variables) nested.set(variable.name, variable);
+        return forall(variables, yield* resolve(syntax.body, nested));
+      }
+    }
+  }).at(syntax.span);
+
+const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> =>
+  computation.flatMap(value => check(function* () {
+    if (yield* get(observe)) yield* facts.typed(value.type, expr.span);
+    return code.at(value, expr.span);
+  })).at(expr.span);
+
+// Checking uses expected types to introduce rigid quantifiers and check lambdas.
+// Inference never guesses a forall for a lambda parameter.
+const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> => typed(expr, check(function* () {
+  const target = prune(expected);
+  const current = yield* get(level);
+  if (target.kind === "forall") {
+    const value = yield* within(level, current + 1, checkExpr(expr, skolemize(target, current + 1)));
+    return { ...value, type: expected };
+  }
+  if (expr.kind === "fn" && target.kind === "function") {
+    const parameter = expr.annotation ? yield* resolve(expr.annotation) : target.param;
+    if (expr.annotation) yield* subsume(target.param, parameter, current);
+    const binding = code.binding(expr.param, parameter);
+    if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
+    const body = yield* code.body(bind(env, [[expr.param, { binding, scheme: mono(parameter) }]], checkExpr(expr.body, target.result)));
+    return code.fn(expected, binding, body);
+  }
+  if (expr.kind === "if") {
+    const cond = yield* checkExpr(expr.cond, boolean);
+    const then = yield* code.body(checkExpr(expr.then, expected));
+    const otherwise = yield* code.body(checkExpr(expr.else, expected));
+    return code.conditional(expected, cond, then, otherwise);
+  }
+  if (expr.kind === "let") return yield* elaborateLet(expr, expected);
+  if (expr.kind === "match") return yield* elaborateMatch(expr, expected);
+  const value = yield* elaborate(expr);
+  yield* subsume(value.type, expected, current);
+  return { ...value, type: expected };
+}));
+
+const elaborateLet = (expr: Extract<Expr, { kind: "let" }>, expected?: Type): Check<Value<Type>> =>
+  code.scope(check(function* () {
+    const environment = yield* get(env);
+    const annotation = expr.annotation ? yield* resolve(expr.annotation) : undefined;
+    let binding: Binding<Type>;
+    let scheme: Scheme;
+    if (expr.recursive) {
+      // Only delayed function bodies may see their own binding. No general letrec
+      // values, eager self-reference, or inferred polymorphic recursion.
+      if (expr.value.kind !== "fn") return yield* fail("Recursive bindings require a function initializer");
+      const type = annotation ?? fresh(yield* get(level));
+      binding = code.binding(expr.name, type);
+      const initial = yield* bind(env, [[expr.name, { binding, scheme: mono(type) }]], checkExpr(expr.value, type));
+      yield* code.declareRecursive(binding, initial);
+      scheme = annotation ? mono(annotation) : generalize(type, [...environment.values()].map(entry => entry.scheme));
+    } else {
+      const initial = annotation ? yield* checkExpr(expr.value, annotation) : yield* elaborate(expr.value);
+      const value = yield* code.declare(expr.name, initial);
+      binding = value.node.binding;
+      scheme = annotation ? mono(annotation) : generalize(initial.type, [...environment.values()].map(entry => entry.scheme));
+    }
+    if (yield* get(observe)) yield* facts.define(binding, expr.nameSpan,
+      ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable");
+    return yield* bind(env, [[expr.name, { binding, scheme }]],
+      expected ? checkExpr(expr.body, expected) : elaborate(expr.body));
+  }));
+
+const elaborateMatch = (expr: Extract<Expr, { kind: "match" }>, expected?: Type): Check<Value<Type>> =>
+  check(function* () {
+    const value = yield* elaborate(expr.value);
+    const current = yield* get(level);
+    const result = expected ?? fresh(current);
+    const known = yield* get(constructors);
+    const seen = new Set<string>();
+    const cases: { tag: string; bindings: Binding<Type>[]; body: Body<Type> }[] = [];
+    let fallback: { binding?: Binding<Type>; body: Body<Type> } | undefined;
+    if (!expr.cases.length) return yield* fail("Match requires at least one case");
+    for (const branch of expr.cases) {
+      if (fallback) return yield* fail("Unreachable case after catch-all").at(branch.span);
+      const pattern = branch.pattern;
+      if (pattern.kind === "binding") {
+        if (pattern.name === "_") fallback = { body: yield* code.body(checkExpr(branch.body, result)) };
+        else {
+          const binding = code.binding(pattern.name, value.type);
+          if (yield* get(observe)) yield* facts.define(binding, pattern.span);
+          const body = yield* code.body(bind(env, [[pattern.name, { binding, scheme: mono(value.type) }]], checkExpr(branch.body, result)));
+          fallback = { binding, body };
+        }
+        continue;
+      }
+      const constructor = known.get(pattern.name);
+      if (!constructor) return yield* fail(`Unknown constructor: ${pattern.name}`).at(pattern.span);
+      if (seen.has(constructor.tag)) return yield* fail(`Unreachable duplicate case: ${pattern.name}`).at(pattern.span);
+      seen.add(constructor.tag);
+      if (pattern.fields.length !== constructor.arity)
+        return yield* fail(`Constructor ${pattern.name} expects ${constructor.arity} fields, found ${pattern.fields.length}`).at(pattern.span);
+      if (yield* get(observe)) yield* facts.reference(constructor.binding, {
+        start: pattern.span.start, end: pattern.span.start + pattern.name.length,
+      });
+      let type = instantiateForall(constructor.type, current);
+      const bindings: Binding<Type>[] = [];
+      const entries = new Map<string, Entry>();
+      for (const field of pattern.fields) {
+        const arrow = prune(type);
+        if (arrow.kind !== "function") throw new Error("Constructor arity does not match its type");
+        const binding = code.binding(field.name, arrow.param);
+        bindings.push(binding);
+        if (field.name !== "_") {
+          if (entries.has(field.name)) return yield* fail(`Duplicate pattern binding: ${field.name}`).at(field.span);
+          entries.set(field.name, { binding, scheme: mono(arrow.param) });
+          if (yield* get(observe)) yield* facts.define(binding, field.span);
+        }
+        type = arrow.result;
+      }
+      yield* unify(value.type, type).at(pattern.span);
+      const body = yield* code.body(bind(env, entries, checkExpr(branch.body, result)));
+      cases.push({ tag: constructor.tag, bindings, body });
+    }
+    if (!fallback) {
+      const type = prune(value.type);
+      if (type.kind !== "data") return yield* fail("Constructor match requires a data type");
+      const definition = [...(yield* get(definitions)).values()].find(def => def.type.id === type.constructor.id)!;
+      const missing = definition.constructors.filter(name => !seen.has(known.get(name)!.tag));
+      if (missing.length) return yield* fail(`Non-exhaustive match; missing: ${missing.join(", ")}`);
+    }
+    return code.match(result, value, cases, fallback);
+  }).at(expr.span);
+
+export const elaborate = (expr: Expr): Check<Value<Type>> => typed(expr, check(function* () {
+  const current = yield* get(level);
+  switch (expr.kind) {
+    case "number":
+      if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
+      return code.literal(number, expr.value);
+    case "boolean": return code.literal(boolean, expr.value);
+    case "string": return code.literal(string, expr.value);
+    case "name": {
+      const { binding, scheme } = yield* lookup(env, expr.name);
+      if (yield* get(observe)) yield* facts.reference(binding, expr.span);
+      return code.ref(binding, instantiateForall(instantiate(scheme, current), current));
+    }
+    case "record": {
+      const fields: { name: string; value: Value<Type> }[] = [];
+      const types = new Map<string, Type>();
+      for (const field of expr.fields) {
+        if (types.has(field.name)) return yield* fail(`Duplicate field: ${field.name}`);
+        const value = yield* elaborate(field.value);
+        if (prune(value.type).kind === "forall") return yield* fail("Polymorphic record fields are not supported");
+        fields.push({ name: field.name, value });
+        types.set(field.name, value.type);
+      }
+      if (!expr.base) return code.record(record(row(types)), fields);
+      const base = yield* elaborate(expr.base);
+      const tail = freshRow([], current);
+      yield* unify(base.type, record(row(new Map(), tail))).at(expr.base.span);
+      yield* exclude(row(new Map(), tail), types.keys()).at(expr.base.span);
+      return code.record(record(row(types, tail)), fields, base);
+    }
+    case "field": {
+      const value = yield* elaborate(expr.record);
+      const type = fresh(current);
+      yield* unify(value.type, record(row(new Map([[expr.name, type]]), freshRow([expr.name], current))));
+      return code.field(type, value, expr.name);
+    }
+    case "binary": {
+      const left = yield* checkExpr(expr.left, number);
+      const right = yield* checkExpr(expr.right, number);
+      return code.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
+    }
+    case "let": return yield* elaborateLet(expr);
+    case "fn": {
+      const type = expr.annotation ? yield* resolve(expr.annotation) : fresh(current);
+      const binding = code.binding(expr.param, type);
+      if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
+      const body = yield* code.body(bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body)));
+      return code.fn(fn(type, body.result.type), binding, body);
+    }
+    case "call": {
+      const callee = yield* elaborate(expr.fn);
+      let type = prune(instantiateForall(callee.type, current));
+      if (type.kind !== "function") {
+        const param = fresh(current);
+        const result = fresh(current);
+        yield* unify(type, fn(param, result)).at(expr.fn.span);
+        type = fn(param, result);
+      }
+      // The expected parameter type reaches the argument before its inference,
+      // which is what makes explicitly higher-rank arguments checkable.
+      if (type.kind !== "function") throw new Error("Expected function after unification");
+      const arg = yield* checkExpr(expr.arg, type.param);
+      return code.call(type.result, callee, arg);
+    }
+    case "if": {
+      const cond = yield* checkExpr(expr.cond, boolean);
+      const then = yield* code.body(elaborate(expr.then));
+      const otherwise = yield* code.body(checkExpr(expr.else, then.result.type));
+      return code.conditional(then.result.type, cond, then, otherwise);
+    }
+    case "annotated": return yield* checkExpr(expr.value, yield* resolve(expr.annotation));
+    case "match": return yield* elaborateMatch(expr);
+  }
+}));
+
+// Datatypes are nominal. Register all names before resolving constructor fields,
+// allowing recursive and mutually recursive declarations without type aliases.
+const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> => check(function* () {
+  const existing = yield* get(definitions);
+  const added = new Map<string, Definition>();
+  for (const declaration of declarations) {
+    if (existing.has(declaration.name) || added.has(declaration.name) || ["number", "boolean", "string"].includes(declaration.name))
+      return yield* fail(`Duplicate type: ${declaration.name}`).at(declaration.nameSpan);
+    if (new Set(declaration.parameters).size !== declaration.parameters.length)
+      return yield* fail(`Duplicate type parameter in ${declaration.name}`).at(declaration.span);
+    if (!declaration.constructors.length) return yield* fail("Data type requires a constructor").at(declaration.span);
+    added.set(declaration.name, {
+      type: { id: Symbol(declaration.name), name: declaration.name, arity: declaration.parameters.length },
+      constructors: declaration.constructors.map(constructor => constructor.name),
+    });
+  }
+  return yield* bind(definitions, added, check(function* () {
+    const known = yield* get(constructors);
+    const addedConstructors = new Map<string, Constructor>();
+    const entries = new Map<string, Entry>();
+    for (const declaration of declarations) {
+      const owner = added.get(declaration.name)!.type;
+      const variables = declaration.parameters.map(generic);
+      const parameters = new Map<string, Type>(variables.map(variable => [variable.name, variable]));
+      const result = data(owner, variables);
+      for (const syntax of declaration.constructors) {
+        if (!/^[A-Z]/.test(syntax.name)) return yield* fail("Constructor names must start with an uppercase letter").at(syntax.nameSpan);
+        if (known.has(syntax.name) || addedConstructors.has(syntax.name))
+          return yield* fail(`Duplicate constructor: ${syntax.name}`).at(syntax.nameSpan);
+        const fields: Binding<Type>[] = [];
+        for (const field of syntax.fields) {
+          const type = yield* resolve(field, parameters);
+          if (prune(type).kind === "forall") return yield* fail("Polymorphic constructor fields are not supported").at(field.span);
+          fields.push(code.binding("field", type));
+        }
+        const tag = `${owner.name}.${syntax.name}`;
+        let initial = code.variant(result, tag, fields.map(field => code.ref(field)));
+        for (const field of fields.toReversed()) {
+          initial = code.fn(fn(field.type, initial.type), field, { declarations: [], result: initial });
+        }
+        const type = variables.length ? forall(variables, initial.type) : initial.type;
+        const value = yield* code.declare(syntax.name, { ...initial, type });
+        const binding = value.node.binding;
+        if (yield* get(observe)) yield* facts.define(binding, syntax.nameSpan, fields.length ? "function" : "variable");
+        addedConstructors.set(syntax.name, { binding, type, arity: fields.length, tag, owner });
+        entries.set(syntax.name, { binding, scheme: mono(type) });
+      }
+    }
+    return yield* bind(constructors, addedConstructors, bind(env, entries, body));
+  }));
+});
+
+export type Compiled = { readonly type: Type; readonly ir: Body<Type>; readonly javascript: string };
+const parse = (source: string): Result<Module> => {
+  const result = program.parse(source);
+  return result.success ? result : {
+    success: false,
+    error: { message: result.error.message, span: result.error.diagnostic.span,
+      context: ["parsing", ...(result.error.diagnostic.context ?? [])] },
+  };
+};
+const library = parse(readFileSync(new URL("./stdlib.advanced", import.meta.url), "utf8"));
+
+const withLibrary = (body: Check<Value<Type>>): Check<Value<Type>> => check(function* () {
+  if (!library.success) return yield* fail(`Invalid standard library: ${library.error.message}`);
+  const param = code.binding("value", fresh());
+  const unit = record(row());
+  const printed = yield* code.declare("print", code.fn(fn(param.type, unit), param, {
+    declarations: [], result: code.print(unit, code.ref(param)),
+  }));
+  const print = { binding: printed.node.binding, scheme: generalize(printed.type, []) };
+  const observing = yield* get(observe);
+  return yield* bind(env, [["print", print]], within(observe, false, withTypes(library.value.types, check(function* () {
+    const initial = yield* elaborate(library.value.body);
+    const helpers = yield* code.declare("stdlib", initial);
+    const type = prune(helpers.type);
+    if (type.kind !== "record") throw new Error("Standard library must return a record");
+    const entries = new Map<string, Entry>();
+    const environment = yield* get(env);
+    for (const [name, fieldType] of flatten(type.row).fields) {
+      const value = yield* code.declare(name, code.field(fieldType, helpers, name));
+      entries.set(name, { binding: value.node.binding,
+        scheme: generalize(fieldType, [...environment.values()].map(entry => entry.scheme)) });
+    }
+    return yield* within(observe, observing, bind(env, entries, body));
+  }))));
+});
+
+export const analyze = (source: string): Analysis<Type> => {
+  const lexical = highlight(source, tokens);
+  const parsed = parse(source);
+  if (!parsed.success) return { diagnostics: [parsed.error], types: [], definitions: [], references: [], tokens: lexical };
+  return facts.collect(code.body(withLibrary(withTypes(parsed.value.types, elaborate(parsed.value.body)))), lexical).analysis;
+};
+export const compile = (source: string): Result<Compiled> => {
+  const parsed = parse(source);
+  if (!parsed.success) return parsed;
+  const built = run(code.body(withLibrary(withTypes(parsed.value.types, elaborate(parsed.value.body)))));
+  if (!built.success) return built;
+  return { success: true, value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) } };
+};
+
+if (import.meta.main) {
+  const source = readFileSync(process.argv[2] ?? new URL("./main.advanced", import.meta.url), "utf8");
+  const result = compile(source);
+  if (!result.success) {
+    console.error(render(result.error, source));
+    process.exitCode = 1;
+  } else console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
+}

@@ -1,0 +1,61 @@
+// Data and helpers are ordinary source code; only print is an intrinsic.
+type Option(a) = None | Some(a)
+type Result(a, e) = Ok(a) | Err(e)
+type List(a) = Nil | Cons(a, List(a))
+
+let id = fn(x) => x in
+let const = fn(x) => fn(y) => x in
+let compose = fn(f) => fn(g) => fn(x) => f(g(x)) in
+
+let mapOption = fn(f) => fn(option) => match option {
+  None => None,
+  Some(value) => Some(f(value))
+} in
+let withDefault = fn(fallback) => fn(option) => match option {
+  None => fallback,
+  Some(value) => value
+} in
+let mapResult = fn(f) => fn(result) => match result {
+  Ok(value) => Ok(f(value)),
+  Err(error) => Err(error)
+} in
+let andThen = fn(f) => fn(result) => match result {
+  Ok(value) => f(value),
+  Err(error) => Err(error)
+} in
+
+let rec mapList = fn(f) => fn(list) => match list {
+  Nil => Nil,
+  Cons(head, tail) => Cons(f(head), mapList(f)(tail))
+} in
+let rec foldList = fn(f) => fn(initial) => fn(list) => match list {
+  Nil => initial,
+  Cons(head, tail) => foldList(f)(f(initial)(head))(tail)
+} in
+let head = fn(list) => match list {
+  Nil => None,
+  Cons(value, _) => Some(value)
+} in
+let length = fn(list) => foldList(fn(count) => fn(ignored) => count + 1)(0)(list) in
+let rec append = fn(left) => fn(right) => match left {
+  Nil => right,
+  Cons(value, rest) => Cons(value, append(rest)(right))
+} in
+let rec range = fn(start) => fn(end) =>
+  if start > end then Nil else Cons(start, range(start + 1)(end)) in
+
+{
+  id = id,
+  const = const,
+  compose = compose,
+  mapOption = mapOption,
+  withDefault = withDefault,
+  mapResult = mapResult,
+  andThen = andThen,
+  mapList = mapList,
+  foldList = foldList,
+  head = head,
+  length = length,
+  append = append,
+  range = range
+}
