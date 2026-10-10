@@ -1,24 +1,14 @@
-// 190 models: 19 core, 43 editorial, 43 community, 43 commerce, 42 operations.
-// Sections below are one schema, sharing User, Team, Publication, and Post.
-// A collaborative publishing platform.
-// This file only describes a schema; `pnpm schema` prints its SQLite DDL.
-// Defaults run on insertion. updatedAt does not update itself.
-
-// HELPERS
-
 let timestamps = fn(model) =>
   model |> extend {
     createdAt : DateTime |> default now,
     updatedAt : DateTime |> default now
   }
 
-// Helpers compose with other helpers, as well as built-in operations.
 let tracked = fn(model) =>
   model
     |> timestamps
     |> index [.createdAt]
 
-// References may point to models declared later in the file.
 let authored = fn(model) =>
   model
     |> extend {
@@ -26,14 +16,10 @@ let authored = fn(model) =>
     }
     |> index [.authorId]
 
-// A nullable timestamp records deletion without removing the row.
-// Filtering deleted rows remains the application's responsibility.
 let softDelete = fn(model) =>
   model |> extend {
     deletedAt : DateTime?
   }
-
-// ENUMS
 
 type Role = User | Admin
 
@@ -49,8 +35,6 @@ type NotificationKind = Mention | Reply | Invitation | Publication
 
 type SubscriptionStatus = Active | Paused | Cancelled
 
-// PEOPLE AND TEAMS
-
 model User = {
   id : Int |> primaryKey |> autoIncrement,
   email : String |> unique,
@@ -64,7 +48,6 @@ model User = {
   |> softDelete
   |> index [.role, .createdAt]
 
-// A unique foreign key makes this a one-profile-per-user relationship.
 model Profile = {
   id : Int |> primaryKey |> autoIncrement,
   userId : Int |> unique |> references User.id,
