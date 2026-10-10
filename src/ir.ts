@@ -29,6 +29,15 @@ export type Node<T> =
   | { readonly kind: "field"; readonly record: Value<T>; readonly name: string }
   | { readonly kind: "merge"; readonly left: Value<T>; readonly right: Value<T> }
   | { readonly kind: "print"; readonly value: Value<T> }
+  | { readonly kind: "field-order"; readonly names: readonly string[] }
+  | {
+      readonly kind: "record-fold";
+      readonly order: Value<T>;
+      readonly metadata: Value<T>;
+      readonly record: Value<T>;
+      readonly initial: Value<T>;
+      readonly step: Value<T>;
+    }
   | { readonly kind: "variant"; readonly tag: string; readonly fields: readonly Value<T>[] }
   | {
       readonly kind: "match";
@@ -154,6 +163,20 @@ export const create = <T>() => {
 
     print: (type: T, printed: Value<T>): Value<T> => value(type, { kind: "print", value: printed }),
 
+    // Languages validate the order's row index and the polymorphic step. This
+    // IR operation only specifies ordered, strict runtime traversal.
+    fieldOrder: (type: T, names: readonly string[]): Value<T> =>
+      value(type, { kind: "field-order", names }),
+
+    recordFold: (
+      type: T,
+      order: Value<T>,
+      metadata: Value<T>,
+      record: Value<T>,
+      initial: Value<T>,
+      step: Value<T>,
+    ): Value<T> => value(type, { kind: "record-fold", order, metadata, record, initial, step }),
+
     binary: (type: T, op: Operator, left: Value<T>, right: Value<T>): Value<T> =>
       value(type, { kind: "binary", op, left, right }),
 
@@ -202,6 +225,14 @@ export const validate = <T>(root: Body<T>): void => {
     const node = value.node;
     switch (node.kind) {
       case "literal":
+      case "field-order":
+        return;
+      case "record-fold":
+        visit(node.order, visible);
+        visit(node.metadata, visible);
+        visit(node.record, visible);
+        visit(node.initial, visible);
+        visit(node.step, visible);
         return;
       case "variant":
         for (const field of node.fields) visit(field, visible);

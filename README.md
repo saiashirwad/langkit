@@ -363,7 +363,7 @@ The standard library also includes the advanced example's `Option`, `Result`, li
 
 ## Ur core: explicit types and disjoint records
 
-**[examples/ur/ur.ts](examples/ur/ur.ts)** is a first runnable **subset of Ur's core ideas**, with a new surface syntax, not an Ur/Web-compatible compiler. It has no web features. The [Ur manual](https://enn.github.io/urweb-doc/manual.html) is the reference for the larger language; this stage concentrates on rigid type parameters and disjoint record rows.
+**[examples/ur/ur.ts](examples/ur/ur.ts)** is a first runnable **subset of Ur's core ideas**, with a new surface syntax, not an Ur/Web-compatible compiler. It has no web features. The [Ur core paper (PLDI 2010)](https://adam.chlipala.net/papers/UrPLDI10/UrPLDI10.pdf) and [Ur manual](https://enn.github.io/urweb-doc/manual.html) are references for the larger language. This subset includes rigid type parameters, higher-kinded transparent type functions, mapped disjoint record rows, and explicitly ordered heterogeneous record folds; it does not implement full Ur.
 
 ```sh
 pnpm ur                        # runs examples/ur/main.ur
@@ -398,16 +398,133 @@ fn makeAdder(amount: number) -> number -> number =
 let main = makeAdder(getValue({ value: 20, label: "reading" }))(22);
 ```
 
-- Named functions require parameter and return annotations. Lambdas use `fn(x: number) => expression` and infer their result. Calls have exact arity (`f(a, b)`); functions returning functions can be called as `f(a)(b)`. There is no implicit partial application.
+- Named functions require parameter annotations; expression-bodied functions also require return annotations. Lambdas use `fn(x: number) => expression` and infer their result. Calls have exact arity (`f(a, b)`); functions returning functions can be called as `f(a)(b)`. There is no implicit partial application.
 - Top-level `let name [: type] = expression;` is sequential and non-recursive. Local `let name = expression in body` allows lexical shadowing. Top-level duplicates, duplicate parameters, and duplicate fields are errors. Compilation requires `main`; analysis of a library does not.
-- Primitive types are `number`, `boolean`, and `string`; function annotations use right-associative `a -> b`. There are records, projection, arithmetic, primitive equality, and `if condition then a else b`. Numbers use JavaScript IEEE-754 semantics. Strings use JSON escapes; `//` introduces comments; declarations end in semicolons.
-- Polymorphism is explicit on named functions, with type and row arguments inferred at calls. There is no general Hindley–Milner inference or explicit type-argument call syntax. Higher-rank/impredicative arguments are rejected: wrap a generic function in an annotated monomorphic lambda when passing it to another function.
-- Records are exact, not width-subtyped. Use a row parameter to accept extra fields. Row inference matches arguments left to right and can infer one unknown residual row at a time. A parameter containing two still-unknown rows is ambiguous; supply arguments establishing those rows first. Constraints are read left to right, so a concatenation within a constraint needs its component disjointness established by earlier constraints. Self-disjoint row hypotheses are conservatively rejected, even though the empty row would satisfy them.
+- Primitive types are `number`, `boolean`, and `string`; function annotations use right-associative `a -> b`. There are records, projection, arithmetic, primitive equality, and `if condition then a else b`. Numbers use JavaScript IEEE-754 semantics. Strings use JSON escapes; `//` introduces comments. Value declarations and expression-bodied functions end in semicolons; block-bodied functions end at `}`.
+- Polymorphism is explicit on named functions. Ordinary type and unmapped row arguments can be inferred at calls; `f<TypeArgs>(args)` supplies all generic arguments explicitly. There is no general Hindley–Milner inference. Annotated polymorphic function parameters use `forall<A>. A -> A` (see folders below). Impredicative ordinary type arguments remain rejected, whether inferred or explicit; passing a generic function to an ordinary monomorphic parameter still requires a monomorphic wrapper. Opaque row parameters may preserve records containing existing polymorphic functions; their types and constraints remain intact.
+- Records are exact, not width-subtyped. Use a row parameter to accept extra fields. Row inference matches arguments left to right and can infer one unknown residual row at a time. A parameter containing two still-unknown rows is ambiguous; supply arguments establishing those rows first or provide explicit type arguments. Constraints are read left to right, so a concatenation within a constraint needs its component disjointness established by earlier constraints. Self-disjoint row hypotheses are conservatively rejected, even though the empty row would satisfy them.
 - Checking erases generic parameters and proofs into ordinary closures and null-prototype records. The shared IR's `merge` node preserves left-to-right, once-only evaluation; disjointness belongs to the language checker, not the IR. The CLI evaluates trusted examples under a VM timeout, not a security sandbox.
 
-`compile(source)` returns `{ type, ir, javascript }` in the usual `Result`. `analyze(source)` supplies diagnostics, value hovers/definitions, and lexical highlighting without executing code. Type binders and record labels do not yet have go-to-definition support. Syntax, types/row proofs, and elaboration are split into `ur-syntax.ts`, `ur-types.ts`, and `ur.ts`.
+### Kinds, transparent type functions, and row mapping
 
-**Deferred:** algebraic datatypes (including the proposed `Option<A>`), pattern matching, recursion, imports, aliases, field-name parameters, higher-kinded/kind-polymorphic constructors, type-level functions and record mapping/folding, constructor classes, signatures, modules, and functors. The next stages are datatype/matching support, richer type-level record computation and traversal, then Ur's module system. This is not full Ur with a syntax makeover; SQL, XML, HTTP, browser support, and the rest of Ur/Web are outside the goal entirely.
+Kinds are `Type`, `Row<k>`, and right-associative kind arrows, including higher-order kinds. Only `Type` classifies runtime values; `Record<R>` requires `R: Row<Type>`. There is no kind polymorphism or kind inference: generic parameters default to `Type`, and other kinds must be written explicitly.
+
+```text
+type Box<A> = { value: A };
+type Compose<F: Type -> Type, G: Type -> Type, A> = F<G<A>>;
+
+fn keep<F: Type -> Type, A>(value: F<A>) -> F<A> = value;
+
+let main = keep<Compose<Box, Box>, number>({ value: { value: 42 } });
+```
+
+`type` defines a transparent compile-time function, not a nominal datatype. Applying `Box<number>` reduces to `{ value: number }`. Constructors may be passed as arguments and partially applied (`Compose<Box, Box>`); runtime functions still use exact-arity calls. Constructor equality includes beta reduction, eta contraction, and alpha-equivalence of constructor binders. There is no anonymous type-lambda syntax; use named parameterized aliases.
+
+Aliases are sequential, with separate type and value namespaces. Forward and recursive aliases are rejected, as are ill-kinded bodies even when unused. An alias's result kind defaults to `Type`; specify other results, for example `type Fields: Row<Type> = { count: number };` or `type Boxes<R: Row<Type>>: Row<Type> = Map<Box, R>;`. Aliases currently cannot declare disjointness assumptions, so an alias requiring unproven concatenation of abstract rows is rejected.
+
+`Map<F, R>` applies a type-level function to each payload in a row, preserving its labels. It is not a runtime record traversal:
+
+```text
+type Metadata<A> = { label: string, show: A -> string };
+
+let metadata: Record<Map<Metadata, { count: number, ready: boolean }>> = {
+  count: { label: "Count", show: fn(n: number) => if n > 0 then "positive" else "zero" },
+  ready: { label: "Ready", show: fn(b: boolean) => if b then "yes" else "no" }
+};
+
+let main = metadata.ready.show(true);
+```
+
+Mapping also works over **abstract** rows. The checker normalizes map identity, distribution over disjoint concatenation, and fusion without knowing the fields:
+
+```text
+type Compose<F: Type -> Type, G: Type -> Type, A> = F<G<A>>;
+
+fn fuse<F: Type -> Type, G: Type -> Type, R: Row<Type>>(
+  value: Record<Map<F, Map<G, R>>>
+) -> Record<Map<Compose<F, G>, R>> = value;
+```
+
+Row payloads can themselves be constructors: a `Row<Type -> Type>` can be mapped with a `(Type -> Type) -> Type` function to obtain runtime field types. Disjointness follows the original labels through mappings, independent of the payload kinds. Mapping `R` does not make it disjoint from `R`, and distinct mappers do not make two copies of one row disjoint.
+
+**Inference is deliberately conservative:** the checker does not invert neutral applications `F<A>` or mapped abstract rows `Map<F, R>`. A transparent function may discard its argument (`type Ignore<A> = number`), so it would be unsound to treat all constructors as injective. Infer parameters from separate ordinary/unmapped arguments first, or supply all generic arguments explicitly. Phantom parameters also require explicit arguments. This is not a higher-order unifier, and it does not implement all of Ur's definitional equality or inference heuristics.
+
+[Constructor tests](tests/ur-constructors.test.ts) exercise these laws under rigid abstract binders, kind errors, noninjective aliases, capture avoidance, and mapped-row collisions. The existing adversarial row tests remain enabled. Passing these tests is not a formal soundness proof.
+
+### Ordered folders and heterogeneous traversal
+
+`Folder<R>` is an opaque runtime traversal order indexed by `R: Row<Type>`. Construct one by listing every field of a **closed** row exactly once:
+
+```text
+type Reading: Row<Type> = { temperature: number, station: string, active: boolean };
+let order = folder<Reading>(.station, .temperature, .active);
+```
+
+Missing, repeated, and unknown fields are errors. The lowercase `folder` constructor and uppercase `Folder` type are reserved syntax. Ordinary records cannot impersonate folders, and folders with the same labels but different payload types are not interchangeable. Generic functions can accept and forward an abstract `Folder<R>`, but cannot construct one without knowing the fields. Traversal follows the written order, not record-literal or JavaScript property order.
+
+The shadowable built-in `foldRecord` has this conceptual signature:
+
+```text
+fn foldRecord<F: Type -> Type, R: Row<Type>, S>(
+  order: Folder<R>,
+  metadata: Record<Map<F, R>>,
+  values: Record<R>,
+  initial: S,
+  step: forall<A>. (S, F<A>, A) -> S
+) -> S;
+```
+
+Each step receives the accumulator, one field's metadata, and that field's value. The callback must work for **every** `A`, keeping the metadata and value tied to the same type. A numeric-only callback fails even for an empty or all-numeric row. All five arguments evaluate once, left to right, before the first callback. Each callback runs once per field in folder order; an empty folder returns the initial accumulator without calling the callback.
+
+`forall` annotations are reusable outside folding. Named generic functions satisfy them by kind-aware alpha-equivalence, not by matching binder spellings. For example:
+
+```text
+fn identity<T>(x: T) -> T = x;
+fn use(f: forall<A>. A -> A) -> { n: number, b: boolean } = {
+  n: f(42), b: f(true)
+};
+let main = use(identity);
+```
+
+Multi-argument function types use `(A, B) -> C`; `A -> B -> C` still describes curried unary functions. Quantified annotations must describe function types. Generic callback bodies are checked with rigid parameters even when unused. The checker does not infer outer type variables from inside a quantified callback: supply explicit arguments or establish them with earlier ordinary arguments. There is no automatic generalization of monomorphic callbacks, generic-lambda syntax, impredicative inference, or constraint syntax inside `forall` annotations.
+
+The [folder example](examples/ur/folders.ur) uses a generic `Metadata<A>` formatter for number, string, and boolean fields:
+
+```sh
+pnpm ur examples/ur/folders.ur
+# Station: north; Temperature: warm; Active: yes;
+```
+
+`textConcat(string, string) -> string` is an ordinary shadowable built-in; numeric `+` remains numeric. `foldRecord` is also an ordinary binding: aliases and lexical shadowing work without identifier-based compiler magic. The shared IR carries a field-order value and an ordered fold; the language checker, not the IR, enforces the folder index and callback's type.
+
+**This is a fixed-accumulator subset of Ur folders.** `S` remains the same type throughout traversal. Full Ur's row-indexed accumulator, field-name polymorphism, symbolic singleton rows, and field removal are not implemented. The [folder tests](tests/ur-folders.test.ts) check callback rigidity, metadata/index preservation, traversal order, opacity, and rejected programs; they do not constitute a formal soundness proof.
+
+### Statement blocks and output
+
+Named functions may instead have a block body:
+
+```text
+fn report(value: number) {
+  let doubled = value * 2;
+  print(doubled);
+}
+
+fn main() {
+  let reading = { sensor: "north", value: 21 };
+  print(reading);
+  report(reading.value);
+}
+```
+
+Blocks execute sequential `let name [: type] = expression;` bindings and `expression;` statements. Every expression statement runs exactly once, even if its value is discarded. Locals may shadow parameters or outer bindings, but duplicate names in the same block are errors. Blocks return the empty record `{}`; an optional return annotation must agree with that type. There are no `return`, loops, assignment, nested block statements, or block lambdas yet. Use expression bodies to return non-unit values.
+
+`print` is a normal, aliasable, shadowable generic built-in with type `<A>(A) -> {}`. It prints one value immediately at **program runtime**, returning an empty record. This stage has no effect type system: printing is permitted in expression bodies and top-level initializers too; functions are not guaranteed pure. Function declarations do not execute their bodies, and neither compilation nor analysis executes source code. The [sensor example](examples/ur/main.ur) uses statement-local bindings and prints readings and summaries directly.
+
+A named `fn main()` is called once after top-level initialization, and the CLI does not display its return value. Such an entry must have no parameters or generic parameters. Existing `let main = expression;` programs keep returning and displaying that value, including function values (which are **not** automatically called).
+
+`compile(source)` returns `{ type, ir, javascript, entry }` in the usual `Result`, with `entry` equal to `"function"` or `"value"`. The emitted JavaScript includes entry invocation for a named function; evaluating it executes initialization, printing, and that call. Hosts must supply `console.log` to receive printed values; the CLI supplies it. The compiled `type` is the evaluated result type, not the entry function's type. `analyze(source)` supplies diagnostics, value hovers/definitions, and lexical highlighting without executing code. Type binders and record labels do not yet have go-to-definition support. Syntax, types/row proofs, and elaboration are split into `ur-syntax.ts`, `ur-types.ts`, and `ur.ts`.
+
+**Deferred:** algebraic datatypes (including the proposed `Option<A>`), pattern matching, recursion, imports, field-name parameters, kind polymorphism, row-indexed folder accumulators, field removal, general impredicative polymorphism, constructor classes, signatures, modules, and functors. This is not full Ur with a syntax makeover; SQL, XML, HTTP, browser support, and the rest of Ur/Web are outside the goal entirely.
 
 ## Functional SQLite schemas
 

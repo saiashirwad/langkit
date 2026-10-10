@@ -43,6 +43,12 @@ export const emit = <T>(root: Body<T>): string => {
     switch (node.kind) {
       case "literal":
         return literal(node.value);
+      case "field-order":
+        return JSON.stringify(node.names);
+      case "record-fold":
+        // Arguments evaluate outside the temporary scope, once and left to right.
+        // The order comes from a checked folder, never record enumeration.
+        return `(($order, $metadata, $record, $initial, $step) => { let $acc = $initial; for (const $key of $order) { $acc = $step($acc)($metadata[$key])($record[$key]); } return $acc; })(${expr(node.order, depth)}, ${expr(node.metadata, depth)}, ${expr(node.record, depth)}, ${expr(node.initial, depth)}, ${expr(node.step, depth)})`;
       case "variant":
         return `({ __proto__: null, tag: ${JSON.stringify(node.tag)}, fields: [${node.fields.map((field) => expr(field, depth)).join(", ")}] })`;
       case "match": {

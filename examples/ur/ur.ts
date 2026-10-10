@@ -13,6 +13,16 @@ import {
 } from "./ur-syntax.ts";
 import {
   apply,
+  alias,
+  bindGenerics,
+  resolveConstructor,
+  typeKind,
+  rowKind,
+  arrowKind,
+  variable,
+  folder,
+  mapRow,
+  resolveRow,
   boolean,
   concat,
   disjoint,
@@ -21,7 +31,7 @@ import {
   number,
   record,
   resolve,
-  resolveRow,
+  resolveConstraintRow,
   row,
   show,
   string,
@@ -91,6 +101,57 @@ const lambda = (params: readonly Binding<Type>[], body: Body<Type>, type: Type):
 const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
   check(function* () {
     switch (expr.kind) {
+      case "block":
+        return yield* code.scope(
+          check(function* () {
+            let inner = context;
+            const names = new Set<string>();
+            for (const statement of expr.statements) {
+              if (statement.kind === "binding" && names.has(statement.name.name))
+                return yield* fail(`Duplicate local declaration: ${statement.name.name}`).at(
+                  statement.name.span,
+                );
+              const value = yield* elaborate(statement.value, inner);
+              if (statement.kind === "expression") {
+                // Declarations retain even unused expressions and sequence each exactly once.
+                yield* code.declare("statement", value);
+                continue;
+              }
+              if (statement.annotation)
+                yield* expect(
+                  value.type,
+                  yield* resolve(statement.annotation, inner.types, inner.constraints),
+                ).at(statement.span);
+              const ref = yield* code.declare(statement.name.name, value);
+              yield* facts.define(
+                ref.node.binding,
+                statement.name.span,
+                value.type.kind === "function" ? "function" : "variable",
+              );
+              names.add(statement.name.name);
+              inner = withValue(inner, ref.node.binding);
+            }
+            return code.record(record(row()), []);
+          }),
+        );
+      case "folder": {
+        const r = yield* resolveRow(expr.row, context.types, context.constraints);
+        if (r.variables.length) return yield* fail("Folder construction requires a closed row");
+        const seen = new Set<string>();
+        for (const field of expr.fields) {
+          if (seen.has(field.name))
+            return yield* fail(`Duplicate folder field: ${field.name}`).at(field.span);
+          if (!r.fields.has(field.name))
+            return yield* fail(`Unknown folder field: ${field.name}`).at(field.span);
+          seen.add(field.name);
+        }
+        const missing = [...r.fields.keys()].filter((name) => !seen.has(name));
+        if (missing.length) return yield* fail(`Missing folder fields: ${missing.join(", ")}`);
+        return code.fieldOrder(
+          folder(r),
+          expr.fields.map((field) => field.name),
+        );
+      }
       case "literal":
         return code.literal(
           typeof expr.value === "number"
@@ -157,10 +218,28 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
           return yield* fail(`Expected a function, found ${show(callee.type)}`);
         const args: Value<Type>[] = [];
         for (const arg of expr.args) args.push(yield* elaborate(arg, context));
+        let typeArgs: Type[] | undefined;
+        if (expr.typeArgs) {
+          if (expr.typeArgs.length !== callee.type.generics.length)
+            return yield* fail(
+              `Expected ${callee.type.generics.length} type arguments, found ${expr.typeArgs.length}`,
+            );
+          typeArgs = [];
+          for (let i = 0; i < expr.typeArgs.length; i++)
+            typeArgs.push(
+              yield* resolveConstructor(
+                expr.typeArgs[i]!,
+                context.types,
+                context.constraints,
+                callee.type.generics[i]!.typeKind,
+              ),
+            );
+        }
         const result = yield* apply(
           callee.type,
           args.map((a) => a.type),
           context.constraints,
+          typeArgs,
         );
         let value = callee;
         if (!args.length) return code.call(result, callee, code.record(record(row()), []));
@@ -227,7 +306,10 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
     )
     .at(expr.span);
 
-const declaration = (decl: Declaration, context: Context): Check<Value<Type>> =>
+const declaration = (
+  decl: Exclude<Declaration, { kind: "type" }>,
+  context: Context,
+): Check<Value<Type>> =>
   check(function* () {
     if (decl.kind === "let") {
       const value = yield* elaborate(decl.value, context);
@@ -238,16 +320,14 @@ const declaration = (decl: Declaration, context: Context): Check<Value<Type>> =>
         );
       return value;
     }
-    const types = new Map<string, Parameter>();
-    for (const g of decl.generics) {
-      if (types.has(g.name) || ["number", "boolean", "string"].includes(g.name))
-        return yield* fail(`Duplicate or reserved type parameter: ${g.name}`).at(g.span);
-      types.set(g.name, { id: Symbol(g.name), name: g.name, row: g.row });
-    }
+    const { scope: types, parameters: generics } = yield* bindGenerics(
+      decl.generics,
+      context.types,
+    );
     const constraints: Constraint[] = [];
     for (const c of decl.constraints) {
-      const left = yield* resolveRow(c.left, types, constraints),
-        right = yield* resolveRow(c.right, types, constraints);
+      const left = yield* resolveConstraintRow(c.left, types, constraints),
+        right = yield* resolveConstraintRow(c.right, types, constraints);
       const constraint = { left, right };
       // Reject internally contradictory constraints rather than assuming false.
       yield* disjoint(left, right, [constraint]).at(c.span);
@@ -255,7 +335,9 @@ const declaration = (decl: Declaration, context: Context): Check<Value<Type>> =>
     }
     let inner: Context = { values: context.values, types, constraints };
     const params = yield* parameters(decl.params, inner);
-    const result = yield* resolve(decl.result, types, constraints);
+    if (!decl.result && decl.body.kind !== "block")
+      return yield* fail("Expression-bodied functions require a return type annotation");
+    const result = decl.result ? yield* resolve(decl.result, types, constraints) : record(row());
     for (const p of params) inner = withValue(inner, p);
     const body = yield* code.body(elaborate(decl.body, inner));
     yield* expect(body.result.type, result).at(decl.body.span);
@@ -265,7 +347,7 @@ const declaration = (decl: Declaration, context: Context): Check<Value<Type>> =>
       fn(
         params.map((p) => p.type),
         result,
-        [...types.values()],
+        generics,
         constraints,
       ),
     );
@@ -276,10 +358,89 @@ const declaration = (decl: Declaration, context: Context): Check<Value<Type>> =>
 const build = (declarations: readonly Declaration[], entry: boolean): Check<Body<Type>> =>
   code.body(
     check(function* () {
-      let context = empty;
+      const parameter: Parameter = { id: Symbol("A"), name: "A", typeKind };
+      const valueType: Type = { kind: "variable", parameter };
+      const printed = code.binding("value", valueType);
+      const unit = record(row());
+      const print = yield* code.declare(
+        "print",
+        code.fn(fn([valueType], unit, [parameter]), printed, {
+          declarations: [],
+          result: code.print(unit, code.ref(printed)),
+        }),
+      );
+      let context = withValue(empty, print.node.binding);
+
+      const left = code.binding("left", string),
+        right = code.binding("right", string);
+      const textConcat = yield* code.declare(
+        "textConcat",
+        lambda(
+          [left, right],
+          {
+            declarations: [],
+            result: code.binary(string, "+", code.ref(left), code.ref(right)),
+          },
+          fn([string, string], string),
+        ),
+      );
+      context = withValue(context, textConcat.node.binding);
+
+      const F: Parameter = { id: Symbol("F"), name: "F", typeKind: arrowKind(typeKind, typeKind) };
+      const R: Parameter = { id: Symbol("R"), name: "R", typeKind: rowKind() };
+      const S: Parameter = { id: Symbol("S"), name: "S", typeKind };
+      const A: Parameter = { id: Symbol("A"), name: "A", typeKind };
+      const source = row(new Map(), [{ base: variable(R), mapper: undefined }]);
+      const mapped = yield* mapRow(variable(F), source, []);
+      const fieldMetadata: Type = {
+        kind: "application",
+        fn: variable(F),
+        arg: variable(A),
+        typeKind,
+      };
+      const stepType = fn([variable(S), fieldMetadata, variable(A)], variable(S), [A]);
+      const foldType = fn(
+        [folder(source), record(mapped), record(source), variable(S), stepType],
+        variable(S),
+        [F, R, S],
+      );
+      const foldParams = foldType.params.map((type, i) =>
+        code.binding(["order", "metadata", "values", "initial", "step"][i]!, type),
+      );
+      const [order, metadata, values, initial, step] = foldParams.map((param) => code.ref(param));
+      const foldRecord = yield* code.declare(
+        "foldRecord",
+        lambda(
+          foldParams,
+          {
+            declarations: [],
+            result: code.recordFold(variable(S), order!, metadata!, values!, initial!, step!),
+          },
+          foldType,
+        ),
+      );
+      context = withValue(context, foldRecord.node.binding);
+      const declared = new Set<string>();
+      const declaredTypes = new Set<string>();
       for (const decl of declarations) {
-        if (context.values.has(decl.name.name))
+        if (decl.kind === "type") {
+          if (
+            declaredTypes.has(decl.name.name) ||
+            ["number", "boolean", "string"].includes(decl.name.name)
+          )
+            return yield* fail(`Duplicate or reserved type declaration: ${decl.name.name}`).at(
+              decl.name.span,
+            );
+          const { scope, parameters } = yield* bindGenerics(decl.generics, context.types);
+          const body = yield* resolveConstructor(decl.body, scope, [], decl.resultKind ?? typeKind);
+          const value = alias(parameters, body);
+          context = { ...context, types: new Map(context.types).set(decl.name.name, value) };
+          declaredTypes.add(decl.name.name);
+          continue;
+        }
+        if (declared.has(decl.name.name))
           return yield* fail(`Duplicate declaration: ${decl.name.name}`).at(decl.name.span);
+        declared.add(decl.name.name);
         const value = yield* declaration(decl, context);
         const ref = yield* code.declare(decl.name.name, value);
         yield* facts.define(
@@ -291,7 +452,19 @@ const build = (declarations: readonly Declaration[], entry: boolean): Check<Body
       }
       const main = context.values.get("main");
       if (!main && entry) return yield* fail("Missing entry value: main");
-      return main ? code.ref(main) : code.record(record(row()), []);
+      if (
+        main &&
+        declarations.some((decl) => decl.kind === "function" && decl.name.name === "main")
+      ) {
+        const type = main.type;
+        if (type.kind !== "function" || type.params.length || type.generics.length)
+          return yield* fail(
+            "Function entry main must have no parameters or generic parameters",
+          ).at(declarations.find((decl) => decl.name.name === "main")!.span);
+        const result = yield* apply(type, [], []);
+        return code.call(result, code.ref(main), code.record(unit, []));
+      }
+      return main ? code.ref(main) : code.record(unit, []);
     }),
   );
 
@@ -313,6 +486,7 @@ export type Compiled = {
   readonly type: Type;
   readonly ir: Body<Type>;
   readonly javascript: string;
+  readonly entry: "value" | "function";
 };
 
 export const compile = (source: string): Result<Compiled> => {
@@ -322,7 +496,14 @@ export const compile = (source: string): Result<Compiled> => {
   if (!built.success) return built;
   return {
     success: true,
-    value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
+    value: {
+      type: built.value.result.type,
+      ir: built.value,
+      javascript: emit(built.value),
+      entry: parsed.value.some((decl) => decl.kind === "function" && decl.name.name === "main")
+        ? "function"
+        : "value",
+    },
   };
 };
 
@@ -348,7 +529,14 @@ if (import.meta.main) {
     if (!result.success) {
       console.error(render(result.error, source));
       process.exitCode = 1;
-    } else console.log(runInNewContext(result.value.javascript, {}, { timeout: 1000 }));
+    } else {
+      const value = runInNewContext(
+        result.value.javascript,
+        { console: { log: (...values: unknown[]) => console.log(...values) } },
+        { timeout: 1000 },
+      );
+      if (result.value.entry === "value") console.log(value);
+    }
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

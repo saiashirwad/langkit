@@ -22,24 +22,35 @@ type Located<T> = T & { readonly span: Span };
 
 export type Name = { readonly name: string; readonly span: Span };
 
+export type KindExpr =
+  | { readonly kind: "type" }
+  | { readonly kind: "row"; readonly element: KindExpr }
+  | { readonly kind: "arrow"; readonly param: KindExpr; readonly result: KindExpr };
+
 export type TypeExpr = Located<
   | { readonly kind: "name"; readonly name: string }
+  | { readonly kind: "application"; readonly fn: TypeExpr; readonly args: readonly TypeExpr[] }
+  | { readonly kind: "map"; readonly fn: TypeExpr; readonly row: TypeExpr }
   | {
       readonly kind: "record";
       readonly fields: readonly { readonly name: Name; readonly type: TypeExpr }[];
     }
   | { readonly kind: "record-of"; readonly row: TypeExpr }
+  | { readonly kind: "folder-of"; readonly row: TypeExpr }
+  | { readonly kind: "forall"; readonly generics: readonly Generic[]; readonly body: TypeExpr }
   | { readonly kind: "concat"; readonly left: TypeExpr; readonly right: TypeExpr }
-  | { readonly kind: "function"; readonly param: TypeExpr; readonly result: TypeExpr }
+  | { readonly kind: "function"; readonly params: readonly TypeExpr[]; readonly result: TypeExpr }
 >;
 
-export type Generic = Name & { readonly row: boolean };
+export type Generic = Name & { readonly kind: KindExpr };
 
 export type Parameter = Name & { readonly type: TypeExpr };
 
 export type Constraint = Located<{ readonly left: TypeExpr; readonly right: TypeExpr }>;
 
 export type Expr = Located<
+  | { readonly kind: "block"; readonly statements: readonly Statement[] }
+  | { readonly kind: "folder"; readonly row: TypeExpr; readonly fields: readonly Name[] }
   | { readonly kind: "literal"; readonly value: number | boolean | string }
   | { readonly kind: "name"; readonly name: string }
   | {
@@ -53,7 +64,12 @@ export type Expr = Located<
       readonly left: Expr;
       readonly right: Expr;
     }
-  | { readonly kind: "call"; readonly fn: Expr; readonly args: readonly Expr[] }
+  | {
+      readonly kind: "call";
+      readonly fn: Expr;
+      readonly args: readonly Expr[];
+      readonly typeArgs: readonly TypeExpr[] | undefined;
+    }
   | { readonly kind: "lambda"; readonly params: readonly Parameter[]; readonly body: Expr }
   | {
       readonly kind: "let";
@@ -65,7 +81,24 @@ export type Expr = Located<
   | { readonly kind: "if"; readonly cond: Expr; readonly then: Expr; readonly else: Expr }
 >;
 
+export type Statement = Located<
+  | {
+      readonly kind: "binding";
+      readonly name: Name;
+      readonly annotation: TypeExpr | undefined;
+      readonly value: Expr;
+    }
+  | { readonly kind: "expression"; readonly value: Expr }
+>;
+
 export type Declaration = Located<
+  | {
+      readonly kind: "type";
+      readonly name: Name;
+      readonly generics: readonly Generic[];
+      readonly resultKind: KindExpr | undefined;
+      readonly body: TypeExpr;
+    }
   | {
       readonly kind: "let";
       readonly name: Name;
@@ -77,7 +110,7 @@ export type Declaration = Located<
       readonly name: Name;
       readonly generics: readonly Generic[];
       readonly params: readonly Parameter[];
-      readonly result: TypeExpr;
+      readonly result: TypeExpr | undefined;
       readonly constraints: readonly Constraint[];
       readonly body: Expr;
     }
@@ -99,6 +132,10 @@ const keywords = [
   "where",
   "disjoint",
   "Record",
+  "Folder",
+  "folder",
+  "forall",
+  "Map",
   "Row",
   "Type",
   "type",
@@ -132,8 +169,82 @@ export const tokens: readonly TokenRule[] = [
   { pattern: /\+\+|==|=>|->|[+\-*/>=:]/, kind: "operator" },
 ];
 
+const kindExpression: Parser<KindExpr> = recursive<KindExpr>((kind) => {
+  const atom: Parser<KindExpr> = choice(
+    keyword("Type").map(() => ({ kind: "type" as const })),
+    parser(function* () {
+      yield* keyword("Row");
+      yield* symbol("<");
+      const element = yield* kind;
+      yield* symbol(">");
+      return { kind: "row" as const, element };
+    }),
+    between(symbol("("), symbol(")"), kind),
+  );
+  return parser(function* () {
+    const param = yield* atom;
+    const result = yield* optional(
+      parser(function* () {
+        yield* symbol("->");
+        yield* commit();
+        return yield* kind;
+      }),
+    );
+    return result ? { kind: "arrow" as const, param, result } : param;
+  });
+});
+
+const genericParameters = between(
+  symbol("<"),
+  symbol(">"),
+  commaList(
+    parser(function* () {
+      const id = yield* name;
+      const kind = yield* optional(
+        parser(function* () {
+          yield* symbol(":");
+          yield* commit();
+          return yield* kindExpression;
+        }),
+      );
+      return { ...id, kind: kind ?? { kind: "type" as const } };
+    }),
+  ),
+);
+
 export const annotation: Parser<TypeExpr> = recursive<TypeExpr>((type) => {
   const atom: Parser<TypeExpr> = choice(
+    located(
+      parser(function* () {
+        yield* keyword("forall");
+        yield* commit();
+        const generics = yield* genericParameters;
+        yield* symbol(".");
+        return { kind: "forall" as const, generics, body: yield* type };
+      }),
+    ),
+    located(
+      parser(function* () {
+        yield* keyword("Folder");
+        yield* commit();
+        yield* symbol("<");
+        const row = yield* type;
+        yield* symbol(">");
+        return { kind: "folder-of" as const, row };
+      }),
+    ),
+    located(
+      parser(function* () {
+        yield* keyword("Map");
+        yield* commit();
+        yield* symbol("<");
+        const fn = yield* type;
+        yield* symbol(",");
+        const row = yield* type;
+        yield* symbol(">");
+        return { kind: "map" as const, fn, row };
+      }),
+    ),
     located(
       parser(function* () {
         yield* keyword("Record");
@@ -160,9 +271,44 @@ export const annotation: Parser<TypeExpr> = recursive<TypeExpr>((type) => {
       }),
     ),
     name.map(({ name, span }): TypeExpr => ({ kind: "name", name, span })),
-    between(symbol("("), symbol(")"), type),
+    parser(function* () {
+      const grouped = yield* between(symbol("("), symbol(")"), commaList(type)).withSpan(
+        (params, span) => ({ params, span }),
+      );
+      const result = yield* optional(
+        parser(function* () {
+          yield* symbol("->");
+          yield* commit();
+          return yield* type;
+        }),
+      );
+      if (result)
+        return {
+          kind: "function" as const,
+          params: grouped.params,
+          result,
+          span: { start: grouped.span.start, end: result.span.end },
+        };
+      return yield* parser(function* () {
+        return grouped.params;
+      })
+        .validate((params) => params.length === 1, "Expected a function arrow after parameter list")
+        .map((params) => params[0]!);
+    }),
   );
-  return precedence(atom, [
+  const applied = postfix(
+    atom,
+    between(symbol("<"), symbol(">"), commaList(type)).withSpan(
+      (args, span) =>
+        (fn: TypeExpr): TypeExpr => ({
+          kind: "application",
+          fn,
+          args,
+          span: { start: fn.span.start, end: span.end },
+        }),
+    ),
+  );
+  return precedence(applied, [
     {
       associativity: "left",
       operators: [
@@ -184,7 +330,7 @@ export const annotation: Parser<TypeExpr> = recursive<TypeExpr>((type) => {
           () =>
             (param: TypeExpr, result: TypeExpr): TypeExpr => ({
               kind: "function",
-              param,
+              params: [param],
               result,
               span: { start: param.span.start, end: result.span.end },
             }),
@@ -249,6 +395,24 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   );
   const atom: Parser<Expr> = choice(
     located(
+      parser(function* () {
+        yield* keyword("folder");
+        yield* commit();
+        const row = yield* between(symbol("<"), symbol(">"), annotation);
+        const fields = yield* between(
+          symbol("("),
+          symbol(")"),
+          commaList(
+            parser(function* () {
+              yield* symbol(".");
+              return yield* name;
+            }),
+          ),
+        );
+        return { kind: "folder" as const, row, fields };
+      }),
+    ),
+    located(
       lex
         .token(regex(new RegExp(`-?${digits.source}`)))
         .map((text) => ({ kind: "literal" as const, value: Number(text) })),
@@ -281,10 +445,15 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   const calls = postfix(
     atom,
     choice(
-      between(symbol("("), symbol(")"), commaList(expr)).withSpan(
-        (args, span) =>
+      parser(function* () {
+        const typeArgs = yield* optional(between(symbol("<"), symbol(">"), commaList(annotation)));
+        const args = yield* between(symbol("("), symbol(")"), commaList(expr));
+        return { args, typeArgs };
+      }).withSpan(
+        ({ args, typeArgs }, span) =>
           (fn: Expr): Expr => ({
             kind: "call",
+            typeArgs,
             fn,
             args,
             span: { start: fn.span.start, end: span.end },
@@ -335,7 +504,58 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   );
 });
 
+const block: Parser<Expr> = located(
+  parser(function* () {
+    yield* symbol("{");
+    yield* commit();
+    const statements = yield* many(
+      choice(
+        located(
+          parser(function* () {
+            yield* keyword("let");
+            yield* commit();
+            const id = yield* name;
+            const annotation = yield* optionalAnnotation;
+            yield* symbol("=");
+            const value = yield* expression;
+            yield* symbol(";");
+            return { kind: "binding" as const, name: id, annotation, value };
+          }),
+        ),
+        located(
+          parser(function* () {
+            const value = yield* expression;
+            yield* symbol(";");
+            return { kind: "expression" as const, value };
+          }),
+        ),
+      ),
+    );
+    yield* symbol("}");
+    return { kind: "block" as const, statements };
+  }),
+);
+
 const declaration: Parser<Declaration> = choice(
+  located(
+    parser(function* () {
+      yield* keyword("type");
+      yield* commit();
+      const id = yield* name;
+      const generics = yield* optional(genericParameters);
+      const resultKind = yield* optional(
+        parser(function* () {
+          yield* symbol(":");
+          yield* commit();
+          return yield* kindExpression;
+        }),
+      );
+      yield* symbol("=");
+      const body = yield* annotation;
+      yield* symbol(";");
+      return { kind: "type" as const, name: id, generics: generics ?? [], resultKind, body };
+    }),
+  ),
   located(
     parser(function* () {
       yield* keyword("let");
@@ -353,37 +573,15 @@ const declaration: Parser<Declaration> = choice(
       yield* keyword("fn");
       yield* commit();
       const id = yield* name;
-      const generics = yield* optional(
-        between(
-          symbol("<"),
-          symbol(">"),
-          commaList(
-            parser(function* () {
-              const id = yield* name;
-              const row = yield* optional(
-                parser(function* () {
-                  yield* symbol(":");
-                  yield* commit();
-                  return yield* choice(
-                    keyword("Type").map(() => false),
-                    parser(function* () {
-                      yield* keyword("Row");
-                      yield* symbol("<");
-                      yield* keyword("Type");
-                      yield* symbol(">");
-                      return true;
-                    }),
-                  );
-                }),
-              );
-              return { ...id, row: row ?? false };
-            }),
-          ),
-        ),
-      );
+      const generics = yield* optional(genericParameters);
       const params = yield* parameters;
-      yield* symbol("->");
-      const result = yield* annotation;
+      const result = yield* optional(
+        parser(function* () {
+          yield* symbol("->");
+          yield* commit();
+          return yield* annotation;
+        }),
+      );
       const constraints = yield* optional(
         parser(function* () {
           yield* keyword("where");
@@ -403,9 +601,16 @@ const declaration: Parser<Declaration> = choice(
           );
         }),
       );
-      yield* symbol("=");
-      const body = yield* expression;
-      yield* symbol(";");
+      const body = yield* choice(
+        block,
+        parser(function* () {
+          yield* symbol("=");
+          yield* commit();
+          const body = yield* expression;
+          yield* symbol(";");
+          return body;
+        }),
+      );
       return {
         kind: "function" as const,
         name: id,

@@ -1127,6 +1127,20 @@ const resolveBody = (body: Body<Type>, solved: ReadonlyMap<symbol, Value<Type>>)
         return { ...value, node: { ...node, record: visit(node.record) } };
       case "print":
         return { ...value, node: { ...node, value: visit(node.value) } };
+      case "field-order":
+        return value;
+      case "record-fold":
+        return {
+          ...value,
+          node: {
+            ...node,
+            order: visit(node.order),
+            metadata: visit(node.metadata),
+            record: visit(node.record),
+            initial: visit(node.initial),
+            step: visit(node.step),
+          },
+        };
       case "variant":
         return { ...value, node: { ...node, fields: node.fields.map(visit) } };
       case "match":

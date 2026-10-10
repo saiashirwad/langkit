@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
@@ -15,6 +19,18 @@ const compiled = (source: string) => {
   assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
   validate(result.value.ir);
   return result.value;
+};
+
+const execute = (source: string) => {
+  const output: unknown[] = [];
+  const value: unknown = runInNewContext(
+    compiled(source).javascript,
+    {
+      console: { log: (value: unknown) => output.push(value) },
+    },
+    { timeout: 1000 },
+  );
+  return { output, value };
 };
 
 const evaluate = (source: string): unknown =>
@@ -193,17 +209,32 @@ for (const [source, message] of [
   });
 }
 
-test("Ur's example is runnable and returns null-prototype concatenated records", () => {
+test("Ur's example prints its complete sensor report with null-prototype records", () => {
   const source = readFileSync(new URL("../examples/ur/main.ur", import.meta.url), "utf8");
-  const result = evaluate(source) as {
-    person: { name: string; age: number; active: boolean };
-    answer: number;
+  const { output, value } = execute(source);
+  assert.deepEqual(JSON.parse(JSON.stringify(output)), [
+    { sensor: "north", value: 19, label: "reference", checked: true },
+    {
+      sensor: "south",
+      value: 21,
+      indoor: false,
+      label: { priority: 2, active: true },
+      checked: true,
+    },
+    { north: 21, south: 23 },
+    { average: 22, difference: 2, status: "warm", unit: "C", selected: "south" },
+    { capturedOffset: 21, expectedAverage: true, identityBoolean: true, identityString: "ready" },
+  ]);
+
+  const checkRecords = (value: unknown): void => {
+    if (value === null || typeof value !== "object") return;
+    assert.equal(Object.getPrototypeOf(value), null);
+    for (const field of Object.values(value)) checkRecords(field);
   };
-  assert.equal(result.answer, 42);
-  assert.equal(result.person.name, "Ada");
-  assert.equal(result.person.age, 37);
-  assert.equal(result.person.active, true);
-  assert.equal(Object.getPrototypeOf(result.person), null);
+
+  for (const record of output) checkRecords(record);
+  checkRecords(value);
+  assert.deepEqual(analyze(source).diagnostics, []);
 });
 
 test("Ur analysis reports call types, lexical definitions, and partial facts", () => {
@@ -268,4 +299,166 @@ test("Ur disjointness is symmetric but not transitive and never leaks between fu
   `);
   assert.equal(noLeak.success, false);
   if (!noLeak.success) assert.match(noLeak.error.message, /Cannot prove disjoint/);
+});
+
+test("Ur statement functions execute in order exactly once, even when results are discarded", () => {
+  const { output, value } = execute(`
+    fn log<A>(value: A) { print(value); }
+    fn echo(value: number) -> number = let ignored = print(value) in value;
+    fn add(left: number, right: number) -> number = left + right;
+    fn main() {
+      let first = echo(1);
+      echo(2);
+      let unused = echo(3);
+      print(add(echo(4), echo(5)));
+      log(first);
+      99;
+    }
+  `);
+  assert.deepEqual(output, [1, 2, 3, 4, 5, 9, 1]);
+  assert.equal(Object.getPrototypeOf(value), null);
+  assert.deepEqual(Object.keys(value as object), []);
+});
+
+test("Ur statement locals are lexical, may shadow outer names, and capture earlier values", () => {
+  const { output } = execute(`
+    let value = 1;
+    fn show(value: number) {
+      let value = value + 1;
+      let capture = fn() => value;
+      print(let value = 100 in capture());
+    }
+    fn main() {
+      let value = 10;
+      show(value);
+      print(value);
+    }
+  `);
+  assert.deepEqual(output, [11, 10]);
+});
+
+test("Ur print is a normal aliasable and shadowable builtin", () => {
+  assert.deepEqual(
+    execute(`
+    let output = print;
+    fn main() {
+      let print = fn(value: number) => value + 1;
+      output(print(41));
+    }
+  `).output,
+    [42],
+  );
+  assert.deepEqual(
+    execute(`
+    let output = print;
+    fn print(value: number) -> number = value + 1;
+    fn main() { output(print(41)); }
+  `).output,
+    [42],
+  );
+  assert.equal(evaluate("let print = 42; let main = print;"), 42);
+});
+
+test("Ur blocks are unit-returning and named entries are invoked, not function-valued lets", () => {
+  for (const source of ["fn main() {}", "fn main() -> {} {}", "fn main() { 42; }"]) {
+    const result = compiled(source);
+    assert.equal(result.entry, "function");
+    assert.equal(show(result.type), "{}");
+    assert.deepEqual(execute(source).output, []);
+  }
+  assert.equal(evaluate("fn main() -> number = 42;"), 42);
+  assert.equal(compiled("let main = fn() => 42;").entry, "value");
+  assert.equal(typeof evaluate("let main = fn() => 42;"), "function");
+});
+
+test("Ur printing follows expression evaluation and only executes the selected branch", () => {
+  assert.deepEqual(
+    execute(`
+    fn echo(value: number) -> number = let ignored = print(value) in value;
+    fn main() {
+      let ignored = { left: echo(1), right: echo(2) } ++ { last: echo(3) };
+      if true then print(echo(4)) else print(echo(99));
+      echo(5) + echo(6);
+      (let ignored = print(7) in fn(value: number) => value)(echo(8));
+    }
+  `).output,
+    [1, 2, 3, 4, 4, 5, 6, 7, 8],
+  );
+});
+
+for (const [source, message] of [
+  ["fn main(x: number) {}", /main must have no parameters/],
+  ["fn main<A>() {}", /main must have no parameters/],
+  ["fn main() -> number { 42; }", /Expected number/],
+  ["fn main() { let x = 1; let x = 2; }", /Duplicate local declaration/],
+  ["fn helper() { let hidden = 1; } fn main() { print(hidden); }", /Unknown value/],
+  ["fn main() { print(later); let later = 1; }", /Unknown value/],
+  ["fn main() { let bad: number = true; }", /Expected number/],
+  ["fn main() { print(); }", /Expected 1 arguments/],
+  ["fn main() { print(1, 2); }", /Expected 1 arguments/],
+  ["fn main() { let print = 1; print(2); }", /Expected a function/],
+  ["fn missing() = 42; let main = 0;", /require a return type/],
+  ["fn main() { print(1) }", /./],
+  ["fn bad<A>(value: A) { let n: number = value; } fn main() {}", /Expected number/],
+] as const) {
+  test(`Ur rejects invalid statement program: ${source}`, () => {
+    const result = compile(source);
+    assert.equal(result.success, false);
+    if (!result.success) assert.match(result.error.message, message);
+    assert.ok(analyze(source).diagnostics.length);
+  });
+}
+
+test("Ur compile and analyze never execute prints, including top-level initializers", () => {
+  const source = 'let ignored = print("initializing"); fn main() { print("running"); }';
+  const original = console.log;
+  const output: unknown[] = [];
+  console.log = (...values: unknown[]) => {
+    output.push(values);
+  };
+  try {
+    assert.ok(compile(source).success);
+    assert.deepEqual(analyze(source).diagnostics, []);
+    assert.deepEqual(output, []);
+  } finally {
+    console.log = original;
+  }
+  assert.deepEqual(execute(source).output, ["initializing", "running"]);
+});
+
+test("Ur analysis tracks block local references and shadowing", () => {
+  const source = "let value = 1; fn main() { let value = true; print(value); }";
+  const analysis = analyze(source);
+  assert.deepEqual(analysis.diagnostics, []);
+  const reference = source.lastIndexOf("value");
+  assert.equal(show(typeAt(analysis, reference)!.type), "boolean");
+  assert.equal(definitionAt(analysis, reference)!.span.start, source.indexOf("value = true"));
+});
+
+test("Ur CLI executes statement main without an extra result and preserves value entries", () => {
+  const directory = mkdtempSync(join(tmpdir(), "langkit-ur-blocks-"));
+  const file = join(directory, "main.ur");
+  const cli = fileURLToPath(new URL("../examples/ur/ur.ts", import.meta.url));
+  try {
+    for (const [source, expected] of [
+      ['fn main() { print("first"); print(42); }', "first\n42\n"],
+      ["fn main() {}", ""],
+      ["fn main() -> number = 42;", ""],
+      ["let main = 42;", "42\n"],
+      ['let ignored = print("init"); let main = 42;', "init\n42\n"],
+    ]) {
+      writeFileSync(file, source!);
+      const result = spawnSync(process.execPath, [cli, file], { encoding: "utf8", timeout: 10000 });
+      assert.equal(result.status, 0, result.stderr);
+      assert.equal(result.stdout, expected);
+      assert.equal(result.stderr, "");
+    }
+    writeFileSync(file, "fn main(value: number) {}");
+    const failed = spawnSync(process.execPath, [cli, file], { encoding: "utf8", timeout: 10000 });
+    assert.equal(failed.status, 1);
+    assert.equal(failed.stdout, "");
+    assert.match(failed.stderr, /main must have no parameters/);
+  } finally {
+    rmSync(directory, { recursive: true, force: true });
+  }
 });
