@@ -17,7 +17,7 @@ test("language builders compose explicitly selected feature methods", () => {
   const record = language.record("record", [{ name: "n", value: language.literal("number", 1) }]);
   const selected = language.field("number", record, "n");
   assert.equal(selected.operationId, recordSet.operations.find((operation) => operation.kind === "field")?.id);
-  assert.throws(() => create<string>().use({ methods: { program: () => undefined }, operations: [] }), /Duplicate language feature method: program/);
+  assert.throws(() => create<string>().use({ methods: { program: () => undefined }, descriptors: {}, operations: [] }), /Duplicate language feature method: program/);
 });
 
 test("custom operation traversal rejects a binding that escapes its scope", () => {
@@ -32,6 +32,7 @@ test("custom operation traversal rejects a binding that escapes its scope", () =
   const escaped = base.binding("escaped", "number");
   const language = base.use({
     methods: { scopeTest: (type: string, node: ScopeNode) => descriptor.make(type, node) },
+    descriptors: { scopeTest: descriptor },
     operations: [traversalOf(descriptor)],
   });
   const custom = language.scopeTest("number", {
@@ -56,6 +57,7 @@ test("custom operation structural validation runs through generic validation", (
   const base = create<string>();
   const language = base.use({
     methods: { metadataTest: (type: string, node: MetadataNode) => descriptor.make(type, node) },
+    descriptors: { metadataTest: descriptor },
     operations: [traversalOf(descriptor)],
   });
   const malformed = language.metadataTest("test", { kind: "metadata-test", entries: ["same", "same"] });
@@ -73,7 +75,7 @@ test("custom JavaScript dispatch rejects missing handlers and supports explicit 
   const value = descriptor.make("string", { kind: "custom-text", text: "custom" });
   const root: Body<string> = { declarations: [], result: value };
   const base = create<string>();
-  const language = base.use({ methods: {}, operations: [traversalOf(descriptor)] });
+  const language = base.use({ methods: {}, descriptors: { customText: descriptor }, operations: [traversalOf(descriptor)] });
   const program = language.program(root);
   assert.throws(() => emit(program), /Missing JavaScript handler for operation: custom-text/);
 
@@ -109,8 +111,8 @@ test("composed operations preserve left-to-right evaluation order", () => {
   };
   const log: string[] = [];
   const javascript = createJavaScriptEmitter(
-    coreJavaScript(language.coreOperationTraversals()),
-    printingJavaScript(printSet.operations),
+    coreJavaScript(language.coreDescriptors),
+    printingJavaScript(printSet.descriptors),
   );
   assert.equal(runInNewContext(javascript.emit(language.program(root)), { console: { log: (message: string) => log.push(message) } }), 3);
   assert.deepEqual(log, ["left", "right"]);
@@ -118,7 +120,7 @@ test("composed operations preserve left-to-right evaluation order", () => {
 
 test("recursive programs carry their core function identity through validation and emission", () => {
   const language = create<string>();
-  const backend = createJavaScriptEmitter(coreJavaScript(language.coreOperationTraversals()));
+  const backend = createJavaScriptEmitter(coreJavaScript(language.coreDescriptors));
   const num = (value: number) => language.literal("number", value);
   const empty = (result: Value<string>): Body<string> => ({ declarations: [], result });
   const code = elaboration(language);

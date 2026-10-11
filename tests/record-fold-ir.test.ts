@@ -16,10 +16,10 @@ const printSet = printing<string>();
 const folderSet = folders<string>();
 const code = create<string>().use(recordSet).use(printSet).use(folderSet);
 const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()),
-  recordsJavaScript(recordSet.operations),
-  printingJavaScript(printSet.operations),
-  foldersJavaScript(folderSet.operations),
+  coreJavaScript(code.coreDescriptors),
+  recordsJavaScript(recordSet.descriptors),
+  printingJavaScript(printSet.descriptors),
+  foldersJavaScript(folderSet.descriptors),
 );
 const body = (result: Value<string>) => ({ declarations: [], result });
 const effect = (label: string, result: Value<string>): Value<string> => code.block(result.type, {

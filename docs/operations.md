@@ -90,15 +90,15 @@ Select `folders<T>()` for `field-order` and `record-fold`. `field-order` has no 
 
 ## Python backend
 
-The Python backend is exported from `langkit/python` with feature handler sets from `langkit/python/*`. Compose only the handlers for the descriptors/features selected by a builder. A typical composition uses `corePython(program.operations)`, plus `recordsPython(program.operations)`, `variantsPython(program.operations)`, `printingPython(program.operations)`, or `foldersPython(program.operations)` as needed:
+The Python backend is exported from `langkit/python` with feature handler sets from `langkit/python/*`. Compose only the handlers for the descriptors/features selected by a builder. A typical composition uses `corePython(code.coreDescriptors)`, plus `recordsPython(recordFeature.descriptors)`, `variantsPython(variantFeature.descriptors)`, `printingPython(printingFeature.descriptors)`, or `foldersPython(folderFeature.descriptors)` as needed:
 
 ```ts
 const emitter = createPythonEmitter(
-  corePython(program.operations),
-  recordsPython(program.operations),
-  variantsPython(program.operations),
-  printingPython(program.operations),
-  foldersPython(program.operations),
+  corePython(code.coreDescriptors),
+  recordsPython(recordFeature.descriptors),
+  variantsPython(variantFeature.descriptors),
+  printingPython(printingFeature.descriptors),
+  foldersPython(folderFeature.descriptors),
 );
 const source = emitter.emit(program);
 ```
@@ -111,7 +111,7 @@ Only type-correct arithmetic and field access are promised. The backend does not
 
 ### Custom Python handlers
 
-A custom Python handler must be selected by the exact descriptor identity of its operation, not merely its kind. `definePythonHandler(descriptor, emit)` binds a handler directly to a descriptor. When using structural traversal records, `operationIdFor(program.operations, kind)` obtains the unique selected operation ID for a kind, and `definePythonOperationHandler(operationId, kind, emit)` creates the typed handler. The handler receives the IR node plus `PythonContext<T>` (`expr`, `block`, `name`, and nesting depth) and returns Python expression source. A custom handler must preserve child evaluation order and scope/effect semantics just like a built-in backend handler.
+A custom Python handler must be selected by the exact descriptor identity of its operation, not merely its kind. `definePythonHandler(descriptor, emit)` binds a handler directly to a descriptor; use `asDispatcherHandler` to include it in an emitter handler set. Alternatively, `definePythonBackend(defineDialect(feature.descriptors), handlers)` defines a complete typed handler table for a feature's named descriptors. The handler receives the IR node plus `PythonContext<T>` (`expr`, `block`, `name`, and nesting depth) and returns Python expression source. A custom handler must preserve child evaluation order and scope/effect semantics just like a built-in backend handler.
 
 `createPythonEmitter(...handlerSets)` composes sets; duplicate descriptor IDs are rejected, as are missing handlers when emission reaches a selected operation with no implementation. Built-in Python feature sets and custom handlers can be composed together. Identity collisions in `kind` do not dispatch a handler, and a handler created for a different descriptor instance cannot implement this program's operation.
 

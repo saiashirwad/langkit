@@ -12,8 +12,8 @@ import { printing } from "langkit/operations/printing";
 const printingSet = printing<string>();
 const code = create<string>().use(printingSet);
 const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()),
-  printingJavaScript(printingSet.operations),
+  coreJavaScript(code.coreDescriptors),
+  printingJavaScript(printingSet.descriptors),
 );
 const emptyBody = (result: Value<string>): Body<string> => ({ declarations: [], result });
 const evaluate = (body: Body<string>, output: unknown[] = []) => runInNewContext(

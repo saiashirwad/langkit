@@ -74,9 +74,9 @@ const code = elaboration(pureCode);
 const checkedBody = (computation: Check<Value<Type>>) => code.body(function* () { return yield* computation; });
 const checkedScope = (computation: Check<Value<Type>>) => code.scope(function* () { return yield* computation; });
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript<Type>(pureCode.coreOperationTraversals()),
-  recordsJavaScript<Type>(recordFeature.operations),
-  printingJavaScript<Type>(printingFeature.operations),
+  coreJavaScript<Type>(pureCode.coreDescriptors),
+  recordsJavaScript<Type>(recordFeature.descriptors),
+  printingJavaScript<Type>(printingFeature.descriptors),
 );
 const facts = createAnalysis<EditorType>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());

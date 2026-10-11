@@ -115,10 +115,10 @@ const declareValue = (name: string, initial: Value<Type>) =>
 const declareRecursiveValue = (binding: Binding<Type>, initial: Value<Type>) =>
   code.check(function* () { return yield* code.declareRecursive(binding, initial); });
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript<Type>(pureCode.coreOperationTraversals()),
-  recordsJavaScript<Type>(recordFeature.operations),
-  variantsJavaScript<Type>(variantFeature.operations),
-  printingJavaScript<Type>(printingFeature.operations),
+  coreJavaScript<Type>(pureCode.coreDescriptors),
+  recordsJavaScript<Type>(recordFeature.descriptors),
+  variantsJavaScript<Type>(variantFeature.descriptors),
+  printingJavaScript<Type>(printingFeature.descriptors),
 );
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());

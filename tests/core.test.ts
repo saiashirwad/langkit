@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bind, check, fail, get, lookup, pure, run, scoped, within } from "langkit";
-import { create, isReference, type Body, type OperationTraversal, type Program } from "langkit/ir";
+import { create, isReference, type Body, type Program } from "langkit/ir";
+import type { CoreDescriptors } from "langkit/operations/core";
 import { elaboration } from "langkit/ir/check";
 import { emit as emitJavaScript } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -10,10 +11,10 @@ import { runInNewContext } from "node:vm";
 const emit = (
   code: {
     program: (body: Body<string>) => Program<string>;
-    coreOperationTraversals: () => readonly OperationTraversal<string>[];
+    coreDescriptors: CoreDescriptors<string>;
   },
   body: Body<string>,
-) => emitJavaScript(code.program(body), coreJavaScript(code.coreOperationTraversals()));
+) => emitJavaScript(code.program(body), coreJavaScript(code.coreDescriptors));
 const unwrap = <T>(result: ReturnType<typeof run<T>>): T => {
   if (!result.success) throw new Error(result.errors[0].message);
   return result.value;
@@ -243,4 +244,3 @@ test("IR declaration scopes preserve left-to-right evaluation", () => {
   const js = emit(code, { declarations: [], result: code.binary("number", "+", bad, later) });
   assert.throws(() => runInNewContext(js));
 });
-

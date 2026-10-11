@@ -232,7 +232,7 @@ export const program = lex.complete(expression);
 
 // Toy selects only the core IR and JavaScript operations.
 const code = elaboration(create<Type>());
-const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreOperationTraversals()));
+const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreDescriptors));
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
 

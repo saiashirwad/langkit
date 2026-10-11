@@ -57,10 +57,10 @@ const folderFeature = folders<Type>();
 const pureCode = create<Type>().use(recordFeature).use(printingFeature).use(folderFeature);
 const code = elaboration(pureCode);
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript<Type>(pureCode.coreOperationTraversals()),
-  recordsJavaScript<Type>(recordFeature.operations),
-  printingJavaScript<Type>(printingFeature.operations),
-  foldersJavaScript<Type>(folderFeature.operations),
+  coreJavaScript<Type>(pureCode.coreDescriptors),
+  recordsJavaScript<Type>(recordFeature.descriptors),
+  printingJavaScript<Type>(printingFeature.descriptors),
+  foldersJavaScript<Type>(folderFeature.descriptors),
 );
 const facts = createAnalysis<Type>();
 

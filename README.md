@@ -36,12 +36,12 @@ type Type = "number" | "function";
 const recordFeature = records<Type>();
 const code = create<Type>().use(recordFeature);
 const jsEmitter = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()),
-  recordsJavaScript(recordFeature.operations),
+  coreJavaScript(code.coreDescriptors),
+  recordsJavaScript(recordFeature.descriptors),
 );
 const pythonEmitter = createPythonEmitter(
-  corePython(code.coreOperationTraversals()),
-  recordsPython(recordFeature.operations),
+  corePython(code.coreDescriptors),
+  recordsPython(recordFeature.descriptors),
 );
 const number = (n: number) => code.literal("number", n);
 

@@ -15,9 +15,9 @@ const variantSet = variants<string>();
 const printSet = printing<string>();
 const code = elaboration(create<string>().use(variantSet).use(printSet));
 const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()),
-  variantsJavaScript(variantSet.operations),
-  printingJavaScript(printSet.operations),
+  coreJavaScript(code.coreDescriptors),
+  variantsJavaScript(variantSet.descriptors),
+  printingJavaScript(printSet.descriptors),
 );
 
 const body = (result: Value<string>): Body<string> => ({ declarations: [], result });

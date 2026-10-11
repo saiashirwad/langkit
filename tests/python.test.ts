@@ -16,21 +16,21 @@ import { variants } from "langkit/operations/variants";
 import { printing } from "langkit/operations/printing";
 import { records } from "langkit/operations/records";
 import { defineOperation, traversalOf } from "langkit/operations/descriptor";
-import { createPythonDispatcher, definePythonOperationHandler, operationIdFor } from "langkit/python/operations";
+import { asDispatcherHandler, createPythonDispatcher, definePythonHandler } from "langkit/python/operations";
 import type { PythonContext } from "langkit/python";
-import type { OperationNode, OperationTraversal } from "langkit/ir";
+import type { OperationNode } from "langkit/ir";
 
 const variantSet = variants<string>();
 const printSet = printing<string>();
 const recordSet = records<string>();
 const code = create<string>().use(recordSet).use(variantSet).use(printSet);
 const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()), recordsJavaScript(recordSet.operations),
-  variantsJavaScript(variantSet.operations), printingJavaScript(printSet.operations),
+  coreJavaScript(code.coreDescriptors), recordsJavaScript(recordSet.descriptors),
+  variantsJavaScript(variantSet.descriptors), printingJavaScript(printSet.descriptors),
 );
 const python = createPythonEmitter(
-  corePython(code.coreOperationTraversals()), recordsPython(recordSet.operations),
-  variantsPython(variantSet.operations), printingPython(printSet.operations),
+  corePython(code.coreDescriptors), recordsPython(recordSet.descriptors),
+  variantsPython(variantSet.descriptors), printingPython(printSet.descriptors),
 );
 const body = (result: Value<string>): Body<string> => ({ declarations: [], result });
 const number = (n: number) => code.literal("number", n);
@@ -235,19 +235,21 @@ test("hostile escaped strings, record labels, and binding hints stay inert data"
 
 test("custom typed Python operation handlers honor descriptor identity and reject unknown or duplicate ids", () => {
   type CustomNode = OperationNode & { readonly kind: "custom"; readonly value: number };
-  const operation = defineOperation<string, CustomNode>("custom", {
+  const traversalSpec = {
     children: () => [], scopedBodies: () => [], references: () => [], map: (node) => node,
-  });
-  const traversal = traversalOf(operation) as OperationTraversal<string>;
-  const feature = { operations: [traversal], methods: { custom: (n: number) => operation.make("number", { kind: "custom", value: n }) } };
+  } satisfies Parameters<typeof defineOperation<string, CustomNode>>[1];
+  const operation = defineOperation<string, CustomNode>("custom", traversalSpec);
+  const traversal = traversalOf(operation);
+  const feature = { descriptors: { custom: operation }, operations: [traversal], methods: { custom: (n: number) => operation.make("number", { kind: "custom", value: n }) } };
   const customCode = create<string>().use(feature);
-  const handler = definePythonOperationHandler<CustomNode, PythonContext<string>>(operation.id, "custom", (node) => String(node.value * 2));
-  const emitter = createPythonEmitter(corePython(customCode.coreOperationTraversals()), [handler]);
+  const handler = asDispatcherHandler(definePythonHandler<string, CustomNode, PythonContext<string>>(operation, (node) => String(node.value * 2)));
+  const emitter = createPythonEmitter(corePython(customCode.coreDescriptors), [handler]);
   const program = customCode.program(customCode.body(function* () { return customCode.custom(21); }));
   assert.equal(pythonRun(emitter.emit(program)).result, 42);
-  const wrongId = definePythonOperationHandler<CustomNode, PythonContext<string>>(Symbol("different"), "custom", () => "0");
-  assert.throws(() => createPythonEmitter(corePython(customCode.coreOperationTraversals()), [wrongId]).emit(program), /Missing Python handler for operation: custom/);
+  const different = defineOperation<string, CustomNode>("custom", traversalSpec);
+  const wrongId = asDispatcherHandler(definePythonHandler<string, CustomNode, PythonContext<string>>(different, () => "0"));
+  assert.throws(() => createPythonEmitter(corePython(customCode.coreDescriptors), [wrongId]).emit(program), /Missing Python handler for operation: custom/);
   assert.throws(() => createPythonDispatcher(handler, handler), /Duplicate Python handler: custom/);
-  assert.throws(() => createPythonEmitter(corePython(customCode.coreOperationTraversals()), [handler, handler]), /Duplicate Python handler: custom/);
-  assert.equal(operationIdFor([traversal], "custom"), operation.id);
+  assert.throws(() => createPythonEmitter(corePython(customCode.coreDescriptors), [handler, handler]), /Duplicate Python handler: custom/);
+  assert.equal(feature.descriptors.custom.id, operation.id);
 });

@@ -88,10 +88,10 @@ const printingFeature = printing<Type>();
 const pureCode = create<Type>().use(recordFeature).use(variantFeature).use(printingFeature);
 const code = elaboration(pureCode);
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript(pureCode.coreOperationTraversals()),
-  recordsJavaScript(recordFeature.operations),
-  variantsJavaScript(variantFeature.operations),
-  printingJavaScript(printingFeature.operations),
+  coreJavaScript(pureCode.coreDescriptors),
+  recordsJavaScript(recordFeature.descriptors),
+  variantsJavaScript(variantFeature.descriptors),
+  printingJavaScript(printingFeature.descriptors),
 );
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());

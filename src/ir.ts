@@ -39,7 +39,6 @@ export type LanguageBuilder<T, Methods extends object, Descriptors extends Descr
   readonly coreDescriptors: CoreDescriptors<T>;
   dialect(): Dialect<Descriptors, T>;
   operationTraversals(): readonly OperationTraversal<T>[];
-  coreOperationTraversals(): readonly OperationTraversal<T>[];
   coreReferenceId(): symbol;
   coreFunctionId(): symbol;
   body(factory: BodySource<T>): Body<T>;
@@ -104,7 +103,7 @@ export const create = <T>() => {
   const methodNames = new Set(Object.keys(core));
   const use = <Methods extends object, Added extends DescriptorRecord>(feature: OperationFeature<T, Methods, Added>) => {
     for (const method of Object.keys(feature.methods)) {
-      if (methodNames.has(method) || ["use", "program", "validate", "operationTraversals", "coreOperationTraversals", "coreReferenceId", "coreFunctionId", "descriptors", "coreDescriptors", "dialect"].includes(method))
+      if (methodNames.has(method) || ["use", "program", "validate", "operationTraversals", "coreReferenceId", "coreFunctionId", "descriptors", "coreDescriptors", "dialect"].includes(method))
         throw new Error(`Duplicate language feature method: ${method}`);
     }
     const selected = defineDialect(feature.descriptors);
@@ -126,7 +125,6 @@ export const create = <T>() => {
     coreDescriptors: coreFeature.descriptors,
     dialect: () => defineDialect(descriptors),
     operationTraversals: (): readonly OperationTraversal<T>[] => [...operations],
-    coreOperationTraversals: (): readonly OperationTraversal<T>[] => coreFeature.operations,
     coreReferenceId: (): symbol => coreFeature.refId,
     coreFunctionId: (): symbol => coreFeature.functionId,
     validate: (root: Body<T>): void => validateBody(root, operations, coreFeature.functionId),

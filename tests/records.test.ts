@@ -13,9 +13,9 @@ const recordSet = records<string>();
 const printSet = printing<string>();
 const code = create<string>().use(recordSet).use(printSet);
 const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()),
-  recordsJavaScript(recordSet.operations),
-  printingJavaScript(printSet.operations),
+  coreJavaScript(code.coreDescriptors),
+  recordsJavaScript(recordSet.descriptors),
+  printingJavaScript(printSet.descriptors),
 );
 const body = (result: Value<string>) => ({ declarations: [], result });
 const emit = (result: Value<string>) => javascript.emit(code.program(body(result)));

@@ -21,16 +21,16 @@ const printingSet = printing<string>();
 const folderSet = folders<string>();
 const code = create<string>().use(recordSet).use(printingSet).use(folderSet);
 const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreOperationTraversals()),
-  recordsJavaScript(recordSet.operations),
-  printingJavaScript(printingSet.operations),
-  foldersJavaScript(folderSet.operations),
+  coreJavaScript(code.coreDescriptors),
+  recordsJavaScript(recordSet.descriptors),
+  printingJavaScript(printingSet.descriptors),
+  foldersJavaScript(folderSet.descriptors),
 );
 const python = createPythonEmitter(
-  corePython(code.coreOperationTraversals()),
-  recordsPython(recordSet.operations),
-  printingPython(printingSet.operations),
-  foldersPython(folderSet.operations),
+  corePython(code.coreDescriptors),
+  recordsPython(recordSet.descriptors),
+  printingPython(printingSet.descriptors),
+  foldersPython(folderSet.descriptors),
 );
 
 const number = (value: number) => code.literal("number", value);

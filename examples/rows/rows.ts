@@ -465,9 +465,9 @@ const recordFeature = records<Type>();
 const printingFeature = printing<Type>();
 const code = elaboration(create<Type>().use(recordFeature).use(printingFeature));
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript(code.coreOperationTraversals()),
-  recordsJavaScript(recordFeature.operations),
-  printingJavaScript(printingFeature.operations),
+  coreJavaScript(code.coreDescriptors),
+  recordsJavaScript(recordFeature.descriptors),
+  printingJavaScript(printingFeature.descriptors),
 );
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
