@@ -1,18 +1,19 @@
 import { Check, check, get, scoped, state, within, type Scoped, type State } from "../check.ts";
 import type { Body, Declaration, LanguageBuilder, Value } from "../ir.ts";
+import type { DescriptorRecord } from "../operations/dialect.ts";
 
 type MixedGenerator<T, A> = () => Generator<Check<unknown> | Declaration<T>, A, unknown>;
-type PureMethods<T, Methods extends object> = Omit<
-  LanguageBuilder<T, Methods>,
+type PureMethods<T, Methods extends object, Descriptors extends DescriptorRecord> = Omit<
+  LanguageBuilder<T, Methods, Descriptors>,
   "use" | "body" | "scope" | "declare" | "declareRecursive"
 >;
 
-export type Elaboration<T, Methods extends object> = PureMethods<T, Methods> & {
+export type Elaboration<T, Methods extends object, Descriptors extends DescriptorRecord> = PureMethods<T, Methods, Descriptors> & {
   readonly check: <A>(factory: MixedGenerator<T, A>) => Check<A>;
   readonly body: <A extends Value<T>>(factory: MixedGenerator<T, A>) => Check<Body<T>>;
   readonly scope: <A extends Value<T>>(factory: MixedGenerator<T, A>) => Check<Value<T>>;
-  readonly declare: LanguageBuilder<T, Methods>["declare"];
-  readonly declareRecursive: LanguageBuilder<T, Methods>["declareRecursive"];
+  readonly declare: LanguageBuilder<T, Methods, Descriptors>["declare"];
+  readonly declareRecursive: LanguageBuilder<T, Methods, Descriptors>["declareRecursive"];
 };
 
 const runMixed = <T, A>(factory: MixedGenerator<T, A>, active: Scoped<State<Declaration<T>[]> | undefined>): Check<A> =>
@@ -42,7 +43,7 @@ const runMixed = <T, A>(factory: MixedGenerator<T, A>, active: Scoped<State<Decl
     }
   });
 
-export const elaboration = <T, Methods extends object>(builder: LanguageBuilder<T, Methods>): Elaboration<T, Methods> => {
+export const elaboration = <T, Methods extends object, Descriptors extends DescriptorRecord>(builder: LanguageBuilder<T, Methods, Descriptors>): Elaboration<T, Methods, Descriptors> => {
   const active = scoped<State<Declaration<T>[]> | undefined>(undefined);
   const checkFactory = <A>(factory: MixedGenerator<T, A>): Check<A> => runMixed(factory, active);
   const body = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Body<T>> => check(function* () {
@@ -59,7 +60,7 @@ export const elaboration = <T, Methods extends object>(builder: LanguageBuilder<
   });
   const scope = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Value<T>> =>
     body(factory).map((built) => builder.block(built.result.type, built));
-  const api = { ...builder } as PureMethods<T, Methods> & Record<string, unknown>;
+  const api = { ...builder } as PureMethods<T, Methods, Descriptors> & Record<string, unknown>;
   delete api.use;
   delete api.body;
   delete api.scope;
@@ -72,5 +73,5 @@ export const elaboration = <T, Methods extends object>(builder: LanguageBuilder<
     declare: builder.declare,
     declareRecursive: builder.declareRecursive,
   });
-  return api as Elaboration<T, Methods>;
+  return api as Elaboration<T, Methods, Descriptors>;
 };

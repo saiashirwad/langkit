@@ -31,22 +31,25 @@ export const defineOperation = <T, Node extends OperationNode>(
   },
 ): OperationDescriptor<T, Node> => {
   const id = Symbol(kind);
-  return {
+  return Object.freeze<OperationDescriptor<T, Node>>({
     id,
     kind,
     ...traversal,
     make: (type, node) => ({ type, node, operationId: id }),
     is: (value): value is OperationValue<T, Node> => value.operationId === id,
-  };
+  });
 };
 
 /** Narrow internal erasure at heterogeneous traversal boundaries only. */
-export const traversalOf = <T, Node extends OperationNode>(operation: OperationDescriptor<T, Node>): OperationTraversal<T> => ({
-  id: operation.id,
-  kind: operation.kind,
-  children: (node) => operation.children(node as Node),
-  scopedBodies: (node) => operation.scopedBodies(node as Node),
-  references: (node) => operation.references(node as Node),
-  map: (node, value, body, binding) => operation.map(node as Node, value, body, binding),
-  ...(operation.validate ? { validate: (node) => operation.validate!(node as Node) } : {}),
-});
+export const traversalOf = <T, Node extends OperationNode>(operation: OperationDescriptor<T, Node>): OperationTraversal<T> => {
+  const { id, kind, children, scopedBodies, references, map, validate } = operation;
+  return Object.freeze<OperationTraversal<T>>({
+    id,
+    kind,
+    children: node => children.call(operation, node as Node),
+    scopedBodies: node => scopedBodies.call(operation, node as Node),
+    references: node => references.call(operation, node as Node),
+    map: (node, value, body, binding) => map.call(operation, node as Node, value, body, binding),
+    ...(validate ? { validate: (node: OperationNode) => validate.call(operation, node as Node) } : {}),
+  });
+};

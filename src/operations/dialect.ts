@@ -29,12 +29,13 @@ export type BackendHandler<Context, Output> = {
 
 export const defineDialect = <const D extends DescriptorRecord>(descriptors: D): Dialect<D> => {
   const ids = new Set<symbol>();
-  const operations = Object.values(descriptors).map((descriptor) => {
+  const operations = Object.values(descriptors).map((entry) => {
+    const descriptor = Object.freeze(entry);
     if (ids.has(descriptor.id)) throw new Error(`Duplicate operation descriptor: ${descriptor.kind}`);
     ids.add(descriptor.id);
     return traversalOf(descriptor as unknown as OperationDescriptor<DialectType<D>, OperationNode>);
   });
-  return { descriptors: Object.freeze({ ...descriptors }), operations: Object.freeze(operations) };
+  return Object.freeze({ descriptors: Object.freeze({ ...descriptors }), operations: Object.freeze(operations) });
 };
 
 export const composeDialects = <A extends DescriptorRecord, B extends DescriptorRecord>(left: Dialect<A>, right: Dialect<B>): Dialect<A & B> => {

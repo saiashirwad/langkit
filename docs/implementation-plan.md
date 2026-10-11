@@ -35,10 +35,12 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [ ] Add partial/finalized elaboration and structured rule/constraint evidence.
 - [x] Separate module graph management from import parsing through a language-supplied parser.
 - [ ] Add the shared-syntax language demonstration and the supported TS Macros adapter.
+- [x] Verify optional syntax declarations and the constructor adapter against the actual TS Macros reference.
+- [ ] Make staged construction, lowering, and execution self-contained. The user clarified that TS Macros is not an npm dependency.
 - [ ] Add compile-time, editor, mutation-control, and compiler-cost checks.
 - [ ] Scrap and redesign a unit if its implementation requires repeated workarounds.
 - [ ] Inspect the scoped diff with `no-comments`; retain only comments for external constraints and compiler test directives.
-- [ ] Review the artifacts and decision trail with an independent read-only reviewer.
+- [ ] Review the complete artifacts and decision trail with an independent read-only reviewer. Foundation review reproduced two descriptor defects; both now have passing regressions.
 - [ ] Run the full completion gates on this branch and record exact outcomes.
 - [ ] Prepare ordered local commits and hand back the branch.
 - [ ] Opening a PR: skipped because the user authorized local implementation, not a push or PR.
