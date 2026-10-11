@@ -23,7 +23,7 @@ export const state = <T>(init: () => T, checkpoint: (value: T) => () => void): S
 export const scoped = <T>(initial: T): Scoped<T> => ({ kind: "scoped", initial, [invariant]: (value) => value });
 
 type Entry = { readonly value: unknown; readonly initialRestore: () => void; readonly checkpoint: () => () => void };
-type Storage = { readonly states: Map<State<unknown>, Entry>; readonly errors: Diagnostic[] };
+type Storage = { readonly states: Map<State<unknown>, Entry>; readonly errors: Diagnostic[]; readonly mapped: WeakMap<Diagnostic, Set<DiagnosticMapper>> };
 type DiagnosticMapper = { readonly map: (error: Diagnostic) => Diagnostic; readonly outer: DiagnosticMapper | undefined };
 type RuntimeInit = {
   readonly storage: Storage;
@@ -43,7 +43,7 @@ class Runtime {
   readonly diagnosticMapper: DiagnosticMapper | undefined;
 
   constructor(init: Partial<RuntimeInit> = {}) {
-    this.storage = init.storage ?? { states: new Map(), errors: [] };
+    this.storage = init.storage ?? { states: new Map(), errors: [], mapped: new WeakMap() };
     this.values = init.values ?? new Map();
     this.labels = init.labels ?? [];
     this.span = init.span;
@@ -83,6 +83,26 @@ class Runtime {
   diagnostic(message: string): Diagnostic {
     const local: Diagnostic = this.span === undefined ? { message, context: this.labels } : { message, context: this.labels, span: this.span };
     return this.document === undefined ? local : withDocument(local, this.document);
+  }
+
+  mapDiagnostics(error: Diagnostic): Diagnostic {
+    if (this.diagnosticMapper === undefined) return error;
+    const applied = this.storage.mapped.get(error) ?? new Set<DiagnosticMapper>();
+    this.storage.mapped.set(error, applied);
+    for (let mapper: DiagnosticMapper | undefined = this.diagnosticMapper; mapper !== undefined; mapper = mapper.outer) {
+      if (applied.has(mapper)) continue;
+      error = mapper.map(error);
+      applied.add(mapper);
+      this.storage.mapped.set(error, applied);
+    }
+    return error;
+  }
+
+  mapError(error: Diagnostic, map: (error: Diagnostic) => Diagnostic): Diagnostic {
+    const mapped = map(error);
+    const applied = this.storage.mapped.get(error);
+    if (applied !== undefined) this.storage.mapped.set(mapped, applied);
+    return mapped;
   }
 }
 
@@ -135,11 +155,7 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
           case "primitive": {
             const reply = instruction.step(runtime);
             if (reply.ok) completion = reply;
-            else {
-              let error = reply.error;
-              for (let mapper = runtime.diagnosticMapper; mapper !== undefined; mapper = mapper.outer) error = mapper.map(error);
-              completion = { ok: false, error };
-            }
+            else completion = { ok: false, error: runtime.mapDiagnostics(reply.error) };
             break;
           }
           case "mapError": frames.push({ kind: "mapError", map: instruction.map }); current = instruction.child; break;
@@ -169,7 +185,7 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
         const frame = frames.pop()!;
         switch (frame.kind) {
           case "bind": if (!("kind" in completion) && completion.ok) current = frame.next(completion.value); break;
-          case "mapError": if (!("kind" in completion) && !completion.ok) completion = { ok: false, error: frame.map(completion.error) }; break;
+          case "mapError": if (!("kind" in completion) && !completion.ok) completion = { ok: false, error: runtime.mapError(completion.error, frame.map) }; break;
           case "generator":
             if (!("kind" in completion) && completion.ok) advance(frame.iterator, completion.value);
             else if (!frame.iterator.return(undefined).done) throw new TypeError("Checks cannot be yielded during generator cleanup");

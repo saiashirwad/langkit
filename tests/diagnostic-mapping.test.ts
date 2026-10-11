@@ -30,6 +30,12 @@ test("nested scoped mappers preserve inner to outer order through reentry", () =
   assert.equal(runDetailed(reenter(child).withDiagnostics(suffix("O"))).diagnostics[0]?.message, "badIO");
 });
 
+test("scope identity is distinct even when nested scopes share one callback", () => {
+  const map = suffix("!");
+  const child = composite().withDiagnostics(map).withDiagnostics(map);
+  assert.equal(runDetailed(reenter(child)).diagnostics[0]?.message, "bad!!");
+});
+
 test("mapError replacements retain scoped mapper provenance", () => {
   const child = composite().mapError((error) => ({ message: `${error.message}?`, context: ["replacement"] }));
   assert.deepEqual(runDetailed(reenter(child).withDiagnostics(suffix("!"))), {
@@ -108,9 +114,11 @@ for (const mapping of ["scoped", "mapError"] as const) {
         assert.throws(() => trial.step(runtime), (error) => error === exception);
         assert.equal(external.value, 0);
         assert.equal(closed, 1);
-        assert.equal(diagnostics().step(runtime).ok, true);
         const reply = diagnostics().step(runtime);
+        assert.equal(reply.ok, true);
         if (reply.ok) assert.equal(reply.value.length, transaction === "attempt" ? 0 : 1);
+        const after = composite().step(runtime);
+        assert.deepEqual(after, { ok: false, error: { message: "bad", context: [] } });
         return { ok: true, value: undefined };
       });
       assert.equal(runDetailed(observer).status, "completed");
@@ -124,6 +132,7 @@ for (const mapping of ["scoped", "mapError"] as const) {
 test("20k mapping scopes share linear provenance and remain stack safe", () => {
   let child: Check<never> = composite();
   for (let i = 0; i < 20_000; i++) child = child.withDiagnostics(suffix("!"));
+  for (let i = 0; i < 20_000; i++) child = child.mapError((error) => ({ ...error }));
   const result = runDetailed(reenter(child).withDiagnostics(suffix("?")));
   assert.equal(result.diagnostics[0]?.message, `bad${"!".repeat(20_000)}?`);
 });
