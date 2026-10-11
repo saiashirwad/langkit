@@ -1,0 +1,27 @@
+import { commit, createLexemes, many, parser, regex } from "langkit/parse";
+import type { ImportParser } from "../modules.ts";
+
+const lex = createLexemes({
+  trivia: regex(/(?:\s|\/\/[^\r\n]*|--[^\r\n]*)*/),
+  identifier: regex(/[a-zA-Z_]\w*/),
+  keywords: ["import"],
+});
+const imports = parser(function*() {
+  yield* regex(/(?:\s|\/\/[^\r\n]*|--[^\r\n]*)*/);
+  return yield* many(
+    parser(function*() {
+      yield* lex.keyword("import");
+      yield* commit();
+      const path = yield* lex.token(regex(/"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/));
+      yield* lex.symbol(";");
+      return JSON.parse(path) as string;
+    }).withSpan((path, span) => ({ path, span })),
+  );
+});
+
+export const parseImports: ImportParser = (source) => {
+  const result = imports.parsePrefix(source);
+  return result.success
+    ? { success: true, value: result.value.value }
+    : { success: false, errors: [{ message: result.error.message, span: result.error.diagnostic.span, context: [] }] };
+};

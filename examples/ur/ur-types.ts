@@ -1,4 +1,4 @@
-import { check, fail, type Check } from "langkit";
+import { type Check, check, fail } from "langkit";
 import type { Generic, KindExpr, TypeExpr } from "./ur-syntax.ts";
 
 export type Kind = KindExpr;
@@ -8,13 +8,13 @@ export const rowKind = (element: Kind = typeKind): Kind => ({ kind: "row", eleme
 export const arrowKind = (param: Kind, result: Kind): Kind => ({ kind: "arrow", param, result });
 
 export const sameKind = (a: Kind, b: Kind): boolean =>
-  a.kind === b.kind &&
-  (a.kind === "type" ||
-    (a.kind === "row" && b.kind === "row" && sameKind(a.element, b.element)) ||
-    (a.kind === "arrow" &&
-      b.kind === "arrow" &&
-      sameKind(a.param, b.param) &&
-      sameKind(a.result, b.result)));
+  a.kind === b.kind
+  && (a.kind === "type"
+    || (a.kind === "row" && b.kind === "row" && sameKind(a.element, b.element))
+    || (a.kind === "arrow"
+      && b.kind === "arrow"
+      && sameKind(a.param, b.param)
+      && sameKind(a.result, b.result)));
 
 export const showKind = (kind: Kind): string => {
   if (kind.kind === "type") return "Type";
@@ -22,11 +22,11 @@ export const showKind = (kind: Kind): string => {
   return `(${showKind(kind.param)} -> ${showKind(kind.result)})`;
 };
 
-export type Parameter = { readonly id: symbol; readonly name: string; readonly typeKind: Kind };
+export type Parameter = { readonly id: symbol; readonly name: string; readonly typeKind: Kind; };
 
 // A neutral row retains its original field-name set under mapping. The mapper
 // affects payloads only; it must never change disjointness or manufacture labels.
-export type RowPart = { readonly base: Type; readonly mapper: Type | undefined };
+export type RowPart = { readonly base: Type; readonly mapper: Type | undefined; };
 
 export type Row = {
   readonly element: Kind;
@@ -34,28 +34,28 @@ export type Row = {
   readonly variables: readonly RowPart[];
 };
 
-export type Constraint = { readonly left: Row; readonly right: Row };
+export type Constraint = { readonly left: Row; readonly right: Row; };
 
 // Constructors and runtime types share a representation. Only constructors of
 // kind Type may appear on runtime values. Aliases reduce to constructor lambdas,
 // not nominal heads, so their arguments are never assumed injective.
 export type Type =
-  | { readonly kind: "number" | "boolean" | "string" }
-  | { readonly kind: "variable"; readonly parameter: Parameter }
-  | { readonly kind: "record"; readonly row: Row }
-  | { readonly kind: "folder"; readonly row: Row }
-  | { readonly kind: "row-value"; readonly row: Row }
-  | { readonly kind: "constructor-lambda"; readonly parameter: Parameter; readonly body: Type }
-  | { readonly kind: "application"; readonly fn: Type; readonly arg: Type; readonly typeKind: Kind }
+  | { readonly kind: "number" | "boolean" | "string"; }
+  | { readonly kind: "variable"; readonly parameter: Parameter; }
+  | { readonly kind: "record"; readonly row: Row; }
+  | { readonly kind: "folder"; readonly row: Row; }
+  | { readonly kind: "row-value"; readonly row: Row; }
+  | { readonly kind: "constructor-lambda"; readonly parameter: Parameter; readonly body: Type; }
+  | { readonly kind: "application"; readonly fn: Type; readonly arg: Type; readonly typeKind: Kind; }
   | {
-      readonly kind: "function";
-      readonly params: readonly Type[];
-      readonly result: Type;
-      readonly generics: readonly Parameter[];
-      readonly constraints: readonly Constraint[];
-    };
+    readonly kind: "function";
+    readonly params: readonly Type[];
+    readonly result: Type;
+    readonly generics: readonly Parameter[];
+    readonly constraints: readonly Constraint[];
+  };
 
-export type FunctionType = Extract<Type, { kind: "function" }>;
+export type FunctionType = Extract<Type, { kind: "function"; }>;
 export type TypeScope = ReadonlyMap<string, Type>;
 
 export const number: Type = { kind: "number" };
@@ -96,9 +96,10 @@ export const kindOf = (type: Type): Kind => {
 };
 
 const expectKind = (actual: Kind, expected: Kind): Check<void> =>
-  check(function* () {
-    if (!sameKind(actual, expected))
+  check(function*() {
+    if (!sameKind(actual, expected)) {
       yield* fail(`Expected ${showKind(expected)}, found ${showKind(actual)}`);
+    }
   });
 
 const showRow = (r: Row): string =>
@@ -106,9 +107,7 @@ const showRow = (r: Row): string =>
     ...(r.fields.size
       ? [`{ ${[...r.fields].map(([name, type]) => `${name}: ${show(type)}`).join(", ")} }`]
       : []),
-    ...r.variables.map(({ base, mapper }) =>
-      mapper ? `Map<${show(mapper)}, ${show(base)}>` : show(base),
-    ),
+    ...r.variables.map(({ base, mapper }) => mapper ? `Map<${show(mapper)}, ${show(base)}>` : show(base)),
   ].join(" ++ ") || "{}";
 
 export const show = (type: Type): string => {
@@ -126,7 +125,19 @@ export const show = (type: Type): string => {
     case "application":
       return `${show(type.fn)}<${show(type.arg)}>`;
     case "function":
-      return `${type.generics.length ? `<${type.generics.map((p) => `${p.name}${p.typeKind.kind === "type" ? "" : `: ${showKind(p.typeKind)}`}`).join(", ")}>` : ""}(${type.params.map(show).join(", ")}) -> ${show(type.result)}${type.constraints.length ? ` where ${type.constraints.map((c) => `disjoint(${showRow(c.left)}, ${showRow(c.right)})`).join(", ")}` : ""}`;
+      return `${
+        type.generics.length
+          ? `<${
+            type.generics.map((p) => `${p.name}${p.typeKind.kind === "type" ? "" : `: ${showKind(p.typeKind)}`}`).join(
+              ", ",
+            )
+          }>`
+          : ""
+      }(${type.params.map(show).join(", ")}) -> ${show(type.result)}${
+        type.constraints.length
+          ? ` where ${type.constraints.map((c) => `disjoint(${showRow(c.left)}, ${showRow(c.right)})`).join(", ")}`
+          : ""
+      }`;
     default:
       return type.kind;
   }
@@ -135,19 +146,19 @@ export const show = (type: Type): string => {
 type Renaming = ReadonlyMap<symbol, symbol>;
 
 const equalPart = (a: RowPart, b: RowPart, names: Renaming): boolean =>
-  equal(a.base, b.base, names) &&
-  (a.mapper === undefined
+  equal(a.base, b.base, names)
+  && (a.mapper === undefined
     ? b.mapper === undefined
     : b.mapper !== undefined && equal(a.mapper, b.mapper, names));
 
 const equalRow = (a: Row, b: Row, names: Renaming): boolean =>
-  sameKind(a.element, b.element) &&
-  a.fields.size === b.fields.size &&
-  a.variables.length === b.variables.length &&
-  [...a.fields].every(
+  sameKind(a.element, b.element)
+  && a.fields.size === b.fields.size
+  && a.variables.length === b.variables.length
+  && [...a.fields].every(
     ([name, type]) => b.fields.has(name) && equal(type, b.fields.get(name)!, names),
-  ) &&
-  a.variables.every((part) => b.variables.some((other) => equalPart(part, other, names)));
+  )
+  && a.variables.every((part) => b.variables.some((other) => equalPart(part, other, names)));
 
 const equal = (a: Type, b: Type, names: Renaming): boolean => {
   if (a.kind !== b.kind) return false;
@@ -160,25 +171,26 @@ const equal = (a: Type, b: Type, names: Renaming): boolean => {
     case "folder":
     case "row-value":
       return (
-        (b.kind === "record" || b.kind === "folder" || b.kind === "row-value") &&
-        equalRow(a.row, b.row, names)
+        (b.kind === "record" || b.kind === "folder" || b.kind === "row-value")
+        && equalRow(a.row, b.row, names)
       );
     case "application":
       return b.kind === "application" && equal(a.fn, b.fn, names) && equal(a.arg, b.arg, names);
     case "constructor-lambda":
       return (
-        b.kind === "constructor-lambda" &&
-        sameKind(a.parameter.typeKind, b.parameter.typeKind) &&
-        equal(a.body, b.body, new Map(names).set(a.parameter.id, b.parameter.id))
+        b.kind === "constructor-lambda"
+        && sameKind(a.parameter.typeKind, b.parameter.typeKind)
+        && equal(a.body, b.body, new Map(names).set(a.parameter.id, b.parameter.id))
       );
     case "function": {
       if (
-        b.kind !== "function" ||
-        a.generics.length !== b.generics.length ||
-        a.params.length !== b.params.length ||
-        a.constraints.length !== b.constraints.length
-      )
+        b.kind !== "function"
+        || a.generics.length !== b.generics.length
+        || a.params.length !== b.params.length
+        || a.constraints.length !== b.constraints.length
+      ) {
         return false;
+      }
       const inner = new Map(names);
       for (let i = 0; i < a.generics.length; i++) {
         const left = a.generics[i]!,
@@ -187,12 +199,12 @@ const equal = (a: Type, b: Type, names: Renaming): boolean => {
         inner.set(left.id, right.id);
       }
       return (
-        a.params.every((p, i) => equal(p, b.params[i]!, inner)) &&
-        equal(a.result, b.result, inner) &&
-        a.constraints.every(
+        a.params.every((p, i) => equal(p, b.params[i]!, inner))
+        && equal(a.result, b.result, inner)
+        && a.constraints.every(
           (c, i) =>
-            equalRow(c.left, b.constraints[i]!.left, inner) &&
-            equalRow(c.right, b.constraints[i]!.right, inner),
+            equalRow(c.left, b.constraints[i]!.left, inner)
+            && equalRow(c.right, b.constraints[i]!.right, inner),
         )
       );
     }
@@ -205,7 +217,7 @@ export const same = (a: Type, b: Type): boolean => equal(a, b, new Map());
 export const sameRow = (a: Row, b: Row): boolean => equalRow(a, b, new Map());
 
 export const expect = (actual: Type, expected: Type): Check<void> =>
-  check(function* () {
+  check(function*() {
     if (!same(actual, expected)) yield* fail(`Expected ${show(expected)}, found ${show(actual)}`);
   });
 
@@ -219,37 +231,40 @@ const proves = (a: Component, b: Component, constraints: readonly Constraint[]):
   const contains = (r: Row, x: Component) => components(r).some((y) => sameComponent(x, y));
   return constraints.some(
     (c) =>
-      (contains(c.left, a) && contains(c.right, b)) ||
-      (contains(c.left, b) && contains(c.right, a)),
+      (contains(c.left, a) && contains(c.right, b))
+      || (contains(c.left, b) && contains(c.right, a)),
   );
 };
 
 export const disjoint = (a: Row, b: Row, constraints: readonly Constraint[]): Check<void> =>
-  check(function* () {
-    for (const x of components(a))
+  check(function*() {
+    for (const x of components(a)) {
       for (const y of components(b)) {
-        if (sameComponent(x, y))
+        if (sameComponent(x, y)) {
           return yield* fail(
             typeof x === "string"
               ? `Overlapping field: ${x}`
               : "Cannot concatenate a row with itself",
           );
-        if (!proves(x, y, constraints))
+        }
+        if (!proves(x, y, constraints)) {
           return yield* fail(
             `Cannot prove disjoint(${showRow(a)}, ${showRow(b)}); add a disjoint constraint`,
           );
+        }
       }
+    }
   });
 
 export const concat = (a: Row, b: Row, constraints: readonly Constraint[]): Check<Row> =>
-  check(function* () {
+  check(function*() {
     yield* expectKind(a.element, b.element);
     yield* disjoint(a, b, constraints);
     return row(new Map([...a.fields, ...b.fields]), [...a.variables, ...b.variables], a.element);
   });
 
 const asRow = (type: Type): Check<Row> =>
-  check(function* () {
+  check(function*() {
     if (type.kind === "row-value") return type.row;
     const kind = kindOf(type);
     if (kind.kind !== "row") return yield* fail(`Expected Row<Type>, found ${showKind(kind)}`);
@@ -270,10 +285,10 @@ const occurs = (id: symbol, type: Type): boolean => {
       return occursRow(id, type.row);
     case "function":
       return (
-        !type.generics.some((p) => p.id === id) &&
-        (type.params.some((p) => occurs(id, p)) ||
-          occurs(id, type.result) ||
-          type.constraints.some((c) => occursRow(id, c.left) || occursRow(id, c.right)))
+        !type.generics.some((p) => p.id === id)
+        && (type.params.some((p) => occurs(id, p))
+          || occurs(id, type.result)
+          || type.constraints.some((c) => occursRow(id, c.left) || occursRow(id, c.right)))
       );
     default:
       return false;
@@ -281,26 +296,27 @@ const occurs = (id: symbol, type: Type): boolean => {
 };
 
 const occursRow = (id: symbol, r: Row): boolean =>
-  [...r.fields.values()].some((t) => occurs(id, t)) ||
-  r.variables.some((v) => occurs(id, v.base) || (v.mapper !== undefined && occurs(id, v.mapper)));
+  [...r.fields.values()].some((t) => occurs(id, t))
+  || r.variables.some((v) => occurs(id, v.base) || (v.mapper !== undefined && occurs(id, v.mapper)));
 
 // Eta contraction gives every mapper a stable identity, including aliases such
 // as type Identity<A> = A and type Apply<F, A> = F<A>.
 const abstraction = (parameter: Parameter, body: Type): Type => {
   if (
-    body.kind === "application" &&
-    body.arg.kind === "variable" &&
-    body.arg.parameter.id === parameter.id &&
-    !occurs(parameter.id, body.fn)
-  )
+    body.kind === "application"
+    && body.arg.kind === "variable"
+    && body.arg.parameter.id === parameter.id
+    && !occurs(parameter.id, body.fn)
+  ) {
     return body.fn;
+  }
   return { kind: "constructor-lambda", parameter, body };
 };
 
 const identityMapper = (mapper: Type): boolean =>
-  mapper.kind === "constructor-lambda" &&
-  mapper.body.kind === "variable" &&
-  mapper.body.parameter.id === mapper.parameter.id;
+  mapper.kind === "constructor-lambda"
+  && mapper.body.kind === "variable"
+  && mapper.body.parameter.id === mapper.parameter.id;
 
 type Substitution = ReadonlyMap<symbol, Type>;
 
@@ -309,23 +325,25 @@ const constructorApply = (
   arg: Type,
   assumptions: readonly Constraint[],
 ): Check<Type> =>
-  check(function* () {
+  check(function*() {
     const kind = kindOf(callee);
-    if (kind.kind !== "arrow")
+    if (kind.kind !== "arrow") {
       return yield* fail(`Cannot apply ${show(callee)} of kind ${showKind(kind)}`);
+    }
     yield* expectKind(kindOf(arg), kind.param);
-    if (callee.kind === "constructor-lambda")
+    if (callee.kind === "constructor-lambda") {
       return yield* substitute(
         callee.body,
         new Map([[callee.parameter.id, arg]]),
         assumptions,
         new Set(),
       );
+    }
     return { kind: "application" as const, fn: callee, arg, typeKind: kind.result };
   });
 
 const compose = (outer: Type, inner: Type, assumptions: readonly Constraint[]): Check<Type> =>
-  check(function* () {
+  check(function*() {
     const kind = kindOf(inner);
     if (kind.kind !== "arrow") return yield* fail("Expected a type-level function");
     const parameter: Parameter = { id: Symbol("item"), name: "item", typeKind: kind.param };
@@ -340,14 +358,15 @@ const compose = (outer: Type, inner: Type, assumptions: readonly Constraint[]): 
   });
 
 export const mapRow = (mapper: Type, source: Row, assumptions: readonly Constraint[]): Check<Row> =>
-  check(function* () {
+  check(function*() {
     const kind = kindOf(mapper);
     if (kind.kind !== "arrow") return yield* fail("Map requires a type-level function");
     yield* expectKind(source.element, kind.param);
     if (identityMapper(mapper)) return source;
     const fields = new Map<string, Type>();
-    for (const [name, type] of source.fields)
+    for (const [name, type] of source.fields) {
       fields.set(name, yield* constructorApply(mapper, type, assumptions));
+    }
     const variables: RowPart[] = [];
     for (const part of source.variables) {
       const combined = part.mapper ? yield* compose(mapper, part.mapper, assumptions) : mapper;
@@ -362,19 +381,21 @@ const substituteRow = (
   assumptions: readonly Constraint[],
   bound: ReadonlySet<symbol>,
 ): Check<Row> =>
-  check(function* () {
+  check(function*() {
     const fields = new Map<string, Type>();
-    for (const [name, type] of r.fields)
+    for (const [name, type] of r.fields) {
       fields.set(name, yield* substitute(type, sub, assumptions, bound));
+    }
     let result = row(fields, [], r.element);
     for (const part of r.variables) {
       let replacement = yield* asRow(yield* substitute(part.base, sub, assumptions, bound));
-      if (part.mapper)
+      if (part.mapper) {
         replacement = yield* mapRow(
           yield* substitute(part.mapper, sub, assumptions, bound),
           replacement,
           assumptions,
         );
+      }
       result = yield* concat(result, replacement, assumptions);
     }
     return result;
@@ -386,14 +407,17 @@ const substitute = (
   assumptions: readonly Constraint[],
   bound: ReadonlySet<symbol>,
 ): Check<Type> =>
-  check(function* () {
+  check(function*() {
     switch (type.kind) {
       case "variable": {
         const replacement = sub.get(type.parameter.id);
-        if (!replacement && bound.has(type.parameter.id))
+        if (!replacement && bound.has(type.parameter.id)) {
           return yield* fail(
-            `Cannot infer ${type.parameter.typeKind.kind === "row" ? "row" : "type"} parameter ${type.parameter.name}; supply explicit type arguments`,
+            `Cannot infer ${
+              type.parameter.typeKind.kind === "row" ? "row" : "type"
+            } parameter ${type.parameter.name}; supply explicit type arguments`,
           );
+        }
         return replacement ?? type;
       }
       case "record":
@@ -419,11 +443,12 @@ const substitute = (
         const params: Type[] = [];
         for (const p of type.params) params.push(yield* substitute(p, inner, assumptions, bound));
         const constraints: Constraint[] = [];
-        for (const c of type.constraints)
+        for (const c of type.constraints) {
           constraints.push({
             left: yield* substituteRow(c.left, inner, assumptions, bound),
             right: yield* substituteRow(c.right, inner, assumptions, bound),
           });
+        }
         return fn(
           params,
           yield* substitute(type.result, inner, assumptions, bound),
@@ -444,22 +469,22 @@ export const resolveConstructor = (
   assumptions: readonly Constraint[],
   expected?: Kind,
 ): Check<Type> =>
-  check(function* () {
+  check(function*() {
     let result: Type;
     switch (expr.kind) {
       case "name": {
-        const found =
-          expr.name === "number"
-            ? number
-            : expr.name === "boolean"
-              ? boolean
-              : expr.name === "string"
-                ? string
-                : scope.get(expr.name);
-        if (!found)
+        const found = expr.name === "number"
+          ? number
+          : expr.name === "boolean"
+          ? boolean
+          : expr.name === "string"
+          ? string
+          : scope.get(expr.name);
+        if (!found) {
           return yield* fail(
             `Unknown type: ${expr.name} (aliases must refer to earlier declarations; recursive aliases are not supported)`,
           );
+        }
         result = found;
         break;
       }
@@ -467,8 +492,9 @@ export const resolveConstructor = (
         const element = expected?.kind === "row" ? expected.element : typeKind;
         const fields = new Map<string, Type>();
         for (const field of expr.fields) {
-          if (fields.has(field.name.name))
+          if (fields.has(field.name.name)) {
             return yield* fail(`Duplicate field: ${field.name.name}`).at(field.name.span);
+          }
           fields.set(
             field.name.name,
             yield* resolveConstructor(field.type, scope, assumptions, element),
@@ -488,8 +514,9 @@ export const resolveConstructor = (
         if (!expr.generics.length) return yield* fail("forall requires at least one parameter");
         const inner = yield* bindGenerics(expr.generics, scope);
         const body = yield* resolve(expr.body, inner.scope, assumptions);
-        if (body.kind !== "function" || body.generics.length)
+        if (body.kind !== "function" || body.generics.length) {
           return yield* fail("forall must quantify a function type");
+        }
         result = fn(body.params, body.result, inner.parameters, body.constraints);
         break;
       }
@@ -512,12 +539,14 @@ export const resolveConstructor = (
       }
       case "application": {
         result = yield* resolveConstructor(expr.fn, scope, assumptions);
-        if (!expr.args.length)
+        if (!expr.args.length) {
           return yield* fail("Type application requires at least one argument");
+        }
         for (const arg of expr.args) {
           const kind = kindOf(result);
-          if (kind.kind !== "arrow")
+          if (kind.kind !== "arrow") {
             return yield* fail(`Cannot apply ${show(result)} of kind ${showKind(kind)}`);
+          }
           result = yield* constructorApply(
             result,
             yield* resolveConstructor(arg, scope, assumptions, kind.param),
@@ -555,13 +584,14 @@ export const resolveConstraintRow = (
   scope: TypeScope,
   constraints: readonly Constraint[],
 ): Check<Row> =>
-  check(function* () {
-    if (expr.kind === "concat")
+  check(function*() {
+    if (expr.kind === "concat") {
       return yield* concat(
         yield* resolveConstraintRow(expr.left, scope, constraints),
         yield* resolveConstraintRow(expr.right, scope, constraints),
         constraints,
       );
+    }
     return yield* asRow(
       yield* resolveConstructor(
         expr,
@@ -581,16 +611,17 @@ export const resolve = (
 export const bindGenerics = (
   generics: readonly Generic[],
   outer: TypeScope,
-): Check<{ scope: TypeScope; parameters: readonly Parameter[] }> =>
-  check(function* () {
+): Check<{ scope: TypeScope; parameters: readonly Parameter[]; }> =>
+  check(function*() {
     const scope = new Map(outer);
     const parameters: Parameter[] = [];
     for (const g of generics) {
       if (
-        parameters.some((p) => p.name === g.name) ||
-        ["number", "boolean", "string"].includes(g.name)
-      )
+        parameters.some((p) => p.name === g.name)
+        || ["number", "boolean", "string"].includes(g.name)
+      ) {
         return yield* fail(`Duplicate or reserved type parameter: ${g.name}`).at(g.span);
+      }
       const parameter: Parameter = { id: Symbol(g.name), name: g.name, typeKind: g.kind };
       parameters.push(parameter);
       scope.set(g.name, variable(parameter));
@@ -629,7 +660,7 @@ const matchRow = (
   sub: Map<symbol, Type>,
   assumptions: readonly Constraint[],
 ): Check<void> =>
-  check(function* () {
+  check(function*() {
     yield* expectKind(pattern.element, actual.element);
     const fields = new Map(actual.fields);
     for (const [name, type] of pattern.fields) {
@@ -642,10 +673,10 @@ const matchRow = (
     const unknown: Parameter[] = [];
     for (const part of pattern.variables) {
       if (
-        !part.mapper &&
-        part.base.kind === "variable" &&
-        bound.has(part.base.parameter.id) &&
-        !sub.has(part.base.parameter.id)
+        !part.mapper
+        && part.base.kind === "variable"
+        && bound.has(part.base.parameter.id)
+        && !sub.has(part.base.parameter.id)
       ) {
         unknown.push(part.base.parameter);
         continue;
@@ -664,21 +695,24 @@ const matchRow = (
       }
       for (const v of known.variables) {
         const index = variables.findIndex((w) => equalPart(v, w, new Map()));
-        if (index < 0)
+        if (index < 0) {
           return yield* fail(
             `Cannot match abstract row ${showRow(known)}; supply explicit type arguments`,
           );
+        }
         variables.splice(index, 1);
       }
     }
-    if (unknown.length > 1)
+    if (unknown.length > 1) {
       return yield* fail(
         "Ambiguous row decomposition; infer each row from a separate argument first",
       );
-    if (unknown.length === 1)
+    }
+    if (unknown.length === 1) {
       sub.set(unknown[0]!.id, rowValue(row(fields, variables, actual.element)));
-    else if (fields.size || variables.length)
+    } else if (fields.size || variables.length) {
       return yield* fail("Record rows do not match (unexpected fields or row parameters)");
+    }
   });
 
 const match = (
@@ -688,29 +722,30 @@ const match = (
   sub: Map<symbol, Type>,
   assumptions: readonly Constraint[],
 ): Check<void> =>
-  check(function* () {
-    const pattern =
-      input.kind === "record" || input.kind === "folder" || input.kind === "function"
-        ? input
-        : yield* substitute(input, sub, assumptions, new Set());
+  check(function*() {
+    const pattern = input.kind === "record" || input.kind === "folder" || input.kind === "function"
+      ? input
+      : yield* substitute(input, sub, assumptions, new Set());
     if (pattern.kind === "variable" && bound.has(pattern.parameter.id)) {
       const previous = sub.get(pattern.parameter.id);
       if (previous) yield* expect(actual, previous);
       else {
         yield* expectKind(kindOf(actual), pattern.parameter.typeKind);
-        if (polymorphic(actual))
+        if (polymorphic(actual)) {
           return yield* fail(
             "Polymorphic values cannot be passed as generic arguments; use a monomorphic wrapper",
           );
+        }
         sub.set(pattern.parameter.id, actual);
       }
       return;
     }
     if (
-      (pattern.kind === "record" && actual.kind === "record") ||
-      (pattern.kind === "folder" && actual.kind === "folder")
-    )
+      (pattern.kind === "record" && actual.kind === "record")
+      || (pattern.kind === "folder" && actual.kind === "folder")
+    ) {
       return yield* matchRow(pattern.row, actual.row, bound, sub, assumptions);
+    }
     if (pattern.kind === "function" && actual.kind === "function") {
       if (pattern.generics.length) {
         // Do not solve outer inference variables from under a forall: doing so
@@ -719,13 +754,15 @@ const match = (
         return yield* expect(actual, yield* substitute(pattern, sub, assumptions, bound));
       }
       if (
-        actual.generics.length ||
-        pattern.generics.length ||
-        actual.params.length !== pattern.params.length
-      )
+        actual.generics.length
+        || pattern.generics.length
+        || actual.params.length !== pattern.params.length
+      ) {
         return yield* fail("Expected a monomorphic function with matching arity");
-      for (let i = 0; i < pattern.params.length; i++)
+      }
+      for (let i = 0; i < pattern.params.length; i++) {
         yield* match(pattern.params[i]!, actual.params[i]!, bound, sub, assumptions);
+      }
       yield* match(pattern.result, actual.result, bound, sub, assumptions);
       return;
     }
@@ -738,39 +775,47 @@ export const apply = (
   assumptions: readonly Constraint[],
   explicit?: readonly Type[],
 ): Check<Type> =>
-  check(function* () {
-    if (args.length !== callee.params.length)
+  check(function*() {
+    if (args.length !== callee.params.length) {
       return yield* fail(`Expected ${callee.params.length} arguments, found ${args.length}`);
-    if (explicit && explicit.length !== callee.generics.length)
+    }
+    if (explicit && explicit.length !== callee.generics.length) {
       return yield* fail(
         `Expected ${callee.generics.length} type arguments, found ${explicit.length}`,
       );
+    }
     const bound = new Set(callee.generics.map((p) => p.id));
     const sub = new Map<symbol, Type>();
     for (let i = 0; i < (explicit?.length ?? 0); i++) {
       const parameter = callee.generics[i]!,
         value = explicit![i]!;
       yield* expectKind(kindOf(value), parameter.typeKind);
-      if (polymorphic(value))
+      if (polymorphic(value)) {
         return yield* fail("Polymorphic types cannot instantiate generic arguments");
+      }
       sub.set(parameter.id, value);
     }
-    for (let i = 0; i < args.length; i++)
+    for (let i = 0; i < args.length; i++) {
       yield* match(callee.params[i]!, args[i]!, bound, sub, assumptions);
+    }
     // Every binder must be determined, including phantom parameters: accepting a
     // missing argument would silently guess at a potentially noninjective type.
-    for (const parameter of callee.generics)
-      if (!sub.has(parameter.id))
+    for (const parameter of callee.generics) {
+      if (!sub.has(parameter.id)) {
         return yield* fail(
           `Cannot infer type parameter ${parameter.name}; supply explicit type arguments`,
         );
-    for (const c of callee.constraints)
+      }
+    }
+    for (const c of callee.constraints) {
       yield* disjoint(
         yield* substituteRow(c.left, sub, assumptions, bound),
         yield* substituteRow(c.right, sub, assumptions, bound),
         assumptions,
       );
-    for (let i = 0; i < args.length; i++)
+    }
+    for (let i = 0; i < args.length; i++) {
       yield* expect(args[i]!, yield* substitute(callee.params[i]!, sub, assumptions, bound));
+    }
     return yield* substitute(callee.result, sub, assumptions, bound);
-  });
+  }).atomic();

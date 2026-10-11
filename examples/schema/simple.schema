@@ -1,0 +1,29 @@
+let timestamps = fn(model) =>
+  model |> extend {
+    createdAt : DateTime |> default now,
+    updatedAt : DateTime |> default now
+  }
+
+let authored = fn(model) =>
+  model |> extend {
+    authorId : Int |> references User.id
+  }
+
+type Role = Member | Admin
+
+type PostStatus = Draft | Published
+
+model User = {
+  id : Int |> primaryKey |> autoIncrement,
+  email : String |> unique,
+  role : Role |> default Role.Member
+} |> timestamps
+
+model Post = {
+  id : Int |> primaryKey |> autoIncrement,
+  title : String,
+  status : PostStatus |> default PostStatus.Draft
+}
+  |> authored
+  |> timestamps
+  |> index [.authorId, .createdAt]

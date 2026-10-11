@@ -9,7 +9,6 @@ let rec sumTree = fn(tree) => match tree {
 let both = fn(f: forall a. a -> a) => { value = f(20), flag = f(true) } in
 
 
-
 let getValue = fn(record) => record.value in
 
 

@@ -1,3 +1,5 @@
+import type { Result, Span } from "langkit";
+import type { TokenRule } from "langkit/analysis";
 import {
   between,
   choice,
@@ -6,27 +8,27 @@ import {
   fail,
   many,
   optional,
+  type Parser,
   parser,
   regex,
   sepBy1,
   sepEndBy,
-  type Parser,
 } from "langkit/parse";
-import type { Span, Result } from "langkit";
-import type { TokenRule } from "langkit/analysis";
 
-export type Name = { readonly name: string; readonly span: Span };
+export type Name = { readonly name: string; readonly span: Span; };
 
 export type Default =
-  | { readonly kind: "literal"; readonly value: string | number | boolean }
-  | { readonly kind: "now" }
-  | { readonly kind: "enum"; readonly type: Name; readonly member: Name };
+  | { readonly kind: "literal"; readonly value: string | number | boolean; }
+  | { readonly kind: "now"; }
+  | { readonly kind: "enum"; readonly type: Name; readonly member: Name; };
 
-export type FieldOp = { readonly name: Name } & (
-  | { readonly kind: "primaryKey" | "autoIncrement" | "unique" }
-  | { readonly kind: "default"; readonly value: Default }
-  | { readonly kind: "references"; readonly model: Name; readonly field: Name }
-);
+export type FieldOp =
+  & { readonly name: Name; }
+  & (
+    | { readonly kind: "primaryKey" | "autoIncrement" | "unique"; }
+    | { readonly kind: "default"; readonly value: Default; }
+    | { readonly kind: "references"; readonly model: Name; readonly field: Name; }
+  );
 
 export type Field = {
   readonly name: Name;
@@ -35,24 +37,28 @@ export type Field = {
   readonly ops: readonly FieldOp[];
 };
 
-export type ModelOp = { readonly name: Name } & (
-  | { readonly kind: "extend"; readonly fields: readonly Field[] }
-  | { readonly kind: "index" | "unique"; readonly fields: readonly Name[] }
-  | { readonly kind: "helper" }
-);
+export type ModelOp =
+  & { readonly name: Name; }
+  & (
+    | { readonly kind: "extend"; readonly fields: readonly Field[]; }
+    | { readonly kind: "index" | "unique"; readonly fields: readonly Name[]; }
+    | { readonly kind: "helper"; }
+  );
 
 export type ModelExpr = {
   readonly base:
-    | { readonly kind: "fields"; readonly fields: readonly Field[] }
-    | { readonly kind: "name"; readonly name: Name };
+    | { readonly kind: "fields"; readonly fields: readonly Field[]; }
+    | { readonly kind: "name"; readonly name: Name; };
   readonly ops: readonly ModelOp[];
 };
 
-export type Declaration = { readonly name: Name } & (
-  | { readonly kind: "enum"; readonly members: readonly Name[] }
-  | { readonly kind: "model"; readonly body: ModelExpr }
-  | { readonly kind: "helper"; readonly param: Name; readonly body: ModelExpr }
-);
+export type Declaration =
+  & { readonly name: Name; }
+  & (
+    | { readonly kind: "enum"; readonly members: readonly Name[]; }
+    | { readonly kind: "model"; readonly body: ModelExpr; }
+    | { readonly kind: "helper"; readonly param: Name; readonly body: ModelExpr; }
+  );
 
 const words = /[a-zA-Z_][a-zA-Z_0-9]*/;
 const strings = /"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/;
@@ -83,7 +89,7 @@ const defaultValue: Parser<Default> = choice(
   lex.token(regex(digits)).map((text) => ({ kind: "literal" as const, value: Number(text) })),
   keyword("true").map(() => ({ kind: "literal" as const, value: true })),
   keyword("false").map(() => ({ kind: "literal" as const, value: false })),
-  parser(function* () {
+  parser(function*() {
     const type = yield* name;
     if (type.name === "now") return { kind: "now" as const };
     yield* symbol(".");
@@ -91,7 +97,7 @@ const defaultValue: Parser<Default> = choice(
   }),
 );
 
-const fieldOp: Parser<FieldOp> = parser(function* () {
+const fieldOp: Parser<FieldOp> = parser(function*() {
   yield* symbol("|>");
   yield* commit();
   const op = yield* name;
@@ -112,7 +118,7 @@ const fieldOp: Parser<FieldOp> = parser(function* () {
   }
 });
 
-const field: Parser<Field> = parser(function* () {
+const field: Parser<Field> = parser(function*() {
   const fieldName = yield* name;
   yield* symbol(":");
   yield* commit();
@@ -123,7 +129,7 @@ const field: Parser<Field> = parser(function* () {
 const fields = between(symbol("{"), symbol("}"), sepEndBy(field, symbol(",")));
 const selector = symbol(".").zipRight(name);
 
-const modelOp: Parser<ModelOp> = parser(function* () {
+const modelOp: Parser<ModelOp> = parser(function*() {
   yield* symbol("|>");
   yield* commit();
   const op = yield* name;
@@ -138,7 +144,7 @@ const modelOp: Parser<ModelOp> = parser(function* () {
   return { kind: "helper", name: op };
 });
 
-const modelExpr: Parser<ModelExpr> = parser(function* () {
+const modelExpr: Parser<ModelExpr> = parser(function*() {
   const base = yield* choice(
     fields.map((fields) => ({ kind: "fields" as const, fields })),
     parameter.map((name) => ({ kind: "name" as const, name })),
@@ -147,21 +153,21 @@ const modelExpr: Parser<ModelExpr> = parser(function* () {
 });
 
 const declaration: Parser<Declaration> = choice(
-  parser(function* () {
+  parser(function*() {
     yield* keyword("type");
     yield* commit();
     const id = yield* name;
     yield* symbol("=");
     return { kind: "enum" as const, name: id, members: yield* sepBy1(name, symbol("|")) };
   }),
-  parser(function* () {
+  parser(function*() {
     yield* keyword("model");
     yield* commit();
     const id = yield* name;
     yield* symbol("=");
     return { kind: "model" as const, name: id, body: yield* modelExpr };
   }),
-  parser(function* () {
+  parser(function*() {
     yield* keyword("let");
     yield* commit();
     const id = yield* name;
@@ -180,13 +186,13 @@ export const parse = (source: string): Result<readonly Declaration[]> => {
   return result.success
     ? result
     : {
-        success: false,
-        error: {
-          message: result.error.message,
-          span: result.error.diagnostic.span,
-          context: ["parsing"],
-        },
-      };
+      success: false,
+      errors: [{
+        ...result.error.diagnostic,
+        message: result.error.message,
+        context: ["parsing", ...(result.error.diagnostic.context ?? [])],
+      }],
+    };
 };
 
 export const tokens: readonly TokenRule[] = [

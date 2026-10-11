@@ -1,108 +1,54 @@
-import { validate, type Binding, type Body, type Value } from "./ir.ts";
+import { type Binding, type Body, type OperationNode, type Program, validate, type Value } from "./ir.ts";
+import { createJavaScriptDispatcher, type DispatcherHandler } from "./javascript/operations.ts";
 
-/** Emit a JavaScript expression. Evaluating it returns the body's result. */
-export const emit = <T>(root: Body<T>): string => {
-  validate(root);
+export type JavaScriptContext<T> = {
+  readonly depth: number;
+  readonly expr: (value: Value<T>, depth: number) => string;
+  readonly block: (body: Body<T>, depth: number) => string;
+  readonly name: (binding: Binding<T>) => string;
+};
+
+const noHandlers: readonly [] = [];
+type JavaScriptDispatcher<T> = (operationId: symbol, node: OperationNode, context: JavaScriptContext<T>) => string;
+
+const emitWithDispatcher = <T>(program: Program<T>, dispatch: JavaScriptDispatcher<T>): string => {
+  const root = program.body;
+  validate(program);
   const names = new Map<symbol, string>();
-  let matchIndex = 0;
-
   const name = (binding: Binding<T>): string => {
     const known = names.get(binding.id);
     if (known) return known;
-    // A prefix and unique suffix avoid keywords, shadowing, and accidental capture.
     const hint = binding.name.replace(/[^a-zA-Z0-9_]/g, "_");
     const chosen = `_${hint}_${names.size}`;
     names.set(binding.id, chosen);
     return chosen;
   };
-
-  const literal = (value: number | boolean | string): string => {
-    if (typeof value === "string") return JSON.stringify(value);
-    if (typeof value === "boolean") return String(value);
-    if (Object.is(value, -0)) return "-0";
-    if (Number.isNaN(value)) return "(0 / 0)";
-    if (value === Infinity) return "(1 / 0)";
-    if (value === -Infinity) return "(-1 / 0)";
-    return String(value);
-  };
-
   const block = (body: Body<T>, depth: number): string => {
     const indent = "  ".repeat(depth + 1);
     return [
       "{",
-      ...body.declarations.map(
-        ({ binding, value }) => `${indent}const ${name(binding)} = ${expr(value, depth + 1)};`,
-      ),
+      ...body.declarations.map(({ binding, value }) => `${indent}const ${name(binding)} = ${expr(value, depth + 1)};`),
       `${indent}return ${expr(body.result, depth + 1)};`,
       `${"  ".repeat(depth)}}`,
     ].join("\n");
   };
-
-  const expr = (value: Value<T>, depth: number): string => {
-    const node = value.node;
-    switch (node.kind) {
-      case "literal":
-        return literal(node.value);
-      case "field-order":
-        return JSON.stringify(node.names);
-      case "record-fold":
-        // Arguments evaluate outside the temporary scope, once and left to right.
-        // The order comes from a checked folder, never record enumeration.
-        return `(($order, $metadata, $record, $initial, $step) => { let $acc = $initial; for (const $key of $order) { $acc = $step($acc)($metadata[$key])($record[$key]); } return $acc; })(${expr(node.order, depth)}, ${expr(node.metadata, depth)}, ${expr(node.record, depth)}, ${expr(node.initial, depth)}, ${expr(node.step, depth)})`;
-      case "variant":
-        return `({ __proto__: null, tag: ${JSON.stringify(node.tag)}, fields: [${node.fields.map((field) => expr(field, depth)).join(", ")}] })`;
-      case "match": {
-        // Binding names always begin with '_'; '$' temporaries cannot capture them.
-        const temporary = `$match${matchIndex++}`;
-        const branches = node.cases.map((branch) => {
-          const bindings = branch.bindings
-            .map((binding, index) => `const ${name(binding)} = ${temporary}.fields[${index}];`)
-            .join(" ");
-          return `case ${JSON.stringify(branch.tag)}: { ${bindings} return (() => ${block(branch.body, depth + 1)})(); }`;
-        });
-        if (node.fallback) {
-          const binding = node.fallback.binding;
-          branches.push(
-            `default: { ${binding ? `const ${name(binding)} = ${temporary};` : ""} return (() => ${block(node.fallback.body, depth + 1)})(); }`,
-          );
-        } else branches.push('default: throw new Error("Internal non-exhaustive match");');
-        return `((${temporary}) => { switch (${temporary}.tag) { ${branches.join(" ")} } })(${expr(node.value, depth)})`;
-      }
-      case "record": {
-        // Evaluate fields before the base, but merge the base before fields.
-        // Arguments run outside the temporary parameter scope, avoiding capture.
-        const params = node.fields.map((_, index) => `_field${index}`);
-        const args = node.fields.map((field) => expr(field.value, depth));
-        const entries = node.fields.map(
-          (field, index) => `[${JSON.stringify(field.name)}]: ${params[index]}`,
-        );
-        if (node.base) {
-          params.push("_base");
-          args.push(expr(node.base, depth));
-          entries.unshift("..._base");
-        }
-        return `((${params.join(", ")}) => ({ __proto__: null${entries.length ? `, ${entries.join(", ")}` : ""} }))(${args.join(", ")})`;
-      }
-      case "merge":
-        return `({ __proto__: null, ...(${expr(node.left, depth)}), ...(${expr(node.right, depth)}) })`;
-      case "field":
-        return `(${expr(node.record, depth)})[${JSON.stringify(node.name)}]`;
-      case "print":
-        return `(console.log(${expr(node.value, depth)}), { __proto__: null })`;
-      case "ref":
-        return name(node.binding);
-      case "binary":
-        return `(${expr(node.left, depth)} ${node.op === "==" ? "===" : node.op} ${expr(node.right, depth)})`;
-      case "call":
-        return `(${expr(node.fn, depth)})(${expr(node.arg, depth)})`;
-      case "fn":
-        return `((${name(node.param)}) => ${block(node.body, depth)})`;
-      case "block":
-        return `(() => ${block(node.body, depth)})()`;
-      case "if":
-        return `(${expr(node.cond, depth)} ? (() => ${block(node.then, depth)})() : (() => ${block(node.else, depth)})())`;
-    }
-  };
-
+  const expr = (value: Value<T>, depth: number): string =>
+    dispatch(value.operationId, value.node, { expr, block, name, depth });
   return `(() => ${block(root, 0)})()\n`;
+};
+
+/** Validates selected operations, then emits through identity-matched handlers only. */
+export const emit = <T>(
+  program: Program<T>,
+  handlers: readonly DispatcherHandler<JavaScriptContext<T>>[] = noHandlers,
+): string => emitWithDispatcher(program, createJavaScriptDispatcher(...handlers));
+
+/** Compose backend feature sets; duplicate descriptor handlers are rejected by dispatch. */
+export const createJavaScriptEmitter = <T>(
+  ...sets: readonly (readonly DispatcherHandler<JavaScriptContext<T>>[])[]
+) => {
+  const dispatch = createJavaScriptDispatcher(...sets.flat());
+  return {
+    emit: (program: Program<T>): string => emitWithDispatcher(program, dispatch),
+  };
 };

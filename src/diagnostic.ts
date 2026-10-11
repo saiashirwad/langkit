@@ -1,9 +1,36 @@
-export type Span = { readonly start: number; readonly end: number };
+export type Span = { readonly start: number; readonly end: number; };
+
+export type SourceLocation = { readonly uri: string; readonly span: Span; };
+
+export type RelatedDiagnostic = {
+  readonly location: SourceLocation;
+  readonly message: string;
+};
 
 export type Diagnostic = {
+  readonly code?: string;
+  readonly invocation?: symbol;
+  readonly parentInvocation?: symbol;
+  readonly rule?: string;
+  readonly reasons?: readonly symbol[];
   readonly message: string;
   readonly context: readonly string[];
   readonly span?: Span;
+  readonly origin?: SourceLocation;
+  readonly location?: SourceLocation;
+  readonly related?: readonly RelatedDiagnostic[];
+};
+
+export const withDocument = (diagnostic: Diagnostic, uri: string): Diagnostic => {
+  if (diagnostic.span === undefined) return diagnostic;
+  const origin = diagnostic.origin ?? diagnostic.location ?? { uri, span: diagnostic.span };
+  return { ...diagnostic, origin, location: diagnostic.location ?? origin };
+};
+
+export const withLocation = (diagnostic: Diagnostic, location: SourceLocation): Diagnostic => {
+  const origin = diagnostic.origin ?? diagnostic.location
+    ?? (diagnostic.span ? { uri: location.uri, span: diagnostic.span } : undefined);
+  return origin ? { ...diagnostic, origin, location } : { ...diagnostic, location };
 };
 
 export const render = (error: Diagnostic, source?: string): string => {

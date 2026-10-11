@@ -1,0 +1,19 @@
+{
+  "lineWidth": 120,
+  "indentWidth": 2,
+  "useTabs": false,
+  "newLineKind": "lf",
+  "typescript": {
+    "quoteStyle": "alwaysDouble",
+    "semiColons": "always"
+  },
+  "json": {},
+  "markdown": {},
+  "includes": ["src/**/*.ts", "examples/**/*.ts", "tests/**/*.ts", "tools/**/*.ts", "**/*.json", "**/*.md"],
+  "excludes": ["**/node_modules", "**/.git", ".tooling-contract-*", "future.md"],
+  "plugins": [
+    "https://plugins.dprint.dev/typescript-0.96.1.wasm",
+    "https://plugins.dprint.dev/json-0.25.2.wasm",
+    "https://plugins.dprint.dev/markdown-0.26.0.wasm"
+  ]
+}
