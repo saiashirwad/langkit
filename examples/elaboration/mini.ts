@@ -158,7 +158,7 @@ const compilerFor = <T, S>(makeTheory: () => Theory<T, S>) => createCompiler({
           if (fields.has(field.name)) return yield* fail(`Duplicate field: ${field.name}`);
           const value = yield* j.synth(field.value);
           fields.set(field.name, value.type);
-          terms.push(`${JSON.stringify(field.name)}:${value.term}`);
+          terms.push(`[${JSON.stringify(field.name)}]:${value.term}`);
         }
         return { type: theory.record(fields), term: `({${terms.join(",")}})` };
       } },

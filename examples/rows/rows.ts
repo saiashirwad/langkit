@@ -340,10 +340,10 @@ const rules: RuleTable<Expr, Type, Value<Type>> = {
           right,
         ));
   } },
-  let: { mode: "synth", check: "fromSynth", *synth(expr, j) {
+  let: { mode: "synth", check: "fromSynth", *synth(expr) {
     return synthesized(yield* code.check(function* () {
       return yield* code.scope(function* () {
-        return yield* bindings.let(expr.name, expr.nameSpan, j.synth(expr.value), () => elaborate(expr.body));
+        return yield* bindings.let(expr.name, expr.nameSpan, elaborate(expr.value).map(synthesized), () => elaborate(expr.body));
       });
     }));
   } },

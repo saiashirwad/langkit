@@ -84,12 +84,12 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
     return { kind: "record", fields };
   }));
   const grouped = parser(function* () {
-    yield* symbol("(");
+    const start = yield* symbol("(").withSpan((_text, span) => span.start);
     const first = yield* expr;
     if (yield* optional(symbol(","))) {
       const second = yield* expr;
       const end = yield* symbol(")").withSpan((_text, span) => span.end);
-      return { kind: "record" as const, fields: [{ name: "_1", value: first }, { name: "_2", value: second }], span: { start: first.span.start - 1, end } };
+      return { kind: "record" as const, fields: [{ name: "_1", value: first }, { name: "_2", value: second }], span: { start, end } };
     }
     yield* symbol(")");
     return first;
