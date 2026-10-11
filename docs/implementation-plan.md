@@ -27,7 +27,7 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [x] Checkpoint: assign the grounded runtime, descriptor, solver, and module-loader workstreams. Judgment and tooling work wait for the authoring design.
 - [x] Checkpoint: give every writable worker a separate worktree; serialize integration here.
 - [ ] Checkpoint: use the smallest unit that can be verified, then integrate it before building dependents.
-- [ ] Harden the runtime. Add failing tests, trace their cause, implement the machine, and rerun the original probes.
+- [x] Harden the runtime. Add failing tests, trace their cause, implement the machine, and rerun the original probes.
 - [ ] Preserve descriptor types and migrate backend definitions to derived handler types.
 - [ ] Extract HM and rows; remove the migrated examples' duplicate solver machinery.
 - [ ] Introduce judgments and binder combinators; migrate representative rules.
