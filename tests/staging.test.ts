@@ -92,6 +92,45 @@ test("declaration builders are reusable with fresh binding identities", () => {
   });
   assert.equal(run(program), 6);
 });
+test("reused declarations retain function-local bindings without declaring them twice", () => {
+  const declaration = S.const(
+    "id",
+    S.arrow({
+      params: [S.param("x", S.Number)],
+      body: function*([x]) {
+        const local = yield* S.const("local", x);
+        return local;
+      },
+    }),
+  );
+  const program = S.build(function*() {
+    const first = yield* declaration;
+    const second = yield* declaration;
+    assert.notEqual(first.id, second.id);
+    return S.binary("+", S.call(first, S.number(1)), S.call(second, S.number(2)));
+  });
+  assert.equal(run(program), 3);
+});
+test("revisiting a shared function still validates captures at each occurrence", () => {
+  let shared: S.Expr<(x: number) => number> | undefined;
+  const scoped = S.arrow({
+    params: [],
+    body: function*() {
+      const capture = yield* S.const("capture", S.number(1));
+      shared = S.arrow({
+        params: [S.param("x", S.Number)],
+        body: function*([x]) {
+          return S.binary("+", capture, x);
+        },
+      });
+      return S.call(shared, S.number(1));
+    },
+  });
+  assert.throws(() =>
+    S.build(function*() {
+      return S.object({ inside: S.call(scoped), outside: S.call(shared!, S.number(2)) });
+    }), /Out-of-scope staging binding/);
+});
 test("normal generator declarations execute before the final expression and branches remain lazy", () => {
   const tick = S.external("tick", S.functionType([S.Number], S.Number));
   const trace: number[] = [];
@@ -174,6 +213,22 @@ test("duplicate exact identities and cycles are rejected", () => {
   assert.throws(() =>
     S.build(function*() {
       return repeated;
+    }), /Duplicate/);
+  const left = S.arrow({
+    params: [parameter],
+    body: function*([x]) {
+      return x;
+    },
+  });
+  const right = S.arrow({
+    params: [parameter],
+    body: function*([x]) {
+      return x;
+    },
+  });
+  assert.throws(() =>
+    S.build(function*() {
+      return S.object({ left, right });
     }), /Duplicate/);
   const body = { statements: [], result: S.number(1) as S.Expr<unknown> };
   const cycle = makeNode("arrow", { kind: "unknown" }, { params: [], body }) as S.Expr<unknown>;
