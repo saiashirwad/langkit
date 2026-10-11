@@ -21,11 +21,120 @@ importers:
       '@types/node':
         specifier: ^26.1.1
         version: 26.6.4
+      dprint:
+        specifier: 0.62.0
+        version: 0.62.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
 
 packages:
+
+  '@dprint/android-arm64@0.62.0':
+    resolution: {integrity: sha512-qYUC7Uk9p8nGi3zsXZrBRN5/wUbuUyCPycO25AHPnSaKOpmqAY+hrLDa/DOzYdRPVLUMwenhc6hW9XzrkcNf4w==}
+    cpu: [arm64]
+    os: [android]
+
+  '@dprint/android-x64@0.62.0':
+    resolution: {integrity: sha512-m7NKDKL4bQz5aoLvzIrhO6SoF8tK+YnqOyl8K+3zYgTRPOpcboXelVC+3K4H93uS0V3nFQHxyMYhAfFdibecjA==}
+    cpu: [x64]
+    os: [android]
+
+  '@dprint/darwin-arm64@0.62.0':
+    resolution: {integrity: sha512-S3Qw4rw4+yUBrMpH88Lq6jx2ISmdwxqipuxDfH6MHTF2D3kBWaudUZXvOvMwBnw7fCX0KflM1WgM6GtKaqtvTw==}
+    cpu: [arm64]
+    os: [darwin]
+
+  '@dprint/darwin-x64@0.62.0':
+    resolution: {integrity: sha512-NIR+UI4gi5pPCPFM0WTqcS8nrrNrJmleceHczP0YfIpQRSNFRWlSa7Wy6Pq/p4D2tiVwQVvePZuR5HJVm/ATcg==}
+    cpu: [x64]
+    os: [darwin]
+
+  '@dprint/freebsd-arm64@0.62.0':
+    resolution: {integrity: sha512-Cc/6tQAsQNi0z2KBNLyWEVuvPSbLizOnRwRO0UwBDXNQzfaqi3VLHsYeSoxDAkTLQJwOX5CNLmRX6BKL2829oA==}
+    cpu: [arm64]
+    os: [freebsd]
+
+  '@dprint/freebsd-x64@0.62.0':
+    resolution: {integrity: sha512-sDO5e9KrnwWmtmWD8kLHLGI8n8/vxRFib8ie8m5UpXbd+FdJnTU5LsN7LvK5YGHr0smrSx3A60ffrv1xxtKnpg==}
+    cpu: [x64]
+    os: [freebsd]
+
+  '@dprint/linux-arm64-glibc@0.62.0':
+    resolution: {integrity: sha512-pDouAqXjXoh/Eu1GLDnjKyjWUxz+m8MSIseFPbGQ8YqooTquAbi0xYH2sUCvJtA8qmRyCDnppaqiZiy31Jw+Ag==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [glibc]
+
+  '@dprint/linux-arm64-musl@0.62.0':
+    resolution: {integrity: sha512-4wWykwRDSaUDynIWBimsiVbiTNiOQlIRNmsD9alkdmhi7nODK70kxWkimSNsLZBgPsgsD4quzHIJZMHS8c6WJA==}
+    cpu: [arm64]
+    os: [linux]
+    libc: [musl]
+
+  '@dprint/linux-loong64-glibc@0.62.0':
+    resolution: {integrity: sha512-iXgiSnf3TjhRyH/zJgEDX6lTXbby5PAXPuNiKdIDdgWnmYN+88VCfT9MpglKBRVVR1Pz5kf34rizlwEeJZcJNA==}
+    cpu: [loong64]
+    os: [linux]
+    libc: [glibc]
+
+  '@dprint/linux-loong64-musl@0.62.0':
+    resolution: {integrity: sha512-1h5CyyUHtj+40jsze9OQLaIwwUSeTap795Lv1Nosy+uuNyeO5Wnt9HaFQloOq6BnlJH2Lw9lMst5yT5pUGxtJw==}
+    cpu: [loong64]
+    os: [linux]
+    libc: [musl]
+
+  '@dprint/linux-ppc64-glibc@0.62.0':
+    resolution: {integrity: sha512-351Uyx+JnXbccn9rWf+11rTAA5hI1fOt2jFNwG/m4NtBUoVEW0I7/zZpBuEGhKBXjd9x87mwgJObwpqlmlXqbQ==}
+    cpu: [ppc64]
+    os: [linux]
+    libc: [glibc]
+
+  '@dprint/linux-ppc64-musl@0.62.0':
+    resolution: {integrity: sha512-cOrgy4bKLAi4ngS83Q2qCFJVfCgUnVBmuLNs04yYIqjg8rOLU8D6I0gF3o+3K/J15xOJZDqIpjyHZmkV7I+kuw==}
+    cpu: [ppc64]
+    os: [linux]
+    libc: [musl]
+
+  '@dprint/linux-riscv64-glibc@0.62.0':
+    resolution: {integrity: sha512-eI0pwzyzyqYTOoao1JknS+8Ch7p3rL0kwaUGrOtDVHkk3JzY74Gy6lrZhIyoYK2CMbuBdfKNxsfEVUsUkfTlww==}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [glibc]
+
+  '@dprint/linux-riscv64-musl@0.62.0':
+    resolution: {integrity: sha512-qNh7WXEwP83s4ziGghaVG0n/Wp4ZP4EHbh/zGNn2X4hf7/h5jtEnt9JikJxVszgbBfycgXYDa+icd3fO+kjmBQ==}
+    cpu: [riscv64]
+    os: [linux]
+    libc: [musl]
+
+  '@dprint/linux-s390x-glibc@0.62.0':
+    resolution: {integrity: sha512-wu2mOuGEYEiuL77lFIqOUrFI5rtApyt39AZ2vJDPMbHLcpm1mPVlsUJM6xv67rAF6RVtS7wvkGWDrS0NjbThvw==}
+    cpu: [s390x]
+    os: [linux]
+    libc: [glibc]
+
+  '@dprint/linux-x64-glibc@0.62.0':
+    resolution: {integrity: sha512-8nhyjZpVGJQFf1iWAO5jgJokjv2GhEq0TGrQWrvZeMMQFUUsmoqPwl7yynL3ACoE2F5lZqVBKIG9Zwpl5hEBrA==}
+    cpu: [x64]
+    os: [linux]
+    libc: [glibc]
+
+  '@dprint/linux-x64-musl@0.62.0':
+    resolution: {integrity: sha512-aw+1cIVcYshg4+DjP0+bdf+7S0e+xI3B5fCymRPVQiIVT3xzOQ5Xm6+sT9Vx1dZQReSGBfvBFmz5uOl85ZvrPQ==}
+    cpu: [x64]
+    os: [linux]
+    libc: [musl]
+
+  '@dprint/win32-arm64@0.62.0':
+    resolution: {integrity: sha512-oUVAWa0CvtLCKdufD5UIDfJQJFtgYe+cZEFfvV17uCIDVwldVXNVIGutrw++Ac5EAay7XsI7rAdB6p7zlTm/LQ==}
+    cpu: [arm64]
+    os: [win32]
+
+  '@dprint/win32-x64@0.62.0':
+    resolution: {integrity: sha512-Nf2tq0CCJfaO4XXUtP4ZQQPN2Uqa/ldK6COZTPiBGbvVsXH1w+OCbqLPVkAu7u0728yO4aRVTykHz9rq3xMGhA==}
+    cpu: [x64]
+    os: [win32]
 
   '@types/node@26.6.4':
     resolution: {integrity: sha512-ldVPDCzj7fsaGZrLB0NuHuTvJcsNasysBAqMolr/cgxrLd1xbqxIr3XJiPnHHJUCxj5sNF1vnRj9aWnrVh5Jcg==}
@@ -150,6 +259,10 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  dprint@0.62.0:
+    resolution: {integrity: sha512-bepx0fB11GSZ+1N9eDpJWfA+NtqGyy07WwIfRFTYDaTMcBnT6yhTLUGfmZ6IJJvlEx5pi6b3uphTAWP1d7JiHw==}
+    hasBin: true
+
   parserator@0.3.0:
     resolution: {integrity: sha512-9kL4nFTmbVmR4f4m8TjPmMxDKD+PW9R1ZNmUZsCjlBWy66l9Y5MNJflJlfHKwnG+fNrzUnTwDeQOHJv/EZu8Cg==}
     engines: {node: '>=22'}
@@ -180,6 +293,63 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@dprint/android-arm64@0.62.0':
+    optional: true
+
+  '@dprint/android-x64@0.62.0':
+    optional: true
+
+  '@dprint/darwin-arm64@0.62.0':
+    optional: true
+
+  '@dprint/darwin-x64@0.62.0':
+    optional: true
+
+  '@dprint/freebsd-arm64@0.62.0':
+    optional: true
+
+  '@dprint/freebsd-x64@0.62.0':
+    optional: true
+
+  '@dprint/linux-arm64-glibc@0.62.0':
+    optional: true
+
+  '@dprint/linux-arm64-musl@0.62.0':
+    optional: true
+
+  '@dprint/linux-loong64-glibc@0.62.0':
+    optional: true
+
+  '@dprint/linux-loong64-musl@0.62.0':
+    optional: true
+
+  '@dprint/linux-ppc64-glibc@0.62.0':
+    optional: true
+
+  '@dprint/linux-ppc64-musl@0.62.0':
+    optional: true
+
+  '@dprint/linux-riscv64-glibc@0.62.0':
+    optional: true
+
+  '@dprint/linux-riscv64-musl@0.62.0':
+    optional: true
+
+  '@dprint/linux-s390x-glibc@0.62.0':
+    optional: true
+
+  '@dprint/linux-x64-glibc@0.62.0':
+    optional: true
+
+  '@dprint/linux-x64-musl@0.62.0':
+    optional: true
+
+  '@dprint/win32-arm64@0.62.0':
+    optional: true
+
+  '@dprint/win32-x64@0.62.0':
+    optional: true
 
   '@types/node@26.6.4':
     dependencies:
@@ -244,6 +414,28 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  dprint@0.62.0:
+    optionalDependencies:
+      '@dprint/android-arm64': 0.62.0
+      '@dprint/android-x64': 0.62.0
+      '@dprint/darwin-arm64': 0.62.0
+      '@dprint/darwin-x64': 0.62.0
+      '@dprint/freebsd-arm64': 0.62.0
+      '@dprint/freebsd-x64': 0.62.0
+      '@dprint/linux-arm64-glibc': 0.62.0
+      '@dprint/linux-arm64-musl': 0.62.0
+      '@dprint/linux-loong64-glibc': 0.62.0
+      '@dprint/linux-loong64-musl': 0.62.0
+      '@dprint/linux-ppc64-glibc': 0.62.0
+      '@dprint/linux-ppc64-musl': 0.62.0
+      '@dprint/linux-riscv64-glibc': 0.62.0
+      '@dprint/linux-riscv64-musl': 0.62.0
+      '@dprint/linux-s390x-glibc': 0.62.0
+      '@dprint/linux-x64-glibc': 0.62.0
+      '@dprint/linux-x64-musl': 0.62.0
+      '@dprint/win32-arm64': 0.62.0
+      '@dprint/win32-x64': 0.62.0
 
   parserator@0.3.0: {}
 

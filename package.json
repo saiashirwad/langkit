@@ -2,8 +2,8 @@
   "name": "langkit",
   "version": "0.0.0",
   "private": true,
-  "type": "module",
   "description": "Small cooperating tools for language experiments",
+  "type": "module",
   "exports": {
     ".": "./src/index.ts",
     "./check": "./src/check.ts",
@@ -33,6 +33,8 @@
     "./lsp": "./src/lsp.ts"
   },
   "scripts": {
+    "fmt": "dprint fmt",
+    "fmt:check": "dprint check",
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
     "type:contracts": "node tools/type-contracts.ts",
@@ -65,6 +67,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
+    "dprint": "0.62.0",
     "typescript": "^7.0.2"
   },
   "engines": {
