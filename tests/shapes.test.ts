@@ -4,13 +4,11 @@ import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { typeAt, definitionAt } from "langkit/analysis";
-import { validate } from "langkit/ir";
 import { analyze, compile, show } from "../examples/shapes/shapes.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
-  validate(result.value.ir);
   return result.value;
 };
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>

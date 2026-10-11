@@ -3,13 +3,11 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
-import { validate } from "langkit/ir";
 import { analyze, compile, show } from "../examples/shapes/shapes.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
-  validate(result.value.ir);
   return result.value;
 };
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
@@ -166,6 +164,8 @@ test("macro editor metadata describes templates and concrete calls without unive
   assert.equal(show(typeAt(analysis, call - 1)!.type), 'number');
   assert.equal(definitionAt(analysis, call)!.span.start, declaration);
   assert.equal(definitionAt(analysis, declaration)!.span.start, declaration);
+  assert.equal(definitionAt(analysis, declaration)!.kind, "macro");
+  assert.equal(definitionAt(analysis, call)!.kind, "macro");
 });
 
 test("nested macro template references use declaration-site identity despite caller shadowing", () => {

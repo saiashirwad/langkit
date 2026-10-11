@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { validate } from "langkit/ir";
 import { definitionAt, typeAt } from "langkit/analysis";
 import { analyze, compile as rawCompile, show } from "../examples/strict/strict.ts";
 
@@ -13,7 +12,6 @@ const compile = (source: string) => rawCompile(withStdlib(source));
 const compiled = (source: string, uri?: string) => {
   const result = uri ? rawCompile(source, { uri }) : compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
-  validate(result.value.ir);
   return result.value;
 };
 

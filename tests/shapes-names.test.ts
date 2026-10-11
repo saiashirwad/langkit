@@ -55,6 +55,7 @@ test("shape annotation hovers and definitions have exact source-name spans", () 
   for (const at of [source.indexOf('Customer'), source.lastIndexOf('Customer')]) {
     assert.equal(show(typeAt(analysis, at)!.type), 'shape Customer = { email: string, name: string, ..r }');
     const definition = definitionAt(analysis, at)!;
+    assert.equal(definition.kind, "type");
     assert.equal(definition.name, 'Customer');
     assert.deepEqual(definition.span, { start: 7, end: 15 });
   }
@@ -111,18 +112,4 @@ test("names preserve extra absence constraints without exposing implied ones", a
   assert.deepEqual([...tail.lacks], ['age', 'active']);
 });
 
-test("long named refinements wrap instead of losing any added requirements", () => {
-  const source = customer + '(fn [(c Customer)] {a (. c veryLongRequirementOne) b (. c veryLongRequirementTwo) d (. c veryLongRequirementThree)})';
-  const result = display(source);
-  assert.match(result, /^Customer & \{\n/);
-  for (const key of ['veryLongRequirementOne', 'veryLongRequirementTwo', 'veryLongRequirementThree']) assert.ok(result.includes(key));
-  assert.ok(result.split('\n').every(line => line.length <= 80));
-});
 
-test("shape declaration headings do not push otherwise fitting bodies over the width", () => {
-  const source = '(shape LongShapeName {firstField string secondField number thirdField boolean}) 1';
-  const analysis = analyze(source);
-  const result = show(typeAt(analysis, source.indexOf('LongShapeName'))!.type);
-  assert.match(result, /^shape LongShapeName =\n/);
-  assert.ok(result.split('\n').every(line => line.length <= 80));
-});

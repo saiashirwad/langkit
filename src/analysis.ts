@@ -1,5 +1,5 @@
 import { get, run, scoped, within, type Check, type Result } from "./check.ts";
-import type { Diagnostic, Span } from "./diagnostic.ts";
+import type { Diagnostic, SourceLocation, Span } from "./diagnostic.ts";
 
 export const tokenKinds = [
   "keyword",
@@ -10,6 +10,18 @@ export const tokenKinds = [
   "function",
   "operator",
   "string",
+  "model",
+  "enum",
+  "enumMember",
+  "macro",
+  "field",
+  "class",
+  "interface",
+  "namespace",
+  "property",
+  "method",
+  "constructor",
+  "constant",
 ] as const;
 
 export type TokenKind = (typeof tokenKinds)[number];
@@ -18,13 +30,34 @@ export type Token = { readonly span: Span; readonly kind: TokenKind };
 
 export type Typed<T> = { readonly span: Span; readonly type: T };
 
-export type Definition<T> = Typed<T> & {
+export type Definition<T = unknown> = {
   readonly id: symbol;
   readonly name: string;
-  readonly kind: "variable" | "parameter" | "function";
+  readonly span: Span;
+  readonly kind: DefinitionKind;
+  readonly type?: T;
   /** Present only for definitions outside the analyzed document. */
   readonly uri?: string;
+  readonly location?: SourceLocation;
 };
+
+export type DefinitionKind =
+  | "variable"
+  | "parameter"
+  | "function"
+  | "type"
+  | "model"
+  | "enum"
+  | "enumMember"
+  | "macro"
+  | "field"
+  | "class"
+  | "interface"
+  | "namespace"
+  | "property"
+  | "method"
+  | "constructor"
+  | "constant";
 
 export type Reference = { readonly id: symbol; readonly span: Span };
 
@@ -35,8 +68,10 @@ export type Analysis<T> = {
   readonly definitions: readonly Definition<T>[];
   readonly references: readonly Reference[];
   readonly tokens: readonly Token[];
-  /** Imported source snapshots for cross-file definition ranges. */
+  /** Imported source snapshots for cross-file definitions and diagnostics. */
   readonly sources?: ReadonlyMap<string, string>;
+  /** URIs read while producing this analysis, including transitive inputs. */
+  readonly dependencyUris?: readonly string[];
 };
 
 /** Ordered lexical rules. Unrecognized characters are skipped, so incomplete input still highlights. */
@@ -76,7 +111,13 @@ type Facts<T> = {
   references: Reference[];
 };
 
-type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T };
+type Binding<T> = {
+  readonly id: symbol;
+  readonly name: string;
+  readonly type?: T;
+  readonly uri?: string;
+  readonly location?: SourceLocation;
+};
 
 /** Optional observation: without collect, these operations do not retain facts. */
 export const create = <T>() => {
@@ -91,11 +132,11 @@ export const create = <T>() => {
     define: (
       binding: Binding<T>,
       span: Span,
-      kind: Definition<T>["kind"] = "variable",
+      kind: DefinitionKind = "variable",
     ): Check<void> =>
       get(current).map((facts) => {
         facts?.definitions.push({ ...binding, span, kind });
-        facts?.types.push({ type: binding.type, span });
+        if (binding.type !== undefined) facts?.types.push({ type: binding.type, span });
       }),
 
     // Identity comes from the declaration; the use-site type is reported by typed.
@@ -144,7 +185,7 @@ export const definitionAt = <T>(
   const reference = analysis.references.find((value) => contains(value.span, offset));
   return reference
     ? analysis.definitions.find((value) => value.id === reference.id)
-    : analysis.definitions.find((value) => !value.uri && contains(value.span, offset));
+    : analysis.definitions.find((value) => !value.uri && !value.location && contains(value.span, offset));
 };
 
 /** Refine lexical tokens without introducing overlapping or duplicate ranges. */
@@ -153,7 +194,7 @@ export const semanticTokens = <T>(analysis: Analysis<T>): readonly Token[] => {
   const roles = new Map<string, TokenKind>();
   const key = (span: Span) => `${span.start}:${span.end}`;
   for (const definition of analysis.definitions)
-    if (!definition.uri) roles.set(key(definition.span), definition.kind);
+    if (!definition.uri && !definition.location) roles.set(key(definition.span), definition.kind);
   for (const reference of analysis.references) {
     const definition = definitions.get(reference.id);
     if (definition) roles.set(key(reference.span), definition.kind);

@@ -1,7 +1,14 @@
 import { check, fail, render, run, type Check, type Result } from "langkit";
 import { create, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
-import { emit } from "langkit/javascript";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
+import { records } from "langkit/operations/records";
+import { printing } from "langkit/operations/printing";
+import { folders } from "langkit/operations/folders";
+import { recordsJavaScript } from "langkit/javascript/records";
+import { printingJavaScript } from "langkit/javascript/printing";
+import { foldersJavaScript } from "langkit/javascript/folders";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import {
@@ -43,7 +50,16 @@ import {
 
 export { show, type Type } from "./ur-types.ts";
 
-const code = create<Type>();
+const recordFeature = records<Type>();
+const printingFeature = printing<Type>();
+const folderFeature = folders<Type>();
+const code = create<Type>().use(recordFeature).use(printingFeature).use(folderFeature);
+const javascript = createJavaScriptEmitter<Type>(
+  coreJavaScript<Type>(code.coreOperationTraversals()),
+  recordsJavaScript<Type>(recordFeature.operations),
+  printingJavaScript<Type>(printingFeature.operations),
+  foldersJavaScript<Type>(folderFeature.operations),
+);
 const facts = createAnalysis<Type>();
 
 type Context = {
@@ -499,7 +515,7 @@ export const compile = (source: string): Result<Compiled> => {
     value: {
       type: built.value.result.type,
       ir: built.value,
-      javascript: emit(built.value),
+      javascript: javascript.emit(built.value, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }),
       entry: parsed.value.some((decl) => decl.kind === "function" && decl.name.name === "main")
         ? "function"
         : "value",

@@ -1,3 +1,4 @@
+import { pruneLink } from "langkit/inference"
 import { check, fail, run, type Check } from "langkit";
 
 export type Kind =
@@ -10,11 +11,16 @@ export const typeKind: Kind = { kind: "type" };
 export const kindArrow = (param: Kind, result: Kind): Kind => ({ kind: "arrow", param, result });
 
 export const freshKind = (): Kind => ({ kind: "kind-variable" });
-
-export const pruneKind = (kind: Kind): Kind => {
-  if (kind.kind !== "kind-variable" || !kind.instance) return kind;
-  return (kind.instance = pruneKind(kind.instance));
+type KindVariable = Extract<Kind, { readonly kind: "kind-variable" }>;
+const kindVariable = (value: Kind): KindVariable | null =>
+  value.kind === "kind-variable" ? value : null;
+const kindInstance = (variable: KindVariable): Kind | undefined => variable.instance;
+const linkKind = (variable: KindVariable, instance: Kind): void => {
+  variable.instance = instance;
 };
+
+export const pruneKind = (kind: Kind): Kind =>
+  pruneLink(kind, kindVariable, kindInstance, linkKind);
 
 export const showKind = (kind: Kind): string => {
   const names = new Map<Kind, string>();
@@ -164,10 +170,15 @@ export const constructorType = (constructor: TypeConstructor): Type => ({
   constructor,
 });
 
-export const prune = (type: Type): Type => {
-  if (type.kind !== "variable" || !type.instance) return type;
-  return (type.instance = prune(type.instance));
+const typeVariable = (value: Type): Variable | null =>
+  value.kind === "variable" ? value : null;
+const typeInstance = (variable: Variable): Type | undefined => variable.instance;
+const linkType = (variable: Variable, instance: Type): void => {
+  variable.instance = instance;
 };
+
+export const prune = (type: Type): Type =>
+  pruneLink(type, typeVariable, typeInstance, linkType);
 
 export const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);

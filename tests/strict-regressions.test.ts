@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { compile as rawCompile, show } from "../examples/strict/strict.ts";
-import { validate } from "langkit/ir";
 
 const compile = (source: string) =>
   rawCompile(`import "./examples/strict/stdlib.strict";\n${source}`);
@@ -10,7 +9,6 @@ const compile = (source: string) =>
 const build = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
-  validate(result.value.ir);
   return result.value;
 };
 

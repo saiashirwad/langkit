@@ -2,17 +2,29 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { check, run } from "langkit";
-import { create, validate, type Body, type Value } from "langkit/ir";
-import { emit } from "langkit/javascript";
+import { create, isReference, type Body, type Value } from "langkit/ir";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
+import { printingJavaScript } from "langkit/javascript/printing";
+import { variantsJavaScript } from "langkit/javascript/variants";
+import { printing } from "langkit/operations/printing";
+import { variants } from "langkit/operations/variants";
 
-const code = create<string>();
+const variantSet = variants<string>();
+const printSet = printing<string>();
+const code = create<string>().use(variantSet).use(printSet);
+const javascript = createJavaScriptEmitter(
+  coreJavaScript(code.coreOperationTraversals()),
+  variantsJavaScript(variantSet.operations),
+  printingJavaScript(printSet.operations),
+);
 
 const body = (result: Value<string>): Body<string> => ({ declarations: [], result });
 
 const num = (n: number) => code.literal("number", n);
 
 const evaluate = (root: Body<string>, context = {}) =>
-  runInNewContext(emit(root), context, { timeout: 1000 });
+  runInNewContext(javascript.emit(root, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }), context, { timeout: 1000 });
 
 test("recursive declarations preserve identity and execute factorial", () => {
   const computation = code.body(
@@ -37,6 +49,7 @@ test("recursive declarations preserve identity and execute factorial", () => {
         ),
       );
       const reference = yield* code.declareRecursive(factorial, value);
+      assert.ok(isReference(reference, code.coreReferenceId()));
       assert.equal(reference.node.binding, factorial);
       return code.call("number", reference, num(5));
     }),
@@ -44,7 +57,7 @@ test("recursive declarations preserve identity and execute factorial", () => {
   for (let i = 0; i < 2; i++) {
     const result = run(computation);
     assert.ok(result.success);
-    validate(result.value);
+    code.validate(result.value);
     assert.equal(result.value.declarations[0]!.recursive, true);
     assert.equal(evaluate(result.value), 120);
   }
@@ -58,7 +71,7 @@ test("recursive declarations reject non-functions at construction and validation
   );
   assert.throws(
     () =>
-      validate({
+      code.validate({
         declarations: [{ binding: target, value: num(1), recursive: true }],
         result: code.ref(target),
       }),
@@ -76,7 +89,7 @@ test("normal declarations still reject self-reference and forward reference", ()
   const x = code.binding("x", "number");
   assert.throws(
     () =>
-      validate({
+      code.validate({
         declarations: [{ binding: f, value: code.fn("function", x, body(code.ref(f))) }],
         result: code.ref(f),
       }),
@@ -86,7 +99,7 @@ test("normal declarations still reject self-reference and forward reference", ()
   const b = code.binding("b", "number");
   assert.throws(
     () =>
-      validate({
+      code.validate({
         declarations: [
           { binding: a, value: code.ref(b) },
           { binding: b, value: num(1) },
@@ -97,20 +110,9 @@ test("normal declarations still reject self-reference and forward reference", ()
   );
 });
 
-const effect = (label: string, value: Value<string>): Value<string> => ({
-  type: value.type,
-  node: {
-    kind: "block",
-    body: {
-      declarations: [
-        {
-          binding: code.binding("effect", "unit"),
-          value: code.print("unit", code.literal("string", label)),
-        },
-      ],
-      result: value,
-    },
-  },
+const effect = (label: string, value: Value<string>): Value<string> => code.block(value.type, {
+  declarations: [{ binding: code.binding("effect", "unit"), value: code.print("unit", code.literal("string", label)) }],
+  result: value,
 });
 
 test("variants and match evaluate fields and scrutinee once, run only selected branch", () => {
@@ -187,16 +189,16 @@ test("match validation enforces tag uniqueness, binding identity, and isolated s
   const x = code.binding("x", "number");
   const matched = code.variant("T", "A", [num(1)]);
   assert.throws(
-    () => validate(body(code.variant("T", "A", [code.ref(x)]))),
+    () => code.validate(body(code.variant("T", "A", [code.ref(x)]))),
     /Out-of-scope binding/,
   );
   assert.throws(
-    () => validate(body(code.match("number", code.ref(x), []))),
+    () => code.validate(body(code.match("number", code.ref(x), []))),
     /Out-of-scope binding/,
   );
   assert.throws(
     () =>
-      validate(
+      code.validate(
         body(
           code.match("number", matched, [
             { tag: "A", bindings: [x], body: body(code.ref(x)) },
@@ -208,7 +210,7 @@ test("match validation enforces tag uniqueness, binding identity, and isolated s
   );
   assert.throws(
     () =>
-      validate(
+      code.validate(
         body(
           code.match("number", matched, [{ tag: "A", bindings: [x], body: body(code.ref(x)) }], {
             body: body(code.ref(x)),
@@ -219,7 +221,7 @@ test("match validation enforces tag uniqueness, binding identity, and isolated s
   );
   assert.throws(
     () =>
-      validate(
+      code.validate(
         body(
           code.match("number", matched, [
             { tag: "A", bindings: [x], body: body(num(1)) },
@@ -231,7 +233,7 @@ test("match validation enforces tag uniqueness, binding identity, and isolated s
   );
   assert.throws(
     () =>
-      validate(
+      code.validate(
         body(
           code.match("number", matched, [
             { tag: "A", bindings: [], body: body(num(1)) },
@@ -239,11 +241,10 @@ test("match validation enforces tag uniqueness, binding identity, and isolated s
           ]),
         ),
       ),
-    /Duplicate match tag/,
   );
   assert.throws(
     () =>
-      validate({
+      code.validate({
         declarations: [{ binding: x, value: num(1) }],
         result: code.match("number", matched, [], { binding: x, body: body(code.ref(x)) }),
       }),

@@ -1,3 +1,4 @@
+import { pruneLink } from "langkit/inference"
 import { check, fail, type Check } from "langkit";
 
 // Inference belongs to this language, not the IR or the checking runner.
@@ -69,10 +70,15 @@ export const freshRow = (lacks: Iterable<string> = [], level = 0): RowVariable =
   lacks: new Set(lacks),
 });
 
-export const prune = (type: Type): Type => {
-  if (type.kind !== "variable" || !type.instance) return type;
-  return (type.instance = prune(type.instance));
+const typeVariable = (value: Type): Variable | null =>
+  value.kind === "variable" ? value : null;
+const typeInstance = (variable: Variable): Type | undefined => variable.instance;
+const linkType = (variable: Variable, instance: Type): void => {
+  variable.instance = instance;
 };
+
+export const prune = (type: Type): Type =>
+  pruneLink(type, typeVariable, typeInstance, linkType);
 
 export const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);

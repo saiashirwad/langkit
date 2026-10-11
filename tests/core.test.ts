@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bind, check, fail, get, lookup, pure, run, scoped, within } from "langkit";
-import { create, validate, type Body } from "langkit/ir";
-import { emit } from "langkit/javascript";
+import { create, isReference, type Body } from "langkit/ir";
+import { emit as emitJavaScript } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
+
+const emit = (code: ReturnType<typeof create<string>>, root: Body<string>) => emitJavaScript(root, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId(), handlers: coreJavaScript(code.coreOperationTraversals()) });
 
 const unwrap = <T>(result: ReturnType<typeof run<T>>): T => {
   if (!result.success) throw new Error(result.error.message);
@@ -120,7 +123,7 @@ test("body construction can be reused without accumulating declarations", () => 
   assert.equal(first.declarations.length, 1);
   assert.equal(second.declarations.length, 1);
   assert.notEqual(first.declarations[0]!.binding.id, second.declarations[0]!.binding.id);
-  assert.equal(emit(first), emit(second));
+  assert.equal(emit(code, first), emit(code, second));
 });
 
 test("reference types can vary without changing binding identity or scope", () => {
@@ -131,17 +134,19 @@ test("reference types can vary without changing binding identity or scope", () =
   assert.equal(code.ref(binding).type, "a -> a");
   assert.equal(numeric.type, "number -> number");
   assert.equal(boolean.type, "boolean -> boolean");
+  assert.ok(isReference(numeric, code.coreReferenceId()));
+  assert.ok(isReference(boolean, code.coreReferenceId()));
   assert.equal(numeric.node.binding, binding);
   assert.equal(boolean.node.binding, binding);
   assert.equal(binding.type, "a -> a");
-  assert.throws(() => validate({ declarations: [], result: numeric }), /Out-of-scope/);
+  assert.throws(() => code.validate({ declarations: [], result: numeric }), /Out-of-scope/);
   const param = code.binding("x", "a");
   const initial = code.fn("a -> a", param, { declarations: [], result: code.ref(param) });
   const body = {
     declarations: [{ binding, value: initial }],
     result: code.call("number", numeric, code.literal("number", 42)),
   };
-  assert.equal(runInNewContext(emit(body)), 42);
+  assert.equal(runInNewContext(emit(code, body)), 42);
 });
 
 test("declare needs an explicit construction body", () => {
@@ -153,7 +158,7 @@ test("scope extrusion is rejected before emission", () => {
   const code = create<string>();
   const escaped = code.binding("escaped", "number");
   const body: Body<string> = { declarations: [], result: code.ref(escaped) };
-  assert.throws(() => emit(body), /Out-of-scope binding: escaped/);
+  assert.throws(() => emit(code, body), /Out-of-scope binding: escaped/);
 });
 
 test("a declaration cannot reference itself or a later binding", () => {
@@ -161,7 +166,7 @@ test("a declaration cannot reference itself or a later binding", () => {
   const x = code.binding("x", "number");
   assert.throws(
     () =>
-      validate({
+      code.validate({
         declarations: [{ binding: x, value: code.ref(x) }],
         result: code.ref(x),
       }),
@@ -174,7 +179,7 @@ test("duplicate binding identities are rejected", () => {
   const x = code.binding("x", "number");
   const declaration = { binding: x, value: code.literal("number", 1) };
   assert.throws(
-    () => validate({ declarations: [declaration, declaration], result: code.ref(x) }),
+    () => code.validate({ declarations: [declaration, declaration], result: code.ref(x) }),
     /declared twice/,
   );
 });
@@ -192,7 +197,7 @@ test("emission makes hostile and colliding name hints harmless", () => {
       ),
     ),
   );
-  assert.equal(runInNewContext(emit(body)), 42);
+  assert.equal(runInNewContext(emit(code, body)), 42);
 });
 
 test("conditional bodies run only in the selected branch", () => {
@@ -208,11 +213,11 @@ test("conditional bodies run only in the selected branch", () => {
     declarations: [],
     result: code.conditional("number", code.literal("boolean", true), good, bad),
   };
-  assert.equal(runInNewContext(emit(result)), 42);
+  assert.equal(runInNewContext(emit(code, result)), 42);
   const fn = code.fn("fn", param, { declarations: [], result: code.ref(param) });
   assert.equal(
     runInNewContext(
-      emit({ declarations: [], result: code.call("number", fn, code.literal("number", 42)) }),
+      emit(code, { declarations: [], result: code.call("number", fn, code.literal("number", 42)) }),
     ),
     42,
   );
@@ -233,6 +238,6 @@ test("IR declaration scopes preserve left-to-right evaluation", () => {
       ),
     ),
   );
-  const js = emit({ declarations: [], result: code.binary("number", "+", bad, later) });
+  const js = emit(code, { declarations: [], result: code.binary("number", "+", bad, later) });
   assert.throws(() => runInNewContext(js), /11 is not a function/);
 });

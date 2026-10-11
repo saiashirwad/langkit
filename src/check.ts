@@ -1,4 +1,4 @@
-import type { Diagnostic, Span } from "./diagnostic.ts";
+import { withDocument, type Diagnostic, type Span } from "./diagnostic.ts";
 
 export type Result<A> =
   | { readonly success: true; readonly value: A }
@@ -51,6 +51,13 @@ export class Check<A> {
 
   context(label: string): Check<A> {
     return new Check((runtime) => this.step({ ...runtime, context: [...runtime.context, label] }));
+  }
+
+  inDocument(uri: string): Check<A> {
+    return new Check((runtime) => {
+      const result = this.step(runtime);
+      return result.success ? result : { success: false, error: withDocument(result.error, uri) };
+    });
   }
 }
 

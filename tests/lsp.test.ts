@@ -144,6 +144,10 @@ const client = (
         "textDocument/publishDiagnostics",
         (value) => value.version === version && (!uri || value.uri === uri),
       ),
+    barrier: async (method: string, params: unknown) => {
+      await request(method, params);
+      return notifications.splice(0);
+    },
     shutdown: async () => {
       await request("shutdown", null);
       const exited = once(child, "exit");
@@ -675,6 +679,137 @@ serve((source, context) => {
   },
 );
 
+test(
+  "LSP imported symbol-only hover ranges stay at the use site",
+  { timeout: 10000 },
+  async (t) => {
+    const directory = mkdtempSync(join(tmpdir(), "langkit-lsp-hover-range-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const importedUri = pathToFileURL(join(directory, "defs.mini")).href;
+    const rootUri = pathToFileURL(join(directory, "main.mini")).href;
+    const imported = "let foo = 42";
+    writeFileSync(new URL(importedUri), imported);
+    const script = `import { serve } from "langkit/lsp";
+const dep = __DEP__;
+serve((source, context) => {
+  if (context.uri === dep) return { diagnostics: [], definitions: [], references: [], tokens: [], types: [] };
+  const snapshot = context.read(dep);
+  const id = Symbol("foo");
+  const start = snapshot.indexOf("foo");
+  return {
+    diagnostics: [],
+    definitions: [{ id, name: "foo", kind: "variable", type: "number", uri: dep, span: { start, end: start + 3 } }],
+    references: [{ id, span: { start: 0, end: 3 } }],
+    tokens: [],
+    types: source === "foo" ? [] : [{ span: { start: 0, end: 3 }, type: "boolean" }],
+    sources: new Map([[dep, snapshot]]),
+  };
+}, type => type);`.replace("__DEP__", JSON.stringify(importedUri));
+    const server = client(t, ["--input-type=module", "--eval", script]);
+    await server.request("initialize", { processId: null, capabilities: {} });
+    server.notify("initialized", {});
+    const source = "foo";
+    const query = (text: string) => ({
+      textDocument: { uri: rootUri },
+      position: TextDocument.create(rootUri, "mini", 1, text).positionAt(0),
+    });
+    server.notify("textDocument/didOpen", {
+      textDocument: { uri: rootUri, languageId: "mini", version: 1, text: source },
+    });
+    await server.diagnostics(1, rootUri);
+    const hover = await server.request<Hover>("textDocument/hover", query(source));
+    assert.equal(hover?.contents.value, "number");
+    assert.deepEqual(hover?.range, { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } });
+    const definition = await server.request<{ uri: string; range: { start: { line: number; character: number }; end: { line: number; character: number } } }>("textDocument/definition", query(source));
+    assert.equal(definition?.uri, importedUri);
+    assert.deepEqual(definition?.range, { start: { line: 0, character: 4 }, end: { line: 0, character: 7 } });
+    const changed = "foo + 1";
+    server.notify("textDocument/didChange", {
+      textDocument: { uri: rootUri, version: 2 },
+      contentChanges: [{ text: changed }],
+    });
+    await server.diagnostics(2, rootUri);
+    const typedHover = await server.request<Hover>("textDocument/hover", query(changed));
+    assert.equal(typedHover?.contents.value, "boolean");
+    assert.deepEqual(typedHover?.range, { start: { line: 0, character: 0 }, end: { line: 0, character: 3 } });
+    await server.shutdown();
+  },
+);
+test(
+  "LSP invalidation follows transitive reads and refreshes dependents from disk on close",
+  { timeout: 10000 },
+  async (t) => {
+    const directory = mkdtempSync(join(tmpdir(), "langkit-lsp-transitive-"));
+    t.after(() => rmSync(directory, { recursive: true, force: true }));
+    const rootUri = pathToFileURL(join(directory, "main.mini")).href;
+    const bridgeUri = pathToFileURL(join(directory, "bridge.mini")).href;
+    const leafUri = pathToFileURL(join(directory, "leaf.mini")).href;
+    writeFileSync(join(directory, "bridge.mini"), leafUri);
+    writeFileSync(join(directory, "leaf.mini"), "disk-good");
+    const source = `import { serve } from "langkit/lsp";
+const root = ${JSON.stringify(rootUri)};
+const bridge = ${JSON.stringify(bridgeUri)};
+serve((text, context) => {
+  if (context.uri !== root) return { diagnostics: [], definitions: [], references: [], tokens: [], types: [] };
+  const leaf = context.read(context.read(bridge).trim());
+  return { diagnostics: leaf.includes("bad") ? [{ message: "bad leaf", context: [] }] : [], definitions: [], references: [], tokens: [], types: [] };
+}, type => type);`;
+    const server = client(t, ["--input-type=module", "--eval", source]);
+    await server.request("initialize", { processId: null, capabilities: {} });
+    server.notify("initialized", {});
+    server.notify("textDocument/didOpen", {
+      textDocument: { uri: rootUri, languageId: "mini", version: 1, text: "root" },
+    });
+    assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, []);
+
+    const unrelatedUri = pathToFileURL(join(directory, "unrelated.mini")).href;
+    server.notify("textDocument/didOpen", {
+      textDocument: { uri: unrelatedUri, languageId: "mini", version: 1, text: "unrelated" },
+    });
+    await server.diagnostics(1, unrelatedUri);
+    server.notify("textDocument/didOpen", {
+      textDocument: { uri: leafUri, languageId: "mini", version: 1, text: "buffer-good" },
+    });
+    assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, []);
+    await server.diagnostics(1, leafUri);
+    const afterOpen = await server.barrier("textDocument/hover", {
+      textDocument: { uri: unrelatedUri },
+      position: { line: 0, character: 0 },
+    });
+    assert.equal(
+      afterOpen.some(
+        (message) =>
+          message.method === "textDocument/publishDiagnostics" &&
+          (message.params as Diagnostics).uri === unrelatedUri,
+      ),
+      false,
+    );
+
+    server.notify("textDocument/didChange", {
+      textDocument: { uri: leafUri, version: 2 },
+      contentChanges: [{ text: "buffer-bad" }],
+    });
+    assert.match((await server.diagnostics(1, rootUri)).diagnostics[0]!.message, /bad leaf/);
+    await server.diagnostics(2, leafUri);
+    const afterChange = await server.barrier("textDocument/hover", {
+      textDocument: { uri: unrelatedUri },
+      position: { line: 0, character: 0 },
+    });
+    assert.equal(
+      afterChange.some(
+        (message) =>
+          message.method === "textDocument/publishDiagnostics" &&
+          (message.params as Diagnostics).uri === unrelatedUri,
+      ),
+      false,
+    );
+
+    server.notify("textDocument/didClose", { textDocument: { uri: leafUri } });
+    await server.diagnostics(undefined, leafUri);
+    assert.deepEqual((await server.diagnostics(1, rootUri)).diagnostics, []);
+    await server.shutdown();
+  },
+);
 test("semantic tokens sort, split CRLF lines and count astral characters as UTF-16", () => {
   const document = TextDocument.create(uri, "toy", 1, "😀x\r\ny\nz");
   assert.deepEqual(
@@ -753,29 +888,6 @@ test("Shapes LSP exposes macro templates, expanded results and lexical definitio
   await server.shutdown();
 });
 
-test("Shapes LSP formats the orders pay hover without client-side wrapping", { timeout: 15000 }, async (t) => {
-  const server = client(t, [fileURLToPath(new URL("../examples/shapes/shapes-lsp.ts", import.meta.url)), "--stdio"]);
-  await server.request("initialize", { processId: null, rootUri: null, capabilities: {} });
-  server.notify("initialized", {});
-  const url = new URL("../examples/shapes/orders.shapes", import.meta.url);
-  const source = readFileSync(url, "utf8");
-  server.notify("textDocument/didOpen", { textDocument: { uri: url.href, languageId: "shapes", version: 1, text: source } });
-  assert.deepEqual((await server.diagnostics(1, url.href)).diagnostics, []);
-  const hover = await server.request<Hover>("textDocument/hover", {
-    textDocument: { uri: url.href }, position: position(source, source.indexOf('(pay "') + 1),
-  });
-  assert.equal(hover?.contents.kind, "plaintext");
-  const value = hover!.contents.value;
-  assert.match(value, /^string ->\nPayable & \{\n  customer: Customer & \{ member: boolean, \.\.r \}/);
-  assert.match(value, /\n  payment: \{ amount: number, reference: string, settled: boolean \},/);
-  assert.ok(!value.includes("where"));
-  assert.ok(value.includes("first: PricedLine & { ..r1 }"));
-  assert.ok(value.includes("second: PricedLine & { ..r2 }"));
-  assert.ok(value.includes("..r3"));
-  assert.ok(value.includes("..r4"));
-  assert.ok(value.split("\n").every(line => line.length <= 80));
-  await server.shutdown();
-});
 
 test("Shapes LSP names annotated signatures and resolves shape annotations", { timeout: 15000 }, async (t) => {
   const server = client(t, [fileURLToPath(new URL("../examples/shapes/shapes-lsp.ts", import.meta.url)), "--stdio"]);

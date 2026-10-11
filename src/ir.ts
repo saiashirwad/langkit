@@ -1,285 +1,165 @@
 import { check, get, scoped, within, type Check } from "./check.ts";
 import type { Span } from "./diagnostic.ts";
-
+import { coreOperations } from "./operations/core.ts";
 export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
 
-export type Binding<T> = {
+export type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T };
+export type OperationNode = { readonly kind: string };
+export type Value<T> = { readonly type: T; readonly node: OperationNode; readonly operationId: symbol; readonly span?: Span };
+export type OperationValue<T, Node extends OperationNode> = Value<T> & { readonly node: Node };
+export type Reference<T> = OperationValue<T, { readonly kind: "ref"; readonly binding: Binding<T> }>;
+export type Declaration<T> = { readonly recursive?: true; readonly binding: Binding<T>; readonly value: Value<T> };
+export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readonly result: Value<T> };
+export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T> };
+export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T> };
+
+/**
+ * Descriptors own child order, scoped bindings, references and immutable reconstruction.
+ * Core enforces recursive initialization separately by its own function descriptor identity.
+ */
+export type OperationTraversal<T> = {
   readonly id: symbol;
-  readonly name: string;
-  readonly type: T;
+  readonly kind: string;
+  readonly children: (node: OperationNode) => readonly Value<T>[];
+  readonly scopedBodies: (node: OperationNode) => readonly { readonly body: Body<T>; readonly bindings: readonly Binding<T>[] }[];
+  readonly references: (node: OperationNode) => readonly Binding<T>[];
+  readonly map: (node: OperationNode, value: (child: Value<T>) => Value<T>, body: (child: Body<T>) => Body<T>, binding: (binding: Binding<T>) => Binding<T>) => OperationNode;
+  readonly validate?: (node: OperationNode) => void;
+};
+export type OperationFeature<T, Methods extends object> = { readonly methods: Methods; readonly operations: readonly OperationTraversal<T>[] };
+export type LanguageBuilder<T, Methods extends object> = Methods & {
+  use<More extends object>(feature: OperationFeature<T, More>): LanguageBuilder<T, Methods & More>;
+  operationTraversals(): readonly OperationTraversal<T>[];
+  coreOperationTraversals(): readonly OperationTraversal<T>[];
+  coreReferenceId(): symbol;
+  coreFunctionId(): symbol;
+  validate(root: Body<T>): void;
 };
 
-export type Value<T> = {
-  readonly type: T;
-  readonly node: Node<T>;
-  readonly span?: Span;
-};
+/** Narrow only values created by the given core reference descriptor instance. */
+export const isReference = <T>(value: Value<T>, referenceOperationId: symbol): value is Reference<T> =>
+  value.operationId === referenceOperationId && value.node.kind === "ref";
 
-export type Reference<T> = Value<T> & {
-  readonly node: { readonly kind: "ref"; readonly binding: Binding<T> };
-};
-
-export type Node<T> =
-  | { readonly kind: "literal"; readonly value: number | boolean | string }
-  | {
-      readonly kind: "record";
-      readonly fields: readonly { readonly name: string; readonly value: Value<T> }[];
-      readonly base?: Value<T>;
-    }
-  | { readonly kind: "field"; readonly record: Value<T>; readonly name: string }
-  | { readonly kind: "merge"; readonly left: Value<T>; readonly right: Value<T> }
-  | { readonly kind: "print"; readonly value: Value<T> }
-  | { readonly kind: "field-order"; readonly names: readonly string[] }
-  | {
-      readonly kind: "record-fold";
-      readonly order: Value<T>;
-      readonly metadata: Value<T>;
-      readonly record: Value<T>;
-      readonly initial: Value<T>;
-      readonly step: Value<T>;
-    }
-  | { readonly kind: "variant"; readonly tag: string; readonly fields: readonly Value<T>[] }
-  | {
-      readonly kind: "match";
-      readonly value: Value<T>;
-      readonly cases: readonly MatchCase<T>[];
-      readonly fallback?: MatchFallback<T>;
-    }
-  | { readonly kind: "ref"; readonly binding: Binding<T> }
-  | {
-      readonly kind: "binary";
-      readonly op: Operator;
-      readonly left: Value<T>;
-      readonly right: Value<T>;
-    }
-  | { readonly kind: "call"; readonly fn: Value<T>; readonly arg: Value<T> }
-  | { readonly kind: "fn"; readonly param: Binding<T>; readonly body: Body<T> }
-  | { readonly kind: "if"; readonly cond: Value<T>; readonly then: Body<T>; readonly else: Body<T> }
-  | { readonly kind: "block"; readonly body: Body<T> };
-
-export type MatchCase<T> = {
-  readonly tag: string;
-  readonly bindings: readonly Binding<T>[];
-  readonly body: Body<T>;
-};
-
-export type MatchFallback<T> = {
-  readonly binding?: Binding<T>;
-  readonly body: Body<T>;
-};
-
-export type Declaration<T> = {
-  readonly recursive?: true;
-  readonly binding: Binding<T>;
-  readonly value: Value<T>;
-};
-
-/** A constructed body, not the generator function that constructs it. */
-export type Body<T> = {
-  readonly declarations: readonly Declaration<T>[];
-  readonly result: Value<T>;
-};
-
-/** T belongs to the language. These constructors do not decide its typing rules. */
+/** Core convenience builder includes only primitives; all richer operations are opt-in sets. */
 export const create = <T>() => {
   const output = scoped<Declaration<T>[] | undefined>(undefined);
-
-  const value = (type: T, node: Node<T>): Value<T> => ({ type, node });
-
+  const coreFeature = coreOperations<T>();
+  const operations = [...coreFeature.operations];
   const binding = (name: string, type: T): Binding<T> => ({ id: Symbol(name), name, type });
-
-  // A polymorphic binding can have a different instantiated type at each use.
-  const ref = (binding: Binding<T>, type: T = binding.type): Reference<T> => ({
-    type,
-    node: { kind: "ref", binding },
+  const ref = (target: Binding<T>, type: T = target.type): Reference<T> => coreFeature.methods.ref(type, target);
+  const body = (result: Check<Value<T>>): Check<Body<T>> => check(function* () {
+    const declarations: Declaration<T>[] = [];
+    const returned = yield* within(output, declarations, result);
+    return { declarations: [...declarations], result: returned };
   });
-
-  const body = (result: Check<Value<T>>): Check<Body<T>> =>
-    check(function* () {
-      // Allocate on each run: a reusable Check never retains a previous body's statements.
-      const declarations: Declaration<T>[] = [];
-      const returned = yield* within(output, declarations, result);
-      return { declarations: [...declarations], result: returned };
-    });
-
-  const declare = (name: string, initial: Value<T>): Check<Reference<T>> =>
-    check(function* () {
+  const declare = (name: string, initial: Value<T>): Check<Reference<T>> => check(function* () {
+    const declarations = yield* get(output);
+    if (!declarations) throw new Error("IR declarations need an enclosing body");
+    const target = binding(name, initial.type);
+    declarations.push({ binding: target, value: initial });
+    return ref(target);
+  });
+  const core = {
+    binding, ref, body, declare,
+    literal: coreFeature.methods.literal,
+    binary: coreFeature.methods.binary,
+    call: coreFeature.methods.call,
+    fn: coreFeature.methods.fn,
+    conditional: coreFeature.methods.conditional,
+    block: coreFeature.methods.block,
+    scope: (result: Check<Value<T>>): Check<Value<T>> => body(result).map((built) => coreFeature.methods.block(built.result.type, built)),
+    at: (value: Value<T>, span: Span): Value<T> => ({ ...value, span }),
+    declareRecursive: (target: Binding<T>, initial: Value<T>): Check<Reference<T>> => check(function* () {
+      if (initial.operationId !== coreFeature.functionId) throw new Error("Recursive declarations require a function initializer");
       const declarations = yield* get(output);
       if (!declarations) throw new Error("IR declarations need an enclosing body");
-      const target = binding(name, initial.type);
-      declarations.push({ binding: target, value: initial });
+      declarations.push({ binding: target, value: initial, recursive: true });
       return ref(target);
-    });
-
-  return {
-    binding,
-    ref,
-    body,
-    declare,
-
-    declareRecursive: (target: Binding<T>, initial: Value<T>): Check<Reference<T>> =>
-      check(function* () {
-        if (initial.node.kind !== "fn")
-          throw new Error("Recursive declarations require a function initializer");
-        const declarations = yield* get(output);
-        if (!declarations) throw new Error("IR declarations need an enclosing body");
-        declarations.push({ binding: target, value: initial, recursive: true });
-        return ref(target);
-      }),
-
-    variant: (type: T, tag: string, fields: readonly Value<T>[]): Value<T> =>
-      value(type, { kind: "variant", tag, fields }),
-
-    match: (
-      type: T,
-      matched: Value<T>,
-      cases: readonly MatchCase<T>[],
-      fallback?: MatchFallback<T>,
-    ): Value<T> =>
-      value(
-        type,
-        fallback
-          ? { kind: "match", value: matched, cases, fallback }
-          : { kind: "match", value: matched, cases },
-      ),
-
-    literal: (type: T, literal: number | boolean | string): Value<T> =>
-      value(type, { kind: "literal", value: literal }),
-
-    // Fields evaluate in source order, followed by the optional base.
-    record: (
-      type: T,
-      fields: readonly { readonly name: string; readonly value: Value<T> }[],
-      base?: Value<T>,
-    ): Value<T> =>
-      value(type, base ? { kind: "record", fields, base } : { kind: "record", fields }),
-
-    // Languages must prove disjointness themselves; the IR only preserves evaluation order.
-    merge: (type: T, left: Value<T>, right: Value<T>): Value<T> =>
-      value(type, { kind: "merge", left, right }),
-
-    field: (type: T, record: Value<T>, name: string): Value<T> =>
-      value(type, { kind: "field", record, name }),
-
-    print: (type: T, printed: Value<T>): Value<T> => value(type, { kind: "print", value: printed }),
-
-    // Languages validate the order's row index and the polymorphic step. This
-    // IR operation only specifies ordered, strict runtime traversal.
-    fieldOrder: (type: T, names: readonly string[]): Value<T> =>
-      value(type, { kind: "field-order", names }),
-
-    recordFold: (
-      type: T,
-      order: Value<T>,
-      metadata: Value<T>,
-      record: Value<T>,
-      initial: Value<T>,
-      step: Value<T>,
-    ): Value<T> => value(type, { kind: "record-fold", order, metadata, record, initial, step }),
-
-    binary: (type: T, op: Operator, left: Value<T>, right: Value<T>): Value<T> =>
-      value(type, { kind: "binary", op, left, right }),
-
-    call: (type: T, fn: Value<T>, arg: Value<T>): Value<T> =>
-      value(type, { kind: "call", fn, arg }),
-
-    fn: (type: T, param: Binding<T>, body: Body<T>): Value<T> =>
-      value(type, { kind: "fn", param, body }),
-
-    conditional: (type: T, cond: Value<T>, then: Body<T>, otherwise: Body<T>): Value<T> =>
-      value(type, { kind: "if", cond, then, else: otherwise }),
-
-    scope: (result: Check<Value<T>>): Check<Value<T>> =>
-      body(result).map((body) => value(body.result.type, { kind: "block", body })),
-
-    at: (value: Value<T>, span: Span): Value<T> => ({ ...value, span }),
+    }),
   };
+  const methodNames = new Set(Object.keys(core));
+  const use = <Methods extends object>(feature: OperationFeature<T, Methods>) => {
+    for (const method of Object.keys(feature.methods)) {
+      if (methodNames.has(method) || method === "use" || method === "validate" || method === "operationTraversals" || method === "coreOperationTraversals" || method === "coreReferenceId" || method === "coreFunctionId")
+        throw new Error(`Duplicate language feature method: ${method}`);
+    }
+    for (const operation of feature.operations) {
+      if (operations.some((existing) => existing.id === operation.id)) throw new Error(`Duplicate language operation descriptor: ${operation.kind}`);
+    }
+    for (const method of Object.keys(feature.methods)) methodNames.add(method);
+    operations.push(...feature.operations);
+    Object.assign(core, feature.methods);
+    return core as unknown as LanguageBuilder<T, typeof core & Methods>;
+  };
+  return Object.assign(core, {
+    use,
+    operationTraversals: (): readonly OperationTraversal<T>[] => operations,
+    coreOperationTraversals: (): readonly OperationTraversal<T>[] => coreFeature.operations,
+    coreReferenceId: (): symbol => coreFeature.refId,
+    coreFunctionId: (): symbol => coreFeature.functionId,
+    validate: (root: Body<T>): void => validate(root, operations, coreFeature.functionId),
+  });
 };
 
-/** Structural scope checks only. Language-specific type verification belongs to T's owner. */
-export const validate = <T>(root: Body<T>): void => {
-  const declared = new Set<symbol>();
-
-  const introduce = (binding: Binding<T>, visible: Set<symbol>) => {
-    if (declared.has(binding.id)) throw new Error(`Binding declared twice: ${binding.name}`);
-    declared.add(binding.id);
-    visible.add(binding.id);
+/** Scope validation is descriptor-driven; recursive declarations require this core function id. */
+export const validate = <T>(root: Body<T>, operations: readonly OperationTraversal<T>[], coreFunctionId?: symbol): void => {
+  const byId = new Map<symbol, OperationTraversal<T>>();
+  for (const operation of operations) {
+    if (byId.has(operation.id)) throw new Error(`Duplicate operation descriptor: ${operation.kind}`);
+    byId.set(operation.id, operation);
+  }
+  const declarations = new Set<symbol>();
+  const introduce = (item: Binding<T>, visible: Set<symbol>) => {
+    if (declarations.has(item.id)) throw new Error(`Binding declared twice: ${item.name}`);
+    declarations.add(item.id);
+    visible.add(item.id);
   };
-
-  const body = (body: Body<T>, parent: ReadonlySet<symbol>, params: readonly Binding<T>[] = []) => {
+  const visitBody = (built: Body<T>, parent: ReadonlySet<symbol>, parameters: readonly Binding<T>[] = []): void => {
     const visible = new Set(parent);
-    for (const param of params) introduce(param, visible);
-    for (const declaration of body.declarations) {
+    for (const parameter of parameters) introduce(parameter, visible);
+    for (const declaration of built.declarations) {
+      const descriptor = byId.get(declaration.value.operationId);
+      if (!descriptor) throw new Error(`Missing operation traversal for IR operation: ${declaration.value.node.kind}`);
       if (declaration.recursive) {
-        if (declaration.value.node.kind !== "fn")
+        if (!coreFunctionId || declaration.value.operationId !== coreFunctionId)
           throw new Error("Recursive declarations require a function initializer");
         introduce(declaration.binding, visible);
       }
-      visit(declaration.value, visible);
+      visitValue(declaration.value, visible);
       if (!declaration.recursive) introduce(declaration.binding, visible);
     }
-    visit(body.result, visible);
+    visitValue(built.result, visible);
   };
-
-  const visit = (value: Value<T>, visible: ReadonlySet<symbol>): void => {
-    const node = value.node;
-    switch (node.kind) {
-      case "literal":
-      case "field-order":
-        return;
-      case "record-fold":
-        visit(node.order, visible);
-        visit(node.metadata, visible);
-        visit(node.record, visible);
-        visit(node.initial, visible);
-        visit(node.step, visible);
-        return;
-      case "variant":
-        for (const field of node.fields) visit(field, visible);
-        return;
-      case "match": {
-        visit(node.value, visible);
-        const tags = new Set<string>();
-        for (const branch of node.cases) {
-          if (tags.has(branch.tag)) throw new Error(`Duplicate match tag: ${branch.tag}`);
-          tags.add(branch.tag);
-          body(branch.body, visible, branch.bindings);
-        }
-        if (node.fallback)
-          body(node.fallback.body, visible, node.fallback.binding ? [node.fallback.binding] : []);
-        return;
-      }
-      case "record":
-        for (const field of node.fields) visit(field.value, visible);
-        if (node.base) visit(node.base, visible);
-        return;
-      case "field":
-        return visit(node.record, visible);
-      case "print":
-        return visit(node.value, visible);
-      case "ref":
-        if (!visible.has(node.binding.id))
-          throw new Error(`Out-of-scope binding: ${node.binding.name}`);
-        return;
-      case "merge":
-      case "binary":
-        visit(node.left, visible);
-        visit(node.right, visible);
-        return;
-      case "call":
-        visit(node.fn, visible);
-        visit(node.arg, visible);
-        return;
-      case "fn":
-        return body(node.body, visible, [node.param]);
-      case "block":
-        return body(node.body, visible);
-      case "if":
-        visit(node.cond, visible);
-        body(node.then, visible);
-        body(node.else, visible);
+  const visitValue = (value: Value<T>, visible: ReadonlySet<symbol>): void => {
+    const descriptor = byId.get(value.operationId);
+    if (!descriptor) throw new Error(`Missing operation traversal for IR operation: ${value.node.kind}`);
+    descriptor.validate?.(value.node);
+    for (const referenced of descriptor.references(value.node)) {
+      if (!visible.has(referenced.id)) throw new Error(`Out-of-scope binding: ${referenced.name}`);
     }
+    for (const child of descriptor.children(value.node)) visitValue(child, visible);
+    for (const scoped of descriptor.scopedBodies(value.node)) visitBody(scoped.body, visible, scoped.bindings);
   };
+  visitBody(root, new Set());
+};
 
-  body(root, new Set());
+/** Reconstructs recursively and allows bottom-up replacement after descriptor mapping. */
+export const mapBody = <T>(
+  root: Body<T>,
+  operations: readonly OperationTraversal<T>[],
+  mapBinding: (binding: Binding<T>) => Binding<T> = (binding) => binding,
+  transformValue: (original: Value<T>, mapped: Value<T>) => Value<T> = (_original, mapped) => mapped,
+): Body<T> => {
+  const byId = new Map(operations.map((operation) => [operation.id, operation]));
+  const mapValue = (original: Value<T>): Value<T> => {
+    const descriptor = byId.get(original.operationId);
+    if (!descriptor) throw new Error(`Missing operation mapping for IR operation: ${original.node.kind}`);
+    const mapped = { ...original, node: descriptor.map(original.node, mapValue, mapBuiltBody, mapBinding) };
+    return transformValue(original, mapped);
+  };
+  const mapBuiltBody = (built: Body<T>): Body<T> => ({
+    declarations: built.declarations.map((declaration) => ({ ...declaration, binding: mapBinding(declaration.binding), value: mapValue(declaration.value) })),
+    result: mapValue(built.result),
+  });
+  return mapBuiltBody(root);
 };

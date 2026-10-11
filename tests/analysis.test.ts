@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { check, fail, pure, run } from "langkit";
+import { check, fail, pure, run, withDocument, withLocation, type Diagnostic } from "langkit";
 import { create, definitionAt, highlight, semanticTokens, typeAt } from "langkit/analysis";
 import { analyze, compile, show } from "../examples/toy/toy.ts";
 
@@ -167,4 +167,41 @@ test("separate source analyses and compilation do not share facts", () => {
   assert.equal(second.diagnostics[0]!.message, "Unbound variable: x");
   assert.equal(first.definitions.length, 1);
   assert.equal(first.references.length, 1);
+});
+
+test("symbol definitions have independent kinds and optional hover types", () => {
+  const facts = create<{ readonly display: string }>();
+  const enumBinding = { id: Symbol("Color"), name: "Color" };
+  const memberBinding = { id: Symbol("Red"), name: "Red", type: { display: "Color" } };
+  const analysis = facts.collect(
+    check(function* () {
+      yield* facts.define(enumBinding, { start: 0, end: 5 }, "enum");
+      yield* facts.define(memberBinding, { start: 6, end: 9 }, "enumMember");
+      yield* facts.reference(enumBinding, { start: 10, end: 15 });
+    }),
+  ).analysis;
+  assert.deepEqual(analysis.types, [{ span: { start: 6, end: 9 }, type: { display: "Color" } }]);
+  assert.equal(definitionAt(analysis, 11)!.kind, "enum");
+  assert.equal(definitionAt(analysis, 11)!.type, undefined);
+  assert.deepEqual(semanticTokens({ ...analysis, tokens: [
+    { span: { start: 0, end: 5 }, kind: "variable" },
+    { span: { start: 6, end: 9 }, kind: "variable" },
+    { span: { start: 10, end: 15 }, kind: "variable" },
+  ] }).map((token) => token.kind), ["enum", "enumMember", "enum"]);
+});
+
+test("diagnostic source identity and rerouting preserve the original location", () => {
+  const local = { message: "bad", context: [], span: { start: 2, end: 4 } } satisfies Diagnostic;
+  const identified = withDocument(local, "file:///root.lang");
+  assert.deepEqual(identified.location, { uri: "file:///root.lang", span: { start: 2, end: 4 } });
+  assert.deepEqual(identified.origin, identified.location);
+
+  const dependency = { uri: "file:///dep.lang", span: { start: 7, end: 9 } };
+  const routed = withLocation(withDocument({ ...local, location: dependency }, "file:///root.lang"), {
+    uri: "file:///root.lang",
+    span: { start: 20, end: 23 },
+  });
+  assert.deepEqual(routed.origin, dependency);
+  assert.deepEqual(routed.location, { uri: "file:///root.lang", span: { start: 20, end: 23 } });
+  assert.deepEqual(routed.span, local.span);
 });

@@ -1,6 +1,7 @@
 // Compile-time contracts, checked by pnpm typecheck.
 import { check, get, pure, scoped, within, type Check } from "langkit";
 import { create, type Value } from "langkit/ir";
+import { records } from "langkit/operations/records";
 
 const number = scoped(0);
 const narrow = scoped<0>(0);
@@ -28,3 +29,18 @@ code.ref(binding, "string");
 // @ts-expect-error Language type universes cannot silently cross.
 const other: Value<"text"> = value;
 void other;
+
+
+const coreOnly = create<"number" | "boolean">();
+// @ts-expect-error Records are an opt-in operation feature, not part of the core builder.
+coreOnly.record("record", []);
+const recordFeature = records<"number" | "record">();
+const recordLanguage = create<"number" | "record">().use(recordFeature);
+const recordValue = recordLanguage.record("record", [{ name: "answer", value: recordLanguage.literal("number", 42) }]);
+const selected: Value<"number" | "record"> = recordLanguage.field("number", recordValue, "answer");
+void selected;
+// @ts-expect-error Feature payloads are checked against the selected language universe.
+recordLanguage.record("text", []);
+// @ts-expect-error Custom feature values retain the language's payload universe.
+const otherRecord: Value<"text"> = recordValue;
+void otherRecord;

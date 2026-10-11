@@ -3,13 +3,11 @@ import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { validate } from "langkit/ir";
 import { analyze, compile, show } from "../examples/ur/ur.ts";
 
 const execute = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
-  validate(result.value.ir);
   const output: unknown[] = [];
   const value: unknown = runInNewContext(
     result.value.javascript,

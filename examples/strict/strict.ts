@@ -12,13 +12,20 @@ import {
   type Result,
   type Span,
 } from "langkit";
-import { create, type Binding, type Body, type Value } from "langkit/ir";
+import { create, mapBody, isReference, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
-import { emit } from "langkit/javascript";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
+import { records } from "langkit/operations/records";
+import { variants } from "langkit/operations/variants";
+import { printing } from "langkit/operations/printing";
+import { recordsJavaScript } from "langkit/javascript/records";
+import { variantsJavaScript } from "langkit/javascript/variants";
+import { printingJavaScript } from "langkit/javascript/printing";
 import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
-import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
+import { loadModules, type ModuleOptions, type ModuleGraph, type ModuleSource } from "langkit/modules";
 import { runInNewContext } from "node:vm";
 import {
   program,
@@ -41,7 +48,6 @@ import {
   fresh,
   freshRow,
   prune,
-  flatten,
   exclude,
   unify,
   free,
@@ -94,8 +100,16 @@ type Constructor = {
 };
 
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[] };
-
-const code = create<Type>();
+const recordFeature = records<Type>();
+const variantFeature = variants<Type>();
+const printingFeature = printing<Type>();
+const code = create<Type>().use(recordFeature).use(variantFeature).use(printingFeature);
+const javascript = createJavaScriptEmitter<Type>(
+  coreJavaScript<Type>(code.coreOperationTraversals()),
+  recordsJavaScript<Type>(recordFeature.operations),
+  variantsJavaScript<Type>(variantFeature.operations),
+  printingJavaScript<Type>(printingFeature.operations),
+);
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
@@ -439,7 +453,7 @@ const elaborateLet = (
       } else computation = annotation ? checkExpr(expr.value, annotation) : elaborate(expr.value);
       let built = yield* code.body(within(wanted, local, computation));
       let initial = built.declarations.length
-        ? { type: built.result.type, node: { kind: "block" as const, body: built } }
+        ? code.block(built.result.type, built)
         : built.result;
       let scheme: Scheme;
       if (annotation) {
@@ -1086,88 +1100,10 @@ const withPrelude = (body: Check<Value<Type>>): Check<Value<Type>> =>
     );
   });
 
-// Evidence holes exist only while checking. Resolve them before handing the IR
-// to the shared validator/emitter; no typeclass machinery enters the shared IR.
-const resolveBody = (body: Body<Type>, solved: ReadonlyMap<symbol, Value<Type>>): Body<Type> => {
-  const visit = (value: Value<Type>): Value<Type> => {
-    const node = value.node;
-    switch (node.kind) {
-      case "ref":
-        return solved.get(node.binding.id) ?? value;
-      case "literal":
-        return value;
-      case "merge":
-      case "binary":
-        return { ...value, node: { ...node, left: visit(node.left), right: visit(node.right) } };
-      case "call":
-        return { ...value, node: { ...node, fn: visit(node.fn), arg: visit(node.arg) } };
-      case "fn":
-      case "block":
-        return { ...value, node: { ...node, body: resolveBody(node.body, solved) } };
-      case "if":
-        return {
-          ...value,
-          node: {
-            ...node,
-            cond: visit(node.cond),
-            then: resolveBody(node.then, solved),
-            else: resolveBody(node.else, solved),
-          },
-        };
-      case "record":
-        return {
-          ...value,
-          node: {
-            ...node,
-            fields: node.fields.map((field) => ({ ...field, value: visit(field.value) })),
-            ...(node.base ? { base: visit(node.base) } : {}),
-          },
-        };
-      case "field":
-        return { ...value, node: { ...node, record: visit(node.record) } };
-      case "print":
-        return { ...value, node: { ...node, value: visit(node.value) } };
-      case "field-order":
-        return value;
-      case "record-fold":
-        return {
-          ...value,
-          node: {
-            ...node,
-            order: visit(node.order),
-            metadata: visit(node.metadata),
-            record: visit(node.record),
-            initial: visit(node.initial),
-            step: visit(node.step),
-          },
-        };
-      case "variant":
-        return { ...value, node: { ...node, fields: node.fields.map(visit) } };
-      case "match":
-        return {
-          ...value,
-          node: {
-            ...node,
-            value: visit(node.value),
-            cases: node.cases.map((branch) => ({
-              ...branch,
-              body: resolveBody(branch.body, solved),
-            })),
-            ...(node.fallback
-              ? { fallback: { ...node.fallback, body: resolveBody(node.fallback.body, solved) } }
-              : {}),
-          },
-        };
-    }
-  };
-  return {
-    declarations: body.declarations.map((declaration) => ({
-      ...declaration,
-      value: visit(declaration.value),
-    })),
-    result: visit(body.result),
-  };
-};
+const resolveBody = (body: Body<Type>, solved: ReadonlyMap<symbol, Value<Type>>): Body<Type> =>
+  mapBody(body, code.operationTraversals(), undefined, (original, mapped) =>
+    isReference(original, code.coreReferenceId()) ? solved.get(original.node.binding.id) ?? mapped : mapped,
+  );
 
 export type Compiled = {
   readonly type: Type;
@@ -1197,7 +1133,7 @@ type Exports = {
   instances: Evidence[];
 };
 
-type Graph = { readonly root: string; readonly modules: readonly ModuleSource[] };
+type Graph = ModuleGraph;
 
 const emptyExports = (): Exports => ({
   values: new Map(),
@@ -1279,8 +1215,8 @@ const build = (graph: Graph, locations: Map<symbol, Origin>): Check<Body<Type>> 
                 if (!parsed.success)
                   return yield* fail(parsed.error.message)
                     .at(parsed.error.span)
-                    .context(source.uri);
-                const imported = yield* mergeImports(source, checked).context(source.uri);
+                    .inDocument(source.uri);
+                const imported = yield* mergeImports(source, checked).inDocument(source.uri);
                 const root = source.uri === graph.root;
                 const localWants: Wanted[] = [];
                 let exported = emptyExports();
@@ -1361,8 +1297,8 @@ const build = (graph: Graph, locations: Map<symbol, Origin>): Check<Body<Type>> 
                     ),
                   ),
                 );
-                const value = yield* computation.context(source.uri);
-                yield* requireEvidence(localWants).context(source.uri);
+                const value = yield* computation.inDocument(source.uri);
+                yield* requireEvidence(localWants).inDocument(source.uri);
                 if (root) return value;
                 const namespace = yield* code.declare("module", value);
                 const rebound = emptyExports();
@@ -1411,25 +1347,6 @@ const build = (graph: Graph, locations: Map<symbol, Origin>): Check<Body<Type>> 
     return resolveBody(body, solved);
   });
 
-// Dependency diagnostics point at the importing directive, never at an unrelated
-// same-numbered offset in the root file. The originating URI remains in context.
-const moduleError = (
-  error: import("langkit").Diagnostic,
-  graph: Graph,
-): import("langkit").Diagnostic => {
-  const origin = error.context.find(
-    (context) => context !== graph.root && graph.modules.some((module) => module.uri === context),
-  );
-  if (!origin) return error;
-  const root = graph.modules.find((module) => module.uri === graph.root)!;
-  const reaches = (uri: string): boolean =>
-    uri === origin ||
-    graph.modules
-      .find((module) => module.uri === uri)!
-      .imports.some((imported) => reaches(imported.uri));
-  const imported = root.imports.find((imported) => reaches(imported.uri));
-  return imported ? { ...error, span: imported.span } : error;
-};
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const loaded = loadModules(source, options, "strict");
@@ -1454,8 +1371,9 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   return {
     ...analysis,
     definitions: [...analysis.definitions, ...external.values()],
-    diagnostics: analysis.diagnostics.map((error) => moduleError(error, loaded.value)),
-    sources: new Map(loaded.value.modules.map((module) => [module.uri, module.original])),
+    diagnostics: analysis.diagnostics.map((error) => loaded.value.routeDiagnostic(error)),
+    sources: loaded.value.sources,
+    dependencyUris: loaded.value.dependencyUris,
   };
 };
 
@@ -1463,10 +1381,10 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
   const loaded = loadModules(source, options, "strict");
   if (!loaded.success) return loaded;
   const built = run(build(loaded.value, new Map()));
-  if (!built.success) return { success: false, error: moduleError(built.error, loaded.value) };
+  if (!built.success) return { success: false, error: loaded.value.routeDiagnostic(built.error) };
   return {
     success: true,
-    value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
+    value: { type: built.value.result.type, ir: built.value, javascript: javascript.emit(built.value, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }) },
   };
 };
 

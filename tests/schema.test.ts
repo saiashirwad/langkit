@@ -313,20 +313,21 @@ test("schema: analysis resolves helper, parameter, enum, foreign key and selecto
   `;
   const analysis = analyze(source);
   assert.deepEqual(analysis.diagnostics, []);
-  const expectDefinition = (offset: number, declaration: string, name: string) => {
+  const expectDefinition = (offset: number, declaration: string, name: string, kind: string) => {
     const definition = definitionAt(analysis, offset);
     assert.ok(definition, `definition at ${offset}`);
     assert.equal(definition.name, name);
     assert.equal(definition.span.start, source.indexOf(declaration));
     assert.equal(source.slice(definition.span.start, definition.span.end), name);
+    assert.equal(definition.kind, kind);
   };
-  expectDefinition(source.indexOf("|> added") + 3, "added =", "added");
-  expectDefinition(source.indexOf("=> m") + 3, "m)", "m");
-  expectDefinition(source.indexOf("role : Role") + 7, "Role =", "Role");
-  expectDefinition(source.indexOf("Role.Admin") + 5, "Admin\n", "Admin");
-  expectDefinition(source.indexOf("Account.id"), "Account =", "Account");
-  expectDefinition(source.indexOf("Account.id") + 8, "id :", "id");
-  expectDefinition(source.indexOf(".extra") + 1, "extra :", "extra");
+  expectDefinition(source.indexOf("|> added") + 3, "added =", "added", "function");
+  expectDefinition(source.indexOf("=> m") + 3, "m)", "m", "parameter");
+  expectDefinition(source.indexOf("role : Role") + 7, "Role =", "Role", "enum");
+  expectDefinition(source.indexOf("Role.Admin") + 5, "Admin\n", "Admin", "enumMember");
+  expectDefinition(source.indexOf("Account.id"), "Account =", "Account", "model");
+  expectDefinition(source.indexOf("Account.id") + 8, "id :", "id", "field");
+  expectDefinition(source.indexOf(".extra") + 1, "extra :", "extra", "field");
   assert.equal(typeAt(analysis, source.indexOf(".extra") + 1)?.type, "String?");
   assert.equal(typeAt(analysis, source.indexOf("|> added") + 3)?.type, "Model -> Model");
 });

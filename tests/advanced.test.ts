@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { run } from "langkit";
-import { create, validate } from "langkit/ir";
+import { create } from "langkit/ir";
 import { definitionAt, typeAt } from "langkit/analysis";
 import {
   analyze,
@@ -22,7 +22,6 @@ const compile = (source: string) =>
 const compiled = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
-  validate(result.value.ir);
   return result.value;
 };
 

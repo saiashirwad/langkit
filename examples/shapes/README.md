@@ -286,9 +286,13 @@ if (result.success) {
 ```
 
 `analyze` provides expression types, value definitions/references, diagnostics,
-and semantic tokens. The language server uses langkit's shared adapter. Record
-labels do not yet have dedicated definition/reference facts;
-comments are skipped by semantic highlighting. There is no import system.
+and semantic tokens. The language server uses langkit's shared adapter. Shape
+names and macro names have their own semantic symbol roles in addition to value
+bindings: declaration names are definitions, while shape annotations and macro
+calls refer back to those declarations. Macro-expanded template-local bindings
+are intentionally not exposed as source definitions. Record labels still do not
+have dedicated definition/reference facts; comments are skipped by semantic
+highlighting. There is no import system.
 
 Implementation:
 

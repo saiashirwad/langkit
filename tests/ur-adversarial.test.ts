@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { validate } from "langkit/ir";
 import { compile, show } from "../examples/ur/ur.ts";
 
 const identity = "fn id<A>(x: A) -> A = x;";
@@ -32,7 +31,6 @@ const wrappers = `${merge}
 const accepts = (source: string, expected: unknown, expectedType?: string): void => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
-  validate(result.value.ir);
   if (expectedType !== undefined) assert.equal(show(result.value.type), expectedType);
 
   const output: unknown[] = [];

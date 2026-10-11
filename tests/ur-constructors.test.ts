@@ -1,13 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { validate } from "langkit/ir";
 import { analyze, compile, show } from "../examples/ur/ur.ts";
 
 const evaluate = (source: string): { value: unknown; type: string } => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
-  validate(result.value.ir);
   const value: unknown = runInNewContext(result.value.javascript, {}, { timeout: 1000 });
   assert.deepEqual(analyze(source).diagnostics, []);
   return { value: JSON.parse(JSON.stringify(value)), type: show(result.value.type) };

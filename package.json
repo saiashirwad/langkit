@@ -9,6 +9,10 @@
     "./parse": "./src/parse.ts",
     "./ir": "./src/ir.ts",
     "./javascript": "./src/javascript.ts",
+    "./operations/*": "./src/operations/*.ts",
+    "./javascript/*": "./src/javascript/*.ts",
+    "./inference": "./src/inference.ts",
+    "./modules": "./src/modules.ts",
     "./analysis": "./src/analysis.ts",
     "./lsp": "./src/lsp.ts"
   },

@@ -86,15 +86,35 @@ test("advanced syntax: higher-rank parameter annotations and grouped expression 
 });
 
 test("advanced syntax: parenthesized function domains and closed record annotations", () => {
-  const result = expr("fn(f: (number -> number) -> {x: number, flag: boolean,}) => f");
+  const source = "fn(f: (number -> number) -> {x: number, flag: boolean,}) => f";
+  const result = expr(source);
   assert.equal(result.kind, "fn");
   if (result.kind !== "fn" || result.annotation?.kind !== "function") return;
   assert.equal(result.annotation.param.kind, "function");
   assert.equal(result.annotation.result.kind, "record");
-  if (result.annotation.result.kind === "record")
+  if (result.annotation.result.kind === "record") {
     assert.deepEqual(
-      result.annotation.result.fields.map((f) => f.name),
-      ["x", "flag"],
+      result.annotation.result.fields.map((field) => [
+        field.name,
+        source.slice(field.nameSpan.start, field.nameSpan.end),
+      ]),
+      [["x", "x"], ["flag", "flag"]],
+    );
+    assert.deepEqual(result.annotation.result.fields.map((field) => field.nameSpan), [
+      { start: source.indexOf("x:"), end: source.indexOf("x:") + 1 },
+      { start: source.indexOf("flag:"), end: source.indexOf("flag:") + 4 },
+    ]);
+  }
+});
+
+test("advanced syntax: record expression fields retain exact label spans", () => {
+  const source = "{ answer = 42, meaning = answer }";
+  const result = expr(source);
+  assert.equal(result.kind, "record");
+  if (result.kind === "record")
+    assert.deepEqual(
+      result.fields.map((field) => [field.name, source.slice(field.nameSpan.start, field.nameSpan.end)]),
+      [["answer", "answer"], ["meaning", "meaning"]],
     );
 });
 

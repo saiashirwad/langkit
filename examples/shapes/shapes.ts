@@ -13,7 +13,12 @@ import {
 } from "langkit";
 import { create, type Body, type Binding, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
-import { emit } from "langkit/javascript";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
+import { records } from "langkit/operations/records";
+import { printing } from "langkit/operations/printing";
+import { recordsJavaScript } from "langkit/javascript/records";
+import { printingJavaScript } from "langkit/javascript/printing";
 import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { resolve } from "node:path";
@@ -70,7 +75,14 @@ export const show = (type: EditorType): string => {
 };
 export { parse } from "./shapes-syntax.ts";
 
-const code = create<Type>();
+const recordFeature = records<Type>();
+const printingFeature = printing<Type>();
+const code = create<Type>().use(recordFeature).use(printingFeature);
+const javascript = createJavaScriptEmitter<Type>(
+  coreJavaScript<Type>(code.coreOperationTraversals()),
+  recordsJavaScript<Type>(recordFeature.operations),
+  printingJavaScript<Type>(printingFeature.operations),
+);
 const facts = createAnalysis<EditorType>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 type Shape = { readonly id: symbol; readonly name: string; readonly body: Form; readonly type: ShapeInfo };
@@ -531,7 +543,7 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
               return yield* fail(`Unknown definition-site identifier in macro ${key}: ${text}`).at(reference.span);
             }), undefined, shapeReferences);
             const macro: Macro = { id: Symbol(key), name: key, params, body, context };
-            yield* facts.define({ ...macro, type: { kind: "macro", name: key, params } }, { start: form.items[1]!.span.start, end: form.items[1]!.span.start + key.length }, "function");
+            yield* facts.define({ ...macro, type: { kind: "macro", name: key, params } }, { start: form.items[1]!.span.start, end: form.items[1]!.span.start + key.length }, "macro");
             return yield* bind(macros, [[key, macro]], next(index + 1));
           }
           if (form.kind === "list" && atom(form.items[0], "shape")) {
@@ -551,7 +563,7 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
             // Resolve now against earlier definitions; storing syntax freshens each use.
             const type: ShapeInfo = { kind: "shape", name: key, body: yield* annotation(body, typeScope(), true) };
             const shape: Shape = { id: Symbol(key), name: key, body, type };
-            yield* facts.define(shape, { start: label.span.start, end: label.span.start + key.length });
+            yield* facts.define(shape, { start: label.span.start, end: label.span.start + key.length }, "type");
             return yield* bind(shapes, [[key, shape]], next(index + 1));
           }
           if (form.kind === "list" && atom(form.items[0], "def")) {
@@ -596,7 +608,7 @@ export const compile = (source: string): Result<Compiled> => {
   if (!built.success) return built;
   return {
     success: true,
-    value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
+    value: { type: built.value.result.type, ir: built.value, javascript: javascript.emit(built.value, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }) },
   };
 };
 export const analyze = (source: string): Analysis<EditorType> => {

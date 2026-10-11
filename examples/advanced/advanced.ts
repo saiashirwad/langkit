@@ -11,15 +11,21 @@ import {
   type Check,
   type Result,
   type Span,
-  type Diagnostic,
 } from "langkit";
 import { create, type Binding, type Body, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
-import { emit } from "langkit/javascript";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
+import { records } from "langkit/operations/records";
+import { variants } from "langkit/operations/variants";
+import { printing } from "langkit/operations/printing";
+import { recordsJavaScript } from "langkit/javascript/records";
+import { variantsJavaScript } from "langkit/javascript/variants";
+import { printingJavaScript } from "langkit/javascript/printing";
 import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve as resolvePath } from "node:path";
-import { loadModules, type ModuleOptions, type ModuleSource } from "../modules.ts";
+import { loadModules, type ModuleOptions, type ModuleGraph } from "langkit/modules";
 import { runInNewContext } from "node:vm";
 import {
   program,
@@ -72,7 +78,17 @@ type Constructor = {
 
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[] };
 
-const code = create<Type>();
+// Advanced explicitly selects records, variants, and printing in both layers.
+const recordFeature = records<Type>();
+const variantFeature = variants<Type>();
+const printingFeature = printing<Type>();
+const code = create<Type>().use(recordFeature).use(variantFeature).use(printingFeature);
+const javascript = createJavaScriptEmitter<Type>(
+  coreJavaScript(code.coreOperationTraversals()),
+  recordsJavaScript(recordFeature.operations),
+  variantsJavaScript(variantFeature.operations),
+  printingJavaScript(printingFeature.operations),
+);
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
@@ -540,7 +556,7 @@ type ModuleExports = {
   readonly constructors: ReadonlyMap<string, Constructor>;
 };
 
-const exportOrigins = (expr: Expr, source: string): Map<string, Span> => {
+const exportOrigins = (expr: Expr): Map<string, Span> => {
   const locals = new Map<string, Span>();
   while (expr.kind === "let") {
     locals.set(expr.name, expr.nameSpan);
@@ -550,18 +566,13 @@ const exportOrigins = (expr: Expr, source: string): Map<string, Span> => {
   if (expr.kind === "record")
     for (const field of expr.fields) {
       const local = field.value.kind === "name" ? locals.get(field.value.name) : undefined;
-      const offset = source.lastIndexOf(field.name, field.value.span.start - 1);
-      result.set(
-        field.name,
-        local ??
-          (offset >= 0 ? { start: offset, end: offset + field.name.length } : field.value.span),
-      );
+      result.set(field.name, local ?? field.nameSpan);
     }
   return result;
 };
 
 const buildModules = (
-  graph: { root: string; modules: readonly ModuleSource[] },
+  graph: ModuleGraph,
   external: Map<symbol, Export>,
 ): Check<Body<Type>> =>
   code.body(
@@ -591,7 +602,7 @@ const buildModules = (
             if (previous && previous.identity !== entry.identity)
               return yield* fail(`Conflicting imported name: ${name}`)
                 .at(dependency.span)
-                .context(module.uri);
+                .inDocument(module.uri);
             imported.set(name, entry);
           }
           for (const [name, definition] of exports.definitions) {
@@ -599,7 +610,7 @@ const buildModules = (
             if (previous && previous.type.id !== definition.type.id)
               return yield* fail(`Conflicting imported type: ${name}`)
                 .at(dependency.span)
-                .context(module.uri);
+                .inDocument(module.uri);
             importedDefinitions.set(name, definition);
           }
           for (const [name, constructor] of exports.constructors)
@@ -608,7 +619,7 @@ const buildModules = (
         const environment = new Map<string, Entry>([["print", primitive], ...imported]);
         const parsed = parse(module.source);
         if (!parsed.success)
-          return yield* fail(parsed.error.message).at(parsed.error.span).context(module.uri);
+          return yield* fail(parsed.error.message).at(parsed.error.span).inDocument(module.uri);
         const inEnvironment = <A>(body: Check<A>): Check<A> =>
           within(
             env,
@@ -621,7 +632,7 @@ const buildModules = (
           );
         if (module.uri === graph.root) {
           for (const entry of imported.values()) external.set(entry.binding.id, entry);
-          return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body)));
+          return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body))).inDocument(module.uri);
         }
         let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
         let moduleConstructors: ReadonlyMap<string, Constructor> = new Map();
@@ -642,7 +653,7 @@ const buildModules = (
                 check(function* () {
                   const initial = yield* elaborate(parsed.value.body);
                   if (prune(initial.type).kind !== "record")
-                    return yield* fail(`Imported module must return a record: ${module.uri}`);
+                    return yield* fail(`Imported module must return a record: ${module.uri}`).at(parsed.value.body.span);
                   const result = yield* code.declare("exports", initial);
                   moduleDefinitions = yield* get(definitions);
                   moduleConstructors = yield* get(constructors);
@@ -660,7 +671,7 @@ const buildModules = (
               ),
             ),
           ),
-        ).context(module.uri);
+        ).inDocument(module.uri);
         const bundle = yield* code.declare("module", bundled);
         const bundledType = prune(bundle.type);
         if (bundledType.kind !== "record") throw new Error("Expected module bundle");
@@ -672,7 +683,7 @@ const buildModules = (
         const constructorEntries = new Map(importedConstructors);
         for (const [name, span] of ownConstructors) {
           if (entries.has(name))
-            return yield* fail(`Conflicting exported name: ${name}`).at(span).context(module.uri);
+            return yield* fail(`Conflicting exported name: ${name}`).at(span).inDocument(module.uri);
           const original = moduleConstructors.get(name)!;
           const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
           const binding = value.node.binding;
@@ -684,10 +695,12 @@ const buildModules = (
           });
           constructorEntries.set(name, { ...original, binding });
         }
-        const origins = exportOrigins(parsed.value.body, module.original);
+        const origins = exportOrigins(parsed.value.body);
         for (const [name, fieldType] of flatten(type.row).fields) {
           if (entries.has(name))
-            return yield* fail(`Conflicting exported name: ${name}`).context(module.uri);
+            return yield* fail(`Conflicting exported name: ${name}`)
+              .at(origins.get(name) ?? parsed.value.body.span)
+              .inDocument(module.uri);
           const reference = yield* code.declare(name, code.field(fieldType, result, name));
           entries.set(name, {
             binding: reference.node.binding,
@@ -709,21 +722,6 @@ const buildModules = (
     }),
   );
 
-// Dependency diagnostics point at the importing directive in the current file,
-// while their context retains the actual failing module URI.
-const moduleDiagnostic = (
-  error: Diagnostic,
-  graph: { root: string; modules: readonly ModuleSource[] },
-): Diagnostic => {
-  const byUri = new Map(graph.modules.map((module) => [module.uri, module]));
-  const failed = error.context.find((context) => byUri.has(context) && context !== graph.root);
-  if (!failed) return error;
-  const reaches = (uri: string): boolean =>
-    uri === failed || byUri.get(uri)!.imports.some((dependency) => reaches(dependency.uri));
-  const directive = byUri.get(graph.root)!.imports.find((dependency) => reaches(dependency.uri));
-  return directive ? { ...error, span: directive.span } : error;
-};
-
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const graph = loadModules(source, options, "advanced");
   const lexical = highlight(source, tokens);
@@ -739,8 +737,9 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
   return {
     ...analysis,
-    diagnostics: analysis.diagnostics.map((error) => moduleDiagnostic(error, graph.value)),
-    sources: new Map(graph.value.modules.map((module) => [module.uri, module.original])),
+    diagnostics: analysis.diagnostics.map((error) => graph.value.routeDiagnostic(error)),
+    sources: graph.value.sources,
+    dependencyUris: graph.value.dependencyUris,
     definitions: [
       ...analysis.definitions,
       ...[...external.values()]
@@ -763,10 +762,17 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
   const graph = loadModules(source, options, "advanced");
   if (!graph.success) return graph;
   const built = run(buildModules(graph.value, new Map()));
-  if (!built.success) return { success: false, error: moduleDiagnostic(built.error, graph.value) };
+  if (!built.success) return { success: false, error: graph.value.routeDiagnostic(built.error) };
   return {
     success: true,
-    value: { type: built.value.result.type, ir: built.value, javascript: emit(built.value) },
+    value: {
+      type: built.value.result.type,
+      ir: built.value,
+      javascript: javascript.emit(built.value, {
+        operations: code.operationTraversals(),
+        coreFunctionId: code.coreFunctionId(),
+      }),
+    },
   };
 };
 

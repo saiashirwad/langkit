@@ -28,7 +28,11 @@ export type TypeExpr = Located<
   | { readonly kind: "forall"; readonly parameters: readonly string[]; readonly body: TypeExpr }
   | {
       readonly kind: "record";
-      readonly fields: readonly { readonly name: string; readonly type: TypeExpr }[];
+      readonly fields: readonly {
+        readonly name: string;
+        readonly nameSpan: Span;
+        readonly type: TypeExpr;
+      }[];
     }
 >;
 
@@ -48,7 +52,11 @@ export type Expr = Located<
   | { readonly kind: "name"; readonly name: string }
   | {
       readonly kind: "record";
-      readonly fields: readonly { readonly name: string; readonly value: Expr }[];
+      readonly fields: readonly {
+        readonly name: string;
+        readonly nameSpan: Span;
+        readonly value: Expr;
+      }[];
       readonly base: Expr | undefined;
     }
   | { readonly kind: "field"; readonly record: Expr; readonly name: string }
@@ -168,9 +176,9 @@ const typeExpression: Parser<TypeExpr> = recursive<TypeExpr>((type) => {
       yield* commit();
       const fields = yield* sepEndBy(
         parser(function* () {
-          const name = yield* identifier;
+          const label = yield* name;
           yield* symbol(":");
-          return { name, type: yield* type };
+          return { name: label.name, nameSpan: label.span, type: yield* type };
         }),
         symbol(","),
       );
@@ -305,9 +313,9 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
       yield* commit();
       const fields = yield* sepBy(
         parser(function* () {
-          const name = yield* identifier;
+          const label = yield* name;
           yield* symbol("=");
-          return { name, value: yield* expr };
+          return { name: label.name, nameSpan: label.span, value: yield* expr };
         }),
         symbol(","),
       );

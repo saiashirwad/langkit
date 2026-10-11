@@ -30,7 +30,8 @@ import {
   type Analysis,
   type TokenRule,
 } from "langkit/analysis";
-import { emit } from "langkit/javascript";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
 
@@ -278,8 +279,9 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-// Checking and construction share binding identities with optional source analysis.
+// HM selects only the core IR and JavaScript operations.
 const code = create<Type>();
+const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreOperationTraversals()));
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 
@@ -396,7 +398,10 @@ export const compile = (source: string): Result<Compiled> => {
     value: {
       type: built.value.result.type,
       ir: built.value,
-      javascript: emit(built.value),
+      javascript: javascript.emit(built.value, {
+        operations: code.operationTraversals(),
+        coreFunctionId: code.coreFunctionId(),
+      }),
     },
   };
 };

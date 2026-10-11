@@ -94,7 +94,11 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
       yield* facts.define(
         value,
         name.span,
-        declaration.kind === "helper" ? "function" : "variable",
+        declaration.kind === "helper"
+          ? "function"
+          : declaration.kind === "model"
+            ? "model"
+            : "enum",
       );
       if (declaration.kind === "helper") helpers.set(name.name, declaration);
       if (declaration.kind === "model") {
@@ -113,7 +117,7 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
           seen.add(member.name);
           const value = binding(member, name.name);
           members.set(member, value);
-          yield* facts.define(value, member.span);
+          yield* facts.define(value, member.span, "enumMember");
         }
       }
     }
@@ -203,7 +207,7 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
       for (const field of model.fields) {
         const value = binding(field.name, fieldType(field));
         fields.set(field.name.name, value);
-        yield* facts.define(value, field.name.span);
+        yield* facts.define(value, field.name.span, "field");
       }
     }
 

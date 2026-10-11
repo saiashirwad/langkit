@@ -4,13 +4,12 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { definitionAt, semanticTokens, typeAt } from "langkit/analysis";
-import { create, validate, type Body, type Value } from "langkit/ir";
+import { create } from "langkit/ir";
 import { analyze, compile, elaborate, program, show, type Type } from "../examples/hm/hm.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : result.error.message);
-  validate(result.value.ir);
   return result.value;
 };
 
@@ -148,50 +147,16 @@ test("HM analysis distinguishes a generic declaration from instantiated uses", (
   );
 });
 
-test("HM IR references preserve binding identity while carrying independent types", () => {
+test("HM polymorphic references preserve definition identity with independent use types", () => {
   const source = "let id = fn(x) => x in if id(true) then id(42) else 0";
-  const uses: Value<Type>[] = [];
-  const body = (body: Body<Type>): void => {
-    for (const declaration of body.declarations) visit(declaration.value);
-    visit(body.result);
-  };
-  const visit = (value: Value<Type>): void => {
-    const node = value.node;
-    switch (node.kind) {
-      case "ref":
-        if (node.binding.name === "id") uses.push(value);
-        return;
-      case "literal":
-        return;
-      case "binary":
-        visit(node.left);
-        visit(node.right);
-        return;
-      case "call":
-        visit(node.fn);
-        visit(node.arg);
-        return;
-      case "fn":
-        body(node.body);
-        return;
-      case "block":
-        body(node.body);
-        return;
-      case "if":
-        visit(node.cond);
-        body(node.then);
-        body(node.else);
-        return;
-    }
-  };
-  body(compiled(source).ir);
-  assert.deepEqual(
-    uses.map((value) => show(value.type)),
-    ["(boolean -> boolean)", "(number -> number)"],
-  );
-  assert.ok(uses[0]!.node.kind === "ref" && uses[1]!.node.kind === "ref");
-  assert.equal(uses[0]!.node.binding, uses[1]!.node.binding);
-  assert.equal(show(uses[0]!.node.binding.type), "(a -> a)");
+  const analysis = analyze(source);
+  const uses = analysis.references.filter((reference) => source.slice(reference.span.start, reference.span.end) === "id");
+  assert.deepEqual(uses.map((reference) => show(typeAt(analysis, reference.span.start)!.type)), [
+    "(boolean -> boolean)",
+    "(number -> number)",
+  ]);
+  assert.equal(uses[0]!.id, uses[1]!.id);
+  assert.equal(show(typeAt(analysis, source.indexOf("id =") + 5)!.type), "(a -> a)");
 });
 
 test("HM hovers resolve later constraints on parameters and references", () => {

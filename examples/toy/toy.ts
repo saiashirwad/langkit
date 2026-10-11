@@ -24,14 +24,15 @@ import {
   type Result,
   type Span,
 } from "langkit";
-import { create, type Binding, type Body, type Operator, type Value } from "langkit/ir";
+import { create, isReference, type Binding, type Body, type Operator, type Value } from "langkit/ir";
 import {
   create as createAnalysis,
   highlight,
   type Analysis,
   type TokenRule,
 } from "langkit/analysis";
-import { emit } from "langkit/javascript";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
 
@@ -229,8 +230,9 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-// Checking and construction share binding identities with optional source analysis.
+// Toy selects only the core IR and JavaScript operations.
 const code = create<Type>();
+const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreOperationTraversals()));
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
 
@@ -309,7 +311,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
   })
     .flatMap((value) =>
       check(function* () {
-        if (value.node.kind === "ref") yield* facts.reference(value.node.binding, expr.span);
+        if (isReference(value, code.coreReferenceId())) yield* facts.reference(value.node.binding, expr.span);
         yield* facts.typed(value.type, expr.span);
         return code.at(value, expr.span);
       }),
@@ -360,7 +362,10 @@ export const compile = (source: string): Result<Compiled> => {
     value: {
       type: built.value.result.type,
       ir: built.value,
-      javascript: emit(built.value),
+      javascript: javascript.emit(built.value, {
+        operations: code.operationTraversals(),
+        coreFunctionId: code.coreFunctionId(),
+      }),
     },
   };
 };

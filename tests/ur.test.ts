@@ -7,7 +7,6 @@ import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
-import { validate } from "langkit/ir";
 import { analyze, compile, show } from "../examples/ur/ur.ts";
 
 const merge = `fn merge<A: Row<Type>, B: Row<Type>>(left: Record<A>, right: Record<B>)
@@ -17,7 +16,6 @@ const identity = "fn identity<A>(value: A) -> A = value;";
 const compiled = (source: string) => {
   const result = compile(source);
   assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
-  validate(result.value.ir);
   return result.value;
 };
 
