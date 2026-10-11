@@ -4,6 +4,29 @@ import { runInNewContext } from "node:vm";
 import { hm, higherRank } from "../examples/elaboration/mini.ts";
 import { definitionAt, typeAt } from "../src/analysis.ts";
 import { traceAt } from "../src/trace.ts";
+import { program } from "../examples/elaboration/syntax.ts";
+
+for (const [name, compiler] of [["HM", hm], ["higher rank", higherRank]] as const) {
+  test(`${name} emits prototype-named record fields as ordinary own values`, () => {
+    const outcome = compiler.elaborate("let x = 42; { __proto__: x }.__proto__");
+    assert.equal(outcome.status, "checked", JSON.stringify(outcome.diagnostics));
+    if (outcome.status !== "checked") return;
+    assert.equal(outcome.partial.type, "number");
+    assert.equal(runInNewContext(compiler.emit(outcome.artifact)), 42);
+  });
+}
+
+for (const source of ["( 1, true)", "((1), true)"]) {
+  test(`pair source ranges retain their opening delimiter: ${source}`, () => {
+    const parsed = program.parse(source);
+    assert(parsed.success);
+    assert.deepEqual(parsed.value.span, { start: 0, end: source.length });
+    const outcome = hm.elaborate(source);
+    assert.equal(outcome.status, "checked");
+    assert(outcome.facts.trace.some(event => event.rule === "record.synth" && event.span?.start === 0 && event.span.end === source.length));
+    assert.equal(typeAt(outcome.facts.analysis, 0)?.type, "{ _1: number, _2: boolean }");
+  });
+}
 
 test("shared parser and HM rows compile let-polymorphic identity to executable JavaScript", () => {
   const outcome = hm.elaborate("let id = fn x => x; (id(1), id(true))");
