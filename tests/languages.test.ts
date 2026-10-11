@@ -101,3 +101,53 @@ test("schema: helper pipelines compile to SQL and execute in SQLite", () => {
     db.close();
   }
 });
+
+test("hm: aliases of lambda parameters remain monomorphic", () => {
+  const result = hm.compile("fn(f) => let g = f in let x = g(1) in g(true)");
+  assert.equal(result.success, false);
+  if (!result.success) assert.match(result.errors[0]!.message, /Cannot unify/);
+});
+
+test("advanced: explicit forall permits polymorphic recursion but cannot manufacture polymorphism", () => {
+  const prefix = 'import "./stdlib.advanced"; type Nest(a) = Done(a) | More(Nest(List(a))) ';
+  const options = { uri: new URL("../examples/advanced/test.advanced", import.meta.url).href };
+  const result = advanced.compile(prefix +
+    "let rec depth: forall a. Nest(a) -> number = fn(n) => match n { Done(_) => 0, More(rest) => 1 + depth(rest) } in depth(More(Done(Cons(42, Nil))))", options);
+  assert.ok(result.success, result.success ? "" : JSON.stringify(result.errors));
+  assert.equal(runInNewContext(result.value.javascript, {}, { timeout: 1000 }), 1);
+  const invalid = advanced.compile("fn(r) => (r.x : forall a. a)");
+  assert.equal(invalid.success, false);
+  if (!invalid.success) assert.ok(invalid.errors.some(error => /escape|rigid|skolem/i.test(error.message)));
+});
+
+test("strict: constrained operations require dictionary evidence", () => {
+  const result = strict.compile(`import "./stdlib.strict";
+    keep : forall f a. f a -> f a;
+    keep xs = map id xs;
+    main = 0;`, { uri: new URL("../examples/strict/test.strict", import.meta.url).href });
+  assert.equal(result.success, false);
+  if (!result.success) assert.ok(result.errors.some(error => /instance|constraint|Functor|dictionary/i.test(error.message)));
+});
+
+test("shapes: macro expansion preserves lexical identity and reports errors at the invocation", () => {
+  const result = shapes.compile("(macro keep [x] (let [result x] result)) (let [result 42] (keep result))");
+  assert.ok(result.success, result.success ? "" : JSON.stringify(result.errors));
+  assert.equal(runInNewContext(result.value.javascript, {}, { timeout: 1000 }), 42);
+  const source = '(macro add [x] (+ x 1)) (macro outer [x] (add x)) (outer "bad")';
+  const invalid = shapes.compile(source);
+  assert.equal(invalid.success, false);
+  if (!invalid.success) {
+    assert.equal(invalid.errors[0]!.span!.start, source.indexOf('(outer "bad")'));
+    assert.match(invalid.errors[0]!.context.join(" "), /expanding macro outer.*expanding macro add/);
+  }
+});
+
+test("ur: disjoint row evidence cannot authorize overlapping concrete records", () => {
+  const result = ur.compile(`
+    fn merge<A: Row<Type>, B: Row<Type>>(a: Record<A>, b: Record<B>)
+      -> Record<A ++ B> where disjoint(A, B) = a ++ b;
+    let main = merge({ x: 1 }, { x: true });
+  `);
+  assert.equal(result.success, false);
+  if (!result.success) assert.ok(result.errors.some(error => /disjoint|overlap/i.test(error.message)));
+});

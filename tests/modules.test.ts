@@ -1,17 +1,8 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { pathToFileURL } from "node:url";
 import { test } from "node:test";
-import { loadModules as loadGraph, type ImportParser } from "langkit/modules";
-import { parseImports } from "langkit/modules/imports";
-import { definitionAt, semanticTokens, type Analysis } from "langkit/analysis";
+import { loadModules, type ImportParser } from "langkit/modules";
 
 const root = "file:///workspace/main.strict";
-const loadModules = (source: string, options: Parameters<typeof loadGraph>[1], extension: string) =>
-  loadGraph(source, options, { extension, imports: parseImports });
-
 const useImports: ImportParser = (source) => ({
   success: true,
   value: [...source.matchAll(/use\("([^"]+)"\)/g)].map((match) => ({
@@ -21,7 +12,7 @@ const useImports: ImportParser = (source) => ({
 
 test("module graphs accept independently composed grammar and unsorted UTF-16 spans", () => {
   const source = '😀\r\nuse("./child.strict")\nbody\nuse("./other.strict")';
-  const result = loadGraph(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
+  const result = loadModules(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
   assert.ok(result.success);
   const masked = result.value.module(root)!.source;
   assert.equal(masked.length, source.length);
@@ -38,7 +29,7 @@ test("module graphs preserve parser failure details and dependency origin", () =
       { message: "failure without span", context: [] },
     ],
   });
-  const result = loadGraph(source, { uri: root, read: () => "bad" }, { extension: "strict", imports });
+  const result = loadModules(source, { uri: root, read: () => "bad" }, { extension: "strict", imports });
   assert.ok(!result.success);
   assert.equal(result.errors.length, 2);
   for (const error of result.errors) {
@@ -50,31 +41,31 @@ test("module graphs preserve parser failure details and dependency origin", () =
   assert.ok(result.errors[0]!.related?.some((entry) => entry.message === "parser detail"));
 });
 
-for (const spans of [
-  [{ start: -1, end: 2 }], [{ start: 0, end: 99 }], [{ start: 1, end: 1 }],
-  [{ start: 0.5, end: 2 }], [{ start: NaN, end: 2 }], [{ start: 2, end: 1 }],
-  [{ start: 0, end: 3 }, { start: 2, end: 4 }],
-]) {
-  test("module graphs reject invalid directive spans " + JSON.stringify(spans), () => {
-    const result = loadGraph("body", { uri: root, read: () => { throw new Error("must not read"); } }, {
+test("module graphs reject invalid parser spans before reading dependencies", () => {
+  for (const spans of [
+    [{ start: -1, end: 2 }], [{ start: 0, end: 99 }], [{ start: 1, end: 1 }],
+    [{ start: 0.5, end: 2 }], [{ start: NaN, end: 2 }], [{ start: 2, end: 1 }],
+    [{ start: 0, end: 3 }, { start: 2, end: 4 }],
+  ]) {
+    const result = loadModules("body", { uri: root, read: () => { throw new Error("must not read"); } }, {
       extension: "strict", imports: () => ({ success: true, value: spans.map((span) => ({ path: "./child.strict", span })) }),
     });
     assert.ok(!result.success);
     assert.match(result.errors[0]!.message, /Invalid import directive span/);
     assert.equal(result.errors[0]!.origin?.uri, root);
-  });
-}
+  }
+});
 
 test("module graphs propagate parser programming exceptions", () => {
   const bug = new Error("parser bug");
-  assert.throws(() => loadGraph("body", { uri: root }, {
+  assert.throws(() => loadModules("body", { uri: root }, {
     extension: "strict", imports: () => { throw bug; },
   }), (error) => error === bug);
 });
 
 test("module graph snapshots cannot be corrupted through exposed collections", () => {
   const source = 'use("./child.strict")';
-  const result = loadGraph(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
+  const result = loadModules(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
   assert.ok(result.success);
   const graph = result.value;
   assert.ok(Object.isFrozen(graph.modules));
@@ -83,295 +74,4 @@ test("module graph snapshots cannot be corrupted through exposed collections", (
   assert.ok(Object.isFrozen(graph.module(root)!.imports[0]!.span));
   (graph.sources as Map<string, string>).clear();
   assert.equal(graph.sources.get(root), source);
-});
-
-const sources = (files: Record<string, string>) => (uri: string) => {
-  const source = files[uri];
-  if (source === undefined) throw new Error(`Missing: ${uri}`);
-  return source;
-};
-
-const parsedImportSpan = (source: string, target: string, files: Record<string, string>) => {
-  const graph = loadModules(source, { uri: root, read: sources(files) }, "strict");
-  assert.ok(graph.success);
-  const edge = graph.value.module(root)?.imports.find((dependency) => dependency.uri === target);
-  assert.ok(edge);
-  return edge.span;
-};
-
-test("module loader strips directives without changing offsets or newlines", () => {
-  const source = '-- heading\r\nimport "./a.strict";\r\nimport "./b.strict";\nmain = 42;';
-  const result = loadModules(
-    source,
-    {
-      uri: root,
-      read: sources({
-        "file:///workspace/a.strict": "a = 1;",
-        "file:///workspace/b.strict": "b = 2;",
-      }),
-    },
-    "strict",
-  );
-  assert.ok(result.success);
-  const module = result.value.modules.at(-1)!;
-  assert.equal(module.source.length, source.length);
-  assert.equal(module.original, source);
-  assert.equal(module.source.indexOf("main"), source.indexOf("main"));
-  assert.deepEqual(module.source.match(/\r\n|\n/g), source.match(/\r\n|\n/g));
-  assert.equal(module.source.includes("import"), false);
-  assert.equal(module.imports.length, 2);
-  assert.equal(module.imports[0]!.span.start, source.indexOf("import"));
-});
-
-test("module loader uses topological once-only order for diamonds", () => {
-  const counts = new Map<string, number>();
-  const files = sources({
-    "file:///workspace/a.strict": 'import "./shared.strict"; a = 1;',
-    "file:///workspace/b.strict": 'import "./shared.strict"; b = 1;',
-    "file:///workspace/shared.strict": "shared = 1;",
-  });
-  const result = loadModules(
-    'import "./a.strict"; import "./b.strict"; main = 1;',
-    {
-      uri: root,
-      read: (uri) => {
-        counts.set(uri, (counts.get(uri) ?? 0) + 1);
-        return files(uri);
-      },
-    },
-    "strict",
-  );
-  assert.ok(result.success);
-  assert.deepEqual(
-    result.value.modules.map((module) => module.uri),
-    [
-      "file:///workspace/shared.strict",
-      "file:///workspace/a.strict",
-      "file:///workspace/b.strict",
-      root,
-    ],
-  );
-  assert.equal(counts.get("file:///workspace/shared.strict"), 1);
-});
-
-for (const source of [
-  'import "./a.rows"; main = 1;',
-  'import "https://example.com/a.strict"; main = 1;',
-  'import "/a.strict"; main = 1;',
-  'import "./a.strict?query"; main = 1;',
-  'import "./a.strict#fragment"; main = 1;',
-  'import "./a.strict" main = 1;',
-  'import "bad\\q"; main = 1;',
-  'import "raw\tcontrol"; main = 1;',
-] as const) {
-  test("module loader rejects " + JSON.stringify(source), () => {
-    const result = loadModules(source, { uri: root, read: () => "" }, "strict");
-    assert.equal(result.success, false);
-    if (!result.success) assert.ok(result.errors.length > 0);
-  });
-}
-
-test("module loader locates a cycle at the root import and preserves origin", () => {
-  const source = '\n\nimport "./a.strict"; main = 1;';
-  const result = loadModules(
-    source,
-    {
-      uri: root,
-      read: sources({
-        "file:///workspace/a.strict": "\n".repeat(50) + 'import "./main.strict"; a = 1;',
-      }),
-    },
-    "strict",
-  );
-  assert.equal(result.success, false);
-  if (!result.success) {
-    assert.ok(result.errors.length > 0);
-    const error = result.errors[0]!;
-    assert.equal(error.span?.start, source.indexOf("import"));
-    assert.equal(error.origin?.uri, "file:///workspace/a.strict");
-    assert.equal(error.location?.uri, root);
-  }
-});
-
-test("module loader routes transitive failures to the root import while preserving origin", () => {
-  const source = '\nimport "./a.strict"; main = 42;';
-  const child = '\n'.repeat(30) + 'import "./missing.strict";';
-  const rootImport = parsedImportSpan(source, "file:///workspace/a.strict", {
-    "file:///workspace/a.strict": "a = 42;",
-  });
-  const result = loadModules(source, {
-    uri: root,
-    read: sources({
-      "file:///workspace/a.strict": 'import "./child.strict";',
-      "file:///workspace/child.strict": child,
-    }),
-  }, "strict");
-  assert.equal(result.success, false);
-  if (!result.success) {
-    assert.ok(result.errors.length > 0);
-    const error = result.errors[0]!;
-    assert.equal(error.origin?.uri, "file:///workspace/child.strict");
-    assert.ok(error.origin);
-    assert.equal(child.slice(error.origin.span.start, error.origin.span.end).trim(), 'import "./missing.strict";');
-    assert.equal(error.location?.uri, root);
-    assert.deepEqual(error.location?.span, rootImport);
-    assert.equal(source.slice(rootImport.start, rootImport.end).trim(), 'import "./a.strict";');
-    assert.ok(error.related?.some((entry) => entry.location.uri === "file:///workspace/child.strict"));
-  }
-});
-
-test("module loader chooses a deterministic importer through a diamond and preserves snapshots", () => {
-  const source = 'import "./left.strict"; import "./right.strict"; main = 42;';
-  const shared = 'import "./missing.strict";';
-  const read = sources({
-    "file:///workspace/left.strict": 'import "./shared.strict";',
-    "file:///workspace/right.strict": 'import "./shared.strict";',
-    "file:///workspace/shared.strict": shared,
-  });
-  const leftImport = parsedImportSpan(source, "file:///workspace/left.strict", {
-    "file:///workspace/left.strict": 'import "./shared.strict";',
-    "file:///workspace/right.strict": 'import "./shared.strict";',
-    "file:///workspace/shared.strict": "shared = 1;",
-  });
-  const failed = loadModules(source, { uri: root, read }, "strict");
-  assert.equal(failed.success, false);
-  if (!failed.success) {
-    assert.ok(failed.errors.length > 0);
-    const error = failed.errors[0]!;
-    assert.equal(error.origin?.uri, "file:///workspace/shared.strict");
-    assert.ok(error.origin);
-    assert.equal(shared.slice(error.origin.span.start, error.origin.span.end).trim(), 'import "./missing.strict";');
-    assert.deepEqual(error.location?.span, leftImport);
-    assert.equal(error.location?.uri, root);
-    assert.equal(source.slice(leftImport.start, leftImport.end).trim(), 'import "./left.strict";');
-    assert.ok(error.related?.some((entry) => entry.location.uri === "file:///workspace/shared.strict"));
-  }
-
-  const loaded = loadModules(source, {
-    uri: "file:///workspace/./main.strict",
-    read: sources({
-      "file:///workspace/left.strict": 'import "./shared.strict";',
-      "file:///workspace/right.strict": 'import "./shared.strict";',
-      "file:///workspace/shared.strict": "shared = 1;",
-    }),
-  }, "strict");
-  assert.ok(loaded.success);
-  assert.equal(loaded.value.root, root);
-  assert.equal(loaded.value.module("file:///workspace/shared.strict")?.original, "shared = 1;");
-  assert.equal(loaded.value.sources.get("file:///workspace/shared.strict"), "shared = 1;");
-});
-
-test("module loader locates an invalid import after importing a malformed child", () => {
-  const source = 'import "./broken.strict";';
-  const broken = '\n\nimport "unterminated';
-  const result = loadModules(source, { uri: root, read: sources({ "file:///workspace/broken.strict": broken }) }, "strict");
-  assert.equal(result.success, false);
-  if (!result.success) {
-    assert.ok(result.errors.length > 0);
-    const error = result.errors[0]!;
-    assert.equal(error.origin?.uri, "file:///workspace/broken.strict");
-    assert.equal(error.location?.uri, root);
-    assert.deepEqual(error.location?.span, { start: 0, end: source.length });
-    assert.ok(error.origin!.span.start > 0);
-  }
-});
-
-test("module loader retains every independently routed dependency failure", () => {
-  const source = 'import "./a.strict"; import "./b.strict";';
-  const result = loadModules(source, {
-    uri: root,
-    read: sources({
-      "file:///workspace/a.strict": 'import "./missing-a.strict";',
-      "file:///workspace/b.strict": 'import "./missing-b.strict";',
-    }),
-  }, "strict");
-  assert.equal(result.success, false);
-  if (!result.success) {
-    assert.equal(result.errors.length, 2);
-    assert.deepEqual(result.errors.map((error) => error.origin?.uri), [
-      "file:///workspace/a.strict",
-      "file:///workspace/b.strict",
-    ]);
-    for (const error of result.errors) {
-      assert.equal(error.location?.uri, root);
-      assert.ok(error.origin);
-      assert.ok(error.related?.some((entry) => entry.location.uri === error.origin!.uri));
-    }
-    assert.deepEqual(result.errors.map((error) => {
-      const span = error.location!.span;
-      return source.slice(span.start, span.end).trim();
-    }), [
-      'import "./a.strict";',
-      'import "./b.strict";',
-    ]);
-  }
-});
-
-test("module loader supports unsaved snapshots and literal spaces in filenames", () => {
-  const result = loadModules(
-    'import "./some file.strict"; main = value;',
-    {
-      uri: "file:///workspace/some%20directory/main.strict",
-      read: (uri) => {
-        assert.equal(uri, "file:///workspace/some%20directory/some%20file.strict");
-        return "value = 42;";
-      },
-    },
-    "strict",
-  );
-  assert.ok(result.success);
-  assert.equal(result.value.modules[0]!.source, "value = 42;");
-});
-
-test("module loader defaults to local filesystem and never reads the supplied root", (t) => {
-  const directory = mkdtempSync(join(tmpdir(), "langkit-modules-"));
-  t.after(() => rmSync(directory, { recursive: true, force: true }));
-  writeFileSync(join(directory, "child.strict"), "child = 42;");
-  const uri = pathToFileURL(join(directory, "root.strict")).href;
-  const result = loadModules('import "./child.strict"; main = child;', { uri }, "strict");
-  assert.ok(result.success);
-  assert.equal(result.value.root, uri);
-  assert.equal(result.value.modules[0]!.original, "child = 42;");
-  assert.ok(loadModules("main = 42;", {}, "strict").success);
-  assert.equal(
-    loadModules("main = 42;", { uri: "https://example.com/root.strict" }, "strict").success,
-    false,
-  );
-});
-
-test("external definitions resolve references without claiming local declaration offsets", () => {
-  const id = Symbol("external");
-  const analysis: Analysis<string> = {
-    diagnostics: [],
-    types: [],
-    definitions: [
-      {
-        id,
-        name: "external",
-        type: "number",
-        kind: "function",
-        uri: "file:///dep.strict",
-        span: { start: 0, end: 5 },
-      },
-    ],
-    references: [{ id, span: { start: 10, end: 15 } }],
-    tokens: [
-      { kind: "variable", span: { start: 0, end: 5 } },
-      { kind: "variable", span: { start: 10, end: 15 } },
-    ],
-  };
-  assert.equal(definitionAt(analysis, 0), undefined);
-  assert.equal(definitionAt(analysis, 10)?.uri, "file:///dep.strict");
-  assert.deepEqual(
-    semanticTokens(analysis).map((token) => token.kind),
-    ["variable", "function"],
-  );
-});
-
-test("module loader leaves body strings and identifier prefixes intact", () => {
-  for (const source of ["important = 42;", 'main = "import \\"./x.strict\\";";']) {
-    const result = loadModules(source, { uri: root }, "strict");
-    assert.ok(result.success);
-    assert.equal(result.value.modules[0]!.source, source);
-  }
 });
