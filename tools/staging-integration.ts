@@ -56,7 +56,7 @@ const lazyProgram = callbackProgram(ir.conditional("number", ir.literal("boolean
 order.length = 0;
 runCallback(lazyProgram);
 assert.deepEqual(order, [2]); checks++;
-assert.throws(() => adapter.lower(ir.program({ declarations: [], result: ir.record("record", [{ name: "not-a-name", value: lit(1) }]) })), /identifier field/); checks++;
+check({ declarations: [], result: ir.field("number", ir.record("record", [{ name: "not-a-name", value: lit(1) }]), "not-a-name") }, 1);
 let deep: IR.Value<string> = lit(0);
 for (let index = 0; index < 12000; index++) deep = ir.binary("number", "+", deep, lit(1));
 check({ declarations: [], result: deep }, 12000);

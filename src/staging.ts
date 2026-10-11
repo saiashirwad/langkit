@@ -8,7 +8,8 @@ declare const built: unique symbol;
 declare const parameter: unique symbol;
 export interface Operand<A> extends Node { readonly [denotes]: A }
 export interface Expr<A> extends Operand<A> { readonly [invariant]: (value: A) => A }
-export interface Type<A> { readonly [typeBrand]: (value: A) => A }
+export interface TypeWitness { readonly [typeBrand]: (value: never) => unknown }
+export interface Type<A> extends TypeWitness { readonly [typeBrand]: (value: A) => A }
 export interface Ref<A> extends Expr<A> { readonly id: symbol; readonly nameHint: string }
 export interface Param<Name extends string, A> extends Ref<A> { readonly nameHint: Name; readonly [parameter]: true }
 export interface Program<A> { readonly [built]: (value: A) => A; readonly statements: readonly Statement[]; readonly result: Expr<A> }
@@ -22,9 +23,8 @@ export const Number = makeType(numberShape) as Type<number>;
 export const String = makeType(stringShape) as Type<string>;
 export const Boolean = makeType(booleanShape) as Type<boolean>;
 export const Unknown = makeType(unknownShape) as Type<unknown>;
-type Witness = { readonly [typeBrand]: (value: never) => unknown };
 type WitnessValue<T> = T extends Type<infer A> ? A : never;
-export const functionType = <const P extends readonly Witness[], A>(params: P, result: Type<A>): Type<(...args: { -readonly [K in keyof P]: WitnessValue<P[K]> }) => A> =>
+export const functionType = <const P extends readonly TypeWitness[], A>(params: P, result: Type<A>): Type<(...args: { -readonly [K in keyof P]: WitnessValue<P[K]> }) => A> =>
   makeType(Object.freeze({ kind: "function", params: Object.freeze(params.map(typeShape)), result: typeShape(result) })) as Type<(...args: { -readonly [K in keyof P]: WitnessValue<P[K]> }) => A>;
 const expression = <A>(kind: string, shape: Shape, data: Record<string, unknown>): Expr<A> => makeNode(kind, shape, data) as Expr<A>;
 const check = (node: Node, shape: Shape) => { assertNode(node); requireShape(shape, node.shape); };
@@ -75,7 +75,7 @@ export const ref = <A>(source: Ref<A>, type?: Type<A>): Ref<A> => {
 export interface Declaration<A> { [Symbol.iterator](): Generator<Statement, Ref<A>, unknown> }
 function declare<A>(name: string, expr: Expr<A>): Declaration<A>;
 function declare<A>(name: string, expr: Operand<A>, annotation: Type<A>): Declaration<A>;
-function declare(name: string, expr: Node, annotation?: Witness): Declaration<unknown> {
+function declare(name: string, expr: Node, annotation?: TypeWitness): Declaration<unknown> {
   assertNode(expr); const shape = annotation === undefined ? expr.shape : typeShape(annotation); requireShape(shape, expr.shape);
   return Object.freeze({ *[Symbol.iterator]() {
     const id = Symbol(name); yield makeStatement(id, name, expr); return binding("ref", id, name, shape);

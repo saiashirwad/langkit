@@ -52,10 +52,17 @@ export const requireShape = (expected: Shape, actual: Shape): void => {
   if (!accepts(expected, actual)) throw new Error(`Staging type mismatch: expected ${expected.kind}, received ${actual.kind}`);
 };
 export const materialize = (factory: () => Generator<Statement, Node, unknown>): Body => {
-  const iterator = factory(); const items: Statement[] = []; let step = iterator.next();
-  while (!step.done) { assertStatement(step.value); items.push(step.value); step = iterator.next(); }
-  assertNode(step.value);
-  return Object.freeze({ statements: Object.freeze(items), result: step.value });
+  const iterator = factory(); const items: Statement[] = [];
+  let done = false;
+  try {
+    let step = iterator.next();
+    while (!step.done) { assertStatement(step.value); items.push(step.value); step = iterator.next(); }
+    done = true;
+    assertNode(step.value);
+    return Object.freeze({ statements: Object.freeze(items), result: step.value });
+  } finally {
+    if (!done && !iterator.return(undefined as never).done) throw new TypeError("Staging cleanup cannot yield declarations");
+  }
 };
 export const validate = (body: Body): void => {
   const introduced = new Set<symbol>(); const active = new Set<Node>(); const tasks: (() => void)[] = [];

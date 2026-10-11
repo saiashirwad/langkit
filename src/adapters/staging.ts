@@ -22,7 +22,7 @@ type Node<T> = {
 
 export const createStagingAdapter = <T,>(
   descriptors: SelectedStagingDescriptors,
-  hostType: (guest: T) => target.Type<unknown> = () => target.Unknown,
+  hostType: (guest: T) => target.TypeWitness = () => target.Unknown,
 ) => {
   const selected = new Map<symbol, { role: string; descriptor: DescriptorIdentity }>();
   for (const [role, descriptor] of Object.entries({ ...descriptors.core, ...descriptors.records })) {
@@ -129,11 +129,9 @@ export const createStagingAdapter = <T,>(
               }); return;
             case "record":
               if (n.base) throw new Error("Staging adapter does not support record bases");
-              if (n.fields.some((field) => !/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(field.name))) throw new Error("Staging JS target requires identifier field names");
               if (new Set(n.fields.map((field) => field.name)).size !== n.fields.length) throw new Error("Duplicate record field");
               children(n.fields.map((field) => field.value), (exprs) => finish(invoke("object", Object.fromEntries(n.fields.map((field, index) => [field.name, exprs[index]]))))); return;
             case "field":
-              if (!/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(n.name)) throw new Error("Staging JS target requires identifier field names");
               children([n.record], ([record]) => finish(invoke("prop", record, n.name))); return;
             default: throw new Error(`Unsupported staging descriptor: ${String(source.operationId)}`);
           }
