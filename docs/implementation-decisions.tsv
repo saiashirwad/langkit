@@ -1,0 +1,5 @@
+ts	phase	decision	why	evidence	result
+2026-10-11T00:00:00Z	baseline	Keep the current branch and leave future.md untouched	The user asked for integration here and supplied the design as an untracked file	04bb9b4c7ccde42f960a607579c62c863e1e8c7f	Baseline captured
+2026-10-11T00:00:00Z	baseline	Use npm test and npm run typecheck as conformance gates	Existing languages must retain their behavior throughout the redesign	package.json	1214 runtime tests pass; TypeScript passes
+2026-10-11T11:45:56Z	runtime	Require an iterative continuation machine and execution-local body collectors	Direct probes reproduce stack overflow and shared declaration buffers	src/check.ts; src/ir/check.ts	NOT VERIFIED before the fix
+2026-10-11T11:45:56Z	scope	Replace authoring APIs and migrate callers rather than add compatibility overloads	The user clarified that this is greenfield and compiler construction is the target	future.md; docs/implementation-plan.md	Design exploration underway
