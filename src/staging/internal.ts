@@ -100,20 +100,25 @@ export const materialize = (factory: () => Generator<Statement, Node, unknown>):
   }
 };
 export const validate = (body: Body): void => {
-  const introduced = new Set<symbol>();
+  const owners = new Map<symbol, Body>();
   const active = new Set<Node>();
   const tasks: (() => void)[] = [];
-  const introduce = (id: symbol, shape: Shape, scope: Map<symbol, Shape>) => {
-    if (introduced.has(id)) throw new Error("Duplicate staging binding identity");
-    introduced.add(id);
-    scope.set(id, shape);
-  };
   const visitBody = (source: Body, parent: Map<symbol, Shape>, params: readonly Node[] = []) => {
     const scope = new Map(parent);
+    const introduced = new Set<symbol>();
+    const introduce = (id: symbol, shape: Shape) => {
+      const owner = owners.get(id);
+      if (introduced.has(id) || (owner !== undefined && owner !== source)) {
+        throw new Error("Duplicate staging binding identity");
+      }
+      introduced.add(id);
+      owners.set(id, source);
+      scope.set(id, shape);
+    };
     for (const param of params) {
       assertNode(param);
       if (param.kind !== "param") throw new Error("Invalid staging parameter");
-      introduce(param.data.id as symbol, param.shape, scope);
+      introduce(param.data.id as symbol, param.shape);
     }
     let i = 0;
     const next = () => {
@@ -124,7 +129,7 @@ export const validate = (body: Body): void => {
       }
       assertStatement(statement);
       tasks.push(() => {
-        introduce(statement.id, statement.expr.shape, scope);
+        introduce(statement.id, statement.expr.shape);
         tasks.push(next);
       });
       visit(statement.expr, scope);
