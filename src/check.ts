@@ -89,10 +89,12 @@ type Instruction =
   | { readonly kind: "scoped"; readonly child: Check<unknown>; readonly derive: (runtime: Runtime) => Runtime }
   | { readonly kind: "recovery"; readonly child: Check<unknown>; readonly fallback: Check<unknown> }
   | { readonly kind: "transaction"; readonly child: Check<unknown>; readonly speculative: boolean }
+  | { readonly kind: "mapError"; readonly child: Check<unknown>; readonly map: (error: Diagnostic) => Diagnostic }
   | { readonly kind: "choice"; readonly children: readonly Check<unknown>[] };
 
 type Completion = Reply<unknown> | { readonly kind: "throw"; readonly error: unknown };
 type Frame =
+  | { readonly kind: "mapError"; readonly map: (error: Diagnostic) => Diagnostic }
   | { readonly kind: "bind"; readonly next: (value: unknown) => Check<unknown> }
   | { readonly kind: "generator"; readonly iterator: Generator<Check<unknown>, unknown, unknown> }
   | { readonly kind: "scoped"; readonly outer: Runtime }
@@ -127,6 +129,7 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
         current = undefined;
         switch (instruction.kind) {
           case "primitive": completion = instruction.step(runtime); break;
+          case "mapError": frames.push({ kind: "mapError", map: instruction.map }); current = instruction.child; break;
           case "bind": frames.push({ kind: "bind", next: instruction.next }); current = instruction.child; break;
           case "generator": advance(instruction.body()); break;
           case "scoped": {
@@ -153,6 +156,7 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
         const frame = frames.pop()!;
         switch (frame.kind) {
           case "bind": if (!("kind" in completion) && completion.ok) current = frame.next(completion.value); break;
+          case "mapError": if (!("kind" in completion) && !completion.ok) completion = { ok: false, error: frame.map(completion.error) }; break;
           case "generator":
             if (!("kind" in completion) && completion.ok) advance(frame.iterator, completion.value);
             else if (!frame.iterator.return(undefined).done) throw new TypeError("Checks cannot be yielded during generator cleanup");
@@ -207,6 +211,10 @@ export class Check<A> {
 
   map<B>(f: (value: A) => B): Check<B> {
     return this.flatMap((value) => pure(f(value)));
+  }
+
+  mapError(map: (error: Diagnostic) => Diagnostic): Check<A> {
+    return instructed({ kind: "mapError", child: this, map });
   }
 
   flatMap<B>(f: (value: A) => Check<B>): Check<B> {
@@ -279,3 +287,19 @@ export const run = <A>(checker: Check<A>): Result<A> => {
   }
   return errors.length ? { success: false, errors: [...errors] as [Diagnostic, ...Diagnostic[]] } : { success: true, value: reply.value };
 };
+
+export type DetailedResult<A> =
+  | { readonly status: "completed"; readonly value: A; readonly diagnostics: readonly Diagnostic[] }
+  | { readonly status: "failed"; readonly diagnostics: readonly [Diagnostic, ...Diagnostic[]] };
+
+export const runDetailed = <A>(checker: Check<A>): DetailedResult<A> => {
+  const runtime = new Runtime();
+  const reply = evaluate(checker, runtime);
+  const diagnostics = [...runtime.storage.errors];
+  return reply.ok
+    ? { status: "completed", value: reply.value, diagnostics }
+    : { status: "failed", diagnostics: diagnostics.length ? [diagnostics[0]!, ...diagnostics.slice(1), reply.error] : [reply.error] };
+};
+
+export const diagnostics = (): Check<readonly Diagnostic[]> =>
+  new Check((runtime) => ({ ok: true, value: [...runtime.storage.errors] }));

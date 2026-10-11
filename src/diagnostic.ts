@@ -8,6 +8,9 @@ export type RelatedDiagnostic = {
 };
 
 export type Diagnostic = {
+  readonly code?: string;
+  readonly invocation?: symbol;
+  readonly reasons?: readonly symbol[];
   readonly message: string;
   readonly context: readonly string[];
   /** Local checker span retained for source-compatible rendering and consumers. */
