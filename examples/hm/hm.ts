@@ -49,7 +49,6 @@ import {
 } from "langkit/types/hm";
 export { show, type Type } from "langkit/types/hm";
 
-// Syntax. Source spans survive elaboration into the IR.
 type Syntax =
   | { readonly kind: "number"; readonly value: number }
   | { readonly kind: "boolean"; readonly value: boolean }
@@ -91,7 +90,6 @@ const name = identifier.withSpan((name, span) => ({
   span: { start: span.start, end: span.start + name.length },
 }));
 
-// Reuse lexical patterns without requiring a successful parse for highlighting.
 const tokens: readonly TokenRule[] = [
   {
     pattern: words,
@@ -192,7 +190,6 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-// HM selects only the core IR and JavaScript operations.
 const code = elaboration(create<Type>());
 const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreDescriptors));
 const facts = createAnalysis<Type>();

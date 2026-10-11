@@ -94,8 +94,6 @@ const parameters = (params: readonly SyntaxParameter[], context: Context): Check
     return bindings;
   });
 
-// Surface calls are exact-arity. The shared unary IR represents an n-argument
-// function as nested closures, with an erased empty-record argument for arity 0.
 const lambda = (params: readonly Binding<Type>[], body: Body<Type>, type: Type): Check<Value<Type>> =>
   code.check(function* () {
     if (!params.length) return code.fn(type, code.binding("unit", record(row())), body);
@@ -133,7 +131,6 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
                 );
               const value = yield* elaborate(statement.value, inner);
               if (statement.kind === "expression") {
-                // Declarations retain even unused expressions and sequence each exactly once.
                 yield* code.declare("statement", value);
                 continue;
               }
@@ -355,7 +352,6 @@ const declaration = (
       const left = yield* resolveConstraintRow(c.left, types, constraints),
         right = yield* resolveConstraintRow(c.right, types, constraints);
       const constraint = { left, right };
-      // Reject internally contradictory constraints rather than assuming false.
       yield* disjoint(left, right, [constraint]).at(c.span);
       constraints.push(constraint);
     }

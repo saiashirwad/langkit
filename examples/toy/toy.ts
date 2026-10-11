@@ -36,7 +36,6 @@ import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
 
-// Our type system. Nothing in the kit knows what these types mean.
 export type Type =
   | { readonly kind: "number" }
   | { readonly kind: "boolean" }
@@ -55,7 +54,6 @@ const same = (a: Type, b: Type): boolean =>
     ? same(a.param, b.param) && same(a.result, b.result)
     : a.kind === b.kind;
 
-// Syntax. Source spans survive elaboration into the IR.
 type Syntax =
   | { readonly kind: "number"; readonly value: number }
   | { readonly kind: "boolean"; readonly value: boolean }
@@ -109,7 +107,6 @@ const name = identifier.withSpan((name, span) => ({
   span: { start: span.start, end: span.start + name.length },
 }));
 
-// Reuse lexical patterns without requiring a successful parse for highlighting.
 const tokens: readonly TokenRule[] = [
   {
     pattern: words,
@@ -230,7 +227,6 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-// Toy selects only the core IR and JavaScript operations.
 const code = elaboration(create<Type>());
 const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreDescriptors));
 const facts = createAnalysis<Type>();

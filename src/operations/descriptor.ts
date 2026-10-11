@@ -40,7 +40,6 @@ export const defineOperation = <T, Node extends OperationNode>(
   });
 };
 
-/** Narrow internal erasure at heterogeneous traversal boundaries only. */
 export const traversalOf = <T, Node extends OperationNode>(operation: OperationDescriptor<T, Node>): OperationTraversal<T> => {
   const { id, kind, children, scopedBodies, references, map, validate } = operation;
   return Object.freeze<OperationTraversal<T>>({

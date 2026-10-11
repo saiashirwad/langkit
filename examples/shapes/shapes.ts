@@ -98,8 +98,6 @@ const capture = (): Check<ExpansionContext> => check(function* () {
   return { generated: yield* get(generated), values: yield* get(env), macros: yield* get(macros), shapes: yield* get(shapes) };
 });
 const inContext = <A>(context: ExpansionContext, body: Check<A>): Check<A> => check(function* () {
-  // Invisible entries retain all ambient monomorphic variables for generalization.
-  // Dropping caller bindings here would unsoundly generalize a substituted value.
   const values = new Map(context.values);
   const retained = new Set(values.values());
   let index = 0;
@@ -147,8 +145,6 @@ const arity = (form: Form, items: readonly Form[], count: number): Check<void> =
 
 type TypeScope = { rows: Map<string, RowVariable>; types: Map<string, Type> };
 const typeScope = (): TypeScope => ({ rows: new Map(), types: new Map() });
-// An annotation constrains inference. Named shapes introduce a fresh open tail;
-// literal records are exact unless an explicit ..row tail is supplied.
 const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
   check(function* () {
     if (form.kind === "symbol") {
@@ -200,7 +196,6 @@ const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
     return yield* fail("Expected a type: number, boolean, string, 'a, a shape, a record, or (-> A B)");
   }).at(form.span);
 
-// Observe template annotations without checking unused templates or specializing their types.
 const shapeReferences = (form: Form): Check<void> => check(function* () {
   if (form.kind === "symbol") {
     const shape = (yield* get(shapes)).get(form.value);
@@ -393,7 +388,6 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
       yield* arity(form, items, 4);
       return yield* checkedScope(
         code.check(function* () {
-          // Bind the base before the replacement: evaluate once, left to right.
           const base = yield* code.declare("record", yield* elaborate(items[1]!));
           const key = yield* name(items[2]!);
           const { tail } = yield* requireField(base.type, key);
@@ -561,7 +555,6 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
               return yield* fail("A shape definition needs a record without a row tail").at(
                 body.span,
               );
-            // Resolve now against earlier definitions; storing syntax freshens each use.
             const type: ShapeInfo = { kind: "shape", name: key, body: yield* annotation(body, typeScope(), true) };
             const shape: Shape = { id: Symbol(key), name: key, body, type };
             yield* facts.define(shape, { start: label.span.start, end: label.span.start + key.length }, "type");

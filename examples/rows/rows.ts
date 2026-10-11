@@ -73,7 +73,6 @@ export { show, type Type } from "langkit/types/rows";
 
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
 
-// Syntax. Source spans survive elaboration into the IR.
 type Syntax =
   | { readonly kind: "number"; readonly value: number }
   | { readonly kind: "boolean"; readonly value: boolean }
@@ -122,7 +121,6 @@ const name = identifier.withSpan((name, span) => ({
   span: { start: span.start, end: span.start + name.length },
 }));
 
-// Reuse lexical patterns without requiring a successful parse for highlighting.
 const strings = /"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/;
 
 const tokens: readonly TokenRule[] = [
@@ -271,7 +269,6 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-// Rows explicitly selects records and printing in its IR and JavaScript backend.
 const recordFeature = records<Type>();
 const printingFeature = printing<Type>();
 const code = elaboration(create<Type>().use(recordFeature).use(printingFeature));
@@ -404,7 +401,6 @@ type Origin = { readonly uri: string; readonly span: Span; readonly name: string
 
 type Export = Entry & { readonly identity: symbol; readonly origin: Origin };
 
-// Locate exported record helpers without adding dependency spans to root hovers.
 const exportOrigins = (expr: Expr): Map<string, Span> => {
   const locals = new Map<string, Span>();
   while (expr.kind === "let") {

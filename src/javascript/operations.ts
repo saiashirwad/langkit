@@ -24,7 +24,6 @@ export const defineJavaScriptBackend = <const D extends DescriptorRecord, const 
   handlers: H & CompleteBackendHandlers<NoInfer<D>, H>,
 ): readonly DispatcherHandler<JavaScriptContext<DialectType<D>>>[] => defineBackend<JavaScriptContext<DialectType<D>>>()<D, H>(dialect, handlers);
 
-/** Narrow internal erasure at the heterogeneous backend handler-list boundary. */
 export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
   handler: JavaScriptHandler<T, Node, Context>,
 ): DispatcherHandler<Context> => ({

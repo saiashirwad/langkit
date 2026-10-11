@@ -182,7 +182,6 @@ const effect = (type: Type): Check<Type> => data(effectConstructor, [type]);
 const kind = (syntax: KindExpr): Kind =>
   syntax.kind === "type" ? typeKind : kindArrow(kind(syntax.param), kind(syntax.result));
 
-// Application is kind-checked before a source type may enter unification.
 const resolve = (
   syntax: TypeExpr,
   parameters: ReadonlyMap<string, Type> = new Map(),
@@ -363,8 +362,6 @@ const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> 
     )
     .at(expr.span);
 
-// Checking uses expected types to introduce rigid quantifiers and check lambdas.
-// Inference never guesses a forall for a lambda parameter.
 const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
   typed(
     expr,
@@ -473,8 +470,6 @@ const elaborateLet = (
         const abstract: { predicate: Predicate; binding: Binding<Type> }[] = [];
         const solved = yield* get(solutions);
         const outer = yield* get(wanted);
-        // Constraints involving captured variables stay in the enclosing scope.
-        // They also prevent connected variables from being generalized here.
         for (const want of remaining) {
           const localVariables = (yield* generalize(want.predicate.arg, schemes)).variables;
           if ([...localVariables].some((variable) => !resultVariables.has(variable)))
@@ -634,8 +629,6 @@ const elaborateMatch = (
     return code.match(result, value, cases, fallback);
   }).at(expr.span);
 
-// The same constructor and dictionary flow through every step. In particular,
-// lexical bindings named 'bind' cannot change the meaning of do notation.
 const elaborateDo = (
   expr: Extract<Expr, { kind: "do" }>,
   monad?: Type,
@@ -692,8 +685,6 @@ const elaborateDo = (
     const callback = code.fn(fn(result, body.result.type), binding, body);
     const required = fn(action.type, fn(callback.type, body.result.type));
     const declared = yield* substitute(declaredBind, new Map([[definition.parameter, constructor]]));
-    // Monad is source-defined, not an intrinsic signature. Check the projection
-    // against that declaration before assigning it the bind type needed here.
     yield* subsume(declared, required, current);
     const method = code.field(required, evidence, "bind");
     const partial = code.call(fn(callback.type, body.result.type), method, action);
@@ -786,8 +777,6 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
             yield* unify(type, fn(param, result)).at(expr.fn.span);
             type = fn(param, result);
           }
-          // The expected parameter type reaches the argument before its inference,
-          // which is what makes explicitly higher-rank arguments checkable.
           if (type.kind !== "function") throw new Error("Expected function after unification");
           const arg = yield* checkExpr(expr.arg, type.param);
           return code.call(type.result, callee, arg);
@@ -808,8 +797,6 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
     }),
   );
 
-// Datatypes are nominal. Register all names before resolving constructor fields,
-// allowing recursive and mutually recursive declarations without type aliases.
 const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> =>
   check(function* () {
     const existing = yield* get(definitions);
@@ -1248,8 +1235,6 @@ const build = (graph: Graph, locations: Map<symbol, Origin>): Check<Body<Type>> 
                   }
                   if (parsed.value.body)
                     yield* declareValue("module_result", yield* elaborate(parsed.value.body));
-                  // All visible non-primitive names are exported, including re-exports.
-                  // Dictionary fields are private to this elaboration, not source names.
                   const fields: { name: string; value: Value<Type> }[] = [...exported.values].map(
                     ([name, entry]) => ({
                       name,

@@ -82,7 +82,6 @@ type Constructor = {
 
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[] };
 
-// Advanced explicitly selects records, variants, and printing in both layers.
 const recordFeature = records<Type>();
 const variantFeature = variants<Type>();
 const printingFeature = printing<Type>();
@@ -173,8 +172,6 @@ const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> 
     )
     .at(expr.span);
 
-// Checking uses expected types to introduce rigid quantifiers and check lambdas.
-// Inference never guesses a forall for a lambda parameter.
 const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
   typed(
     expr,
@@ -224,8 +221,6 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let" }>, expected?: Type): Ch
       let binding: Binding<Type>;
       let scheme: Scheme;
       if (expr.recursive) {
-        // Only delayed function bodies may see their own binding. No general letrec
-        // values, eager self-reference, or inferred polymorphic recursion.
         if (expr.value.kind !== "fn")
           return yield* fail("Recursive bindings require a function initializer");
         const type = annotation ?? (yield* fresh(yield* get(level)));
@@ -409,8 +404,6 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         case "call": {
           const callee = yield* elaborate(expr.fn);
           const type = yield* expectFunction(callee.type, current).at(expr.fn.span);
-          // The expected parameter type reaches the argument before its inference,
-          // which is what makes explicitly higher-rank arguments checkable.
           const arg = yield* checkExpr(expr.arg, type.param);
           return code.call(type.result, callee, arg);
         }
@@ -429,8 +422,6 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
   );
 export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
   code.body(function* () { return yield* elaborate(expr); });
-// Datatypes are nominal. Register all names before resolving constructor fields,
-// allowing recursive and mutually recursive declarations without type aliases.
 const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> =>
   code.check(function* () {
     const existing = yield* get(definitions);
@@ -636,7 +627,6 @@ const buildModules = (
                 parsed.value.types,
                 code.check(function* () {
                   const value = yield* elaborate(parsed.value.body);
-                  // Capture declarations while withTypes' dynamic scopes are active.
                   moduleDefinitions = yield* get(definitions);
                   moduleConstructors = yield* get(constructors);
                   return value;
