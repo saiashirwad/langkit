@@ -24,12 +24,14 @@ export const scoped = <T>(initial: T): Scoped<T> => ({ kind: "scoped", initial, 
 
 type Entry = { readonly value: unknown; readonly initialRestore: () => void; readonly checkpoint: () => () => void };
 type Storage = { readonly states: Map<State<unknown>, Entry>; readonly errors: Diagnostic[] };
+type DiagnosticMapper = { readonly map: (error: Diagnostic) => Diagnostic; readonly outer: DiagnosticMapper | undefined };
 type RuntimeInit = {
   readonly storage: Storage;
   readonly values: ReadonlyMap<object, unknown>;
   readonly labels: readonly string[];
   readonly span: Span | undefined;
   readonly document: string | undefined;
+  readonly diagnosticMapper: DiagnosticMapper | undefined;
 };
 
 class Runtime {
@@ -38,6 +40,7 @@ class Runtime {
   readonly labels: readonly string[];
   readonly span: Span | undefined;
   readonly document: string | undefined;
+  readonly diagnosticMapper: DiagnosticMapper | undefined;
 
   constructor(init: Partial<RuntimeInit> = {}) {
     this.storage = init.storage ?? { states: new Map(), errors: [] };
@@ -45,10 +48,11 @@ class Runtime {
     this.labels = init.labels ?? [];
     this.span = init.span;
     this.document = init.document;
+    this.diagnosticMapper = init.diagnosticMapper;
   }
 
   derive(changes: Partial<Omit<RuntimeInit, "storage">>): Runtime {
-    return new Runtime({ storage: this.storage, values: this.values, labels: this.labels, span: this.span, document: this.document, ...changes });
+    return new Runtime({ storage: this.storage, values: this.values, labels: this.labels, span: this.span, document: this.document, diagnosticMapper: this.diagnosticMapper, ...changes });
   }
 
   get<T>(key: State<T> | Scoped<T>): T {
@@ -128,7 +132,16 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
         const instruction: Instruction = instructions.get(current)!;
         current = undefined;
         switch (instruction.kind) {
-          case "primitive": completion = instruction.step(runtime); break;
+          case "primitive": {
+            const reply = instruction.step(runtime);
+            if (reply.ok) completion = reply;
+            else {
+              let error = reply.error;
+              for (let mapper = runtime.diagnosticMapper; mapper !== undefined; mapper = mapper.outer) error = mapper.map(error);
+              completion = { ok: false, error };
+            }
+            break;
+          }
           case "mapError": frames.push({ kind: "mapError", map: instruction.map }); current = instruction.child; break;
           case "bind": frames.push({ kind: "bind", next: instruction.next }); current = instruction.child; break;
           case "generator": advance(instruction.body()); break;
@@ -215,6 +228,10 @@ export class Check<A> {
 
   mapError(map: (error: Diagnostic) => Diagnostic): Check<A> {
     return instructed({ kind: "mapError", child: this, map });
+  }
+
+  withDiagnostics(map: (error: Diagnostic) => Diagnostic): Check<A> {
+    return instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ diagnosticMapper: { map, outer: runtime.diagnosticMapper } }) });
   }
 
   flatMap<B>(f: (value: A) => Check<B>): Check<B> {

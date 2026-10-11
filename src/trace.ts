@@ -17,7 +17,7 @@ export interface TraceEvent<T, E> {
   readonly causedBy?: readonly symbol[];
 }
 
-export const createTrace = <T, E>(snapshotType: (type: T) => T, snapshotTerm: (term: E) => E) => {
+export const createTrace = <T, E, PublishedType = T, PublishedTerm = E>(snapshotType: (type: T) => PublishedType, snapshotTerm: (term: E) => PublishedTerm) => {
   const events = state<TraceEvent<T, E>[]>(() => [], (values) => {
     const length = values.length;
     return () => { values.length = length; };
@@ -38,19 +38,25 @@ export const createTrace = <T, E>(snapshotType: (type: T) => T, snapshotTerm: (t
       const parent = yield* get(current);
       const location = yield* get(source);
       yield* record({ id, ...location, relation, operands: [...operands], reason, causedBy: [...causedBy], ...(parent === undefined ? {} : { parent }) });
-      return yield* body.mapError((error) => ({ ...error, reasons: [...(error.reasons ?? []), id] }));
+      return yield* body.withDiagnostics((error) => ({ ...error, reasons: [...(error.reasons ?? []), id] }));
     }),
-    snapshot: (): Check<readonly TraceEvent<T, E>[]> => get(events).map((values) => values.map((event) => ({
-      ...event,
-      ...(event.expected === undefined ? {} : { expected: snapshotType(event.expected) }),
-      ...(event.synthesized === undefined ? {} : { synthesized: snapshotType(event.synthesized) }),
-      ...(event.term === undefined ? {} : { term: snapshotTerm(event.term) }),
-      ...(event.operands === undefined ? {} : { operands: event.operands.map(snapshotType) }),
+    snapshot: (): Check<readonly TraceEvent<PublishedType, PublishedTerm>[]> => get(events).map((values) => Object.freeze(values.map((event) => {
+      const { expected, synthesized, term, operands, ...identity } = event;
+      return Object.freeze({
+        ...identity,
+        ...(event.span === undefined ? {} : { span: Object.freeze({ ...event.span }) }),
+        ...(event.causedBy === undefined ? {} : { causedBy: Object.freeze([...event.causedBy]) }),
+        ...(expected === undefined ? {} : { expected: snapshotType(expected) }),
+        ...(synthesized === undefined ? {} : { synthesized: snapshotType(synthesized) }),
+        ...(term === undefined ? {} : { term: snapshotTerm(term) }),
+        ...(operands === undefined ? {} : { operands: Object.freeze(operands.map(snapshotType)) }),
+      });
     }))),
   };
 };
 
 export type Trace<T, E> = ReturnType<typeof createTrace<T, E>>;
+export type TraceRecorder<T, E> = Pick<Trace<T, E>, "invocation" | "result">;
 export const traceAt = <T, E>(events: readonly TraceEvent<T, E>[], offset: number): readonly TraceEvent<T, E>[] => {
   const selected = new Set(events.filter((event) => event.span && event.span.start <= offset && offset < event.span.end).map((event) => event.id));
   return events.filter((event) => selected.has(event.id) || (event.parent !== undefined && selected.has(event.parent)));

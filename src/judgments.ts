@@ -1,6 +1,6 @@
 import { check, fail, type Check } from "./check.ts";
 import type { Span } from "./diagnostic.ts";
-import type { Trace } from "./trace.ts";
+import type { TraceRecorder } from "./trace.ts";
 
 export interface Synthesized<Type, Term> { readonly type: Type; readonly term: Term }
 export interface Judgments<Node, Type, Term> {
@@ -22,19 +22,21 @@ export type RuleTable<N extends { readonly kind: string }, T, E> = {
 export interface JudgmentOptions<N, T, E> {
   readonly modes: CheckingModes<T, E>;
   readonly source?: (node: N) => { readonly span?: Span; readonly document?: string };
-  readonly trace?: Trace<T, E>;
+  readonly trace?: TraceRecorder<T, E>;
   readonly typed?: (type: T, span: Span) => Check<void>;
 }
 export const createJudgments = <N extends { readonly kind: string }, T, E>(rules: RuleTable<N, T, E>, options: JudgmentOptions<N, T, E>): Judgments<N, T, E> => {
+  const selectedRules = new Map<string, Rule<N, N, T, E>>();
+  for (const kind of Object.keys(rules)) selectedRules.set(kind, { ...rules[kind as N["kind"]] } as Rule<N, N, T, E>);
   const locate = <A>(node: N, phase: "synth" | "check", expected: T | undefined, body: Check<A>, observe?: (id: symbol, value: A) => Check<void>): Check<A> => {
     const source = options.source?.(node);
     const attributed = options.trace
-      ? options.trace.invocation({ rule: `${node.kind}.${phase}`, phase, ...source, ...(expected === undefined ? {} : { expected }) }, (id) => body.flatMap((value) => observe ? observe(id, value).map(() => value) : check(function* () { return value; })).mapError((error) => ({ ...error, invocation: error.invocation ?? id })))
-      : body;
+      ? options.trace.invocation({ rule: `${node.kind}.${phase}`, phase, ...source, ...(expected === undefined ? {} : { expected }) }, (id) => body.flatMap((value) => observe ? observe(id, value).map(() => value) : check(function* () { return value; })).withDiagnostics((error) => ({ ...error, code: error.code ?? "judgment.failed", invocation: error.invocation ?? id })))
+      : body.withDiagnostics((error) => ({ ...error, code: error.code ?? "judgment.failed" }));
     const located = attributed.at(source?.span);
     return source?.document === undefined ? located : located.inDocument(source.document);
   };
-  const select = (node: N): Rule<N, N, T, E> => rules[node.kind as N["kind"]] as Rule<N, N, T, E>;
+  const select = (node: N): Rule<N, N, T, E> => selectedRules.get(node.kind)!;
   const judgments: Judgments<N, T, E> = {
     synth: (node) => locate(node, "synth", undefined, check(function* () {
       const rule = select(node);

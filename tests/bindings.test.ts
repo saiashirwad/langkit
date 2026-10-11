@@ -26,3 +26,27 @@ test("bindings allocate per execution, scope declarations, and instantiate each 
   assert.deepEqual(run(get(b.environment)), { success: true, value: new Map() });
   assert.equal(run(b.let("x", { start: 0, end: 1 }, b.reference("x", { start: 2, end: 3 }), () => fail("unreachable"))).success, false);
 });
+test("pure lets evaluate outside the new scope, generalize explicitly, and declare exactly once", () => {
+  let declared = 0;
+  const seen: string[][] = [];
+  const b = createBindings<string, string, { id: symbol; name: string }, string>({
+    monomorphic: (type) => type,
+    instantiate: pure,
+    generalize: (type, outer) => { seen.push([...outer]); return pure(`scheme:${type}`); },
+    parameter: (name) => ({ id: Symbol(name), name }),
+    declare: (name) => check(function* () { declared++; return { id: Symbol(name), name }; }),
+    reference: (handle) => handle.name,
+  });
+  const result = run(b.parameter("outer", "outer-type", { start: 0, end: 1 }, () => b.let("x", { start: 2, end: 3 }, check(function* () {
+    assert.equal((yield* get(b.environment)).has("x"), false);
+    return { type: "value-type", term: "initial" };
+  }), () => check(function* () {
+    assert.equal((yield* get(b.environment)).get("x")!.scheme, "scheme:value-type");
+    yield* fail("body failure").recover();
+    return 1;
+  }))));
+  assert.equal(result.success, false);
+  assert.equal(declared, 1);
+  assert.deepEqual(seen, [["outer-type"]]);
+  assert.deepEqual(run(get(b.environment)), { success: true, value: new Map() });
+});

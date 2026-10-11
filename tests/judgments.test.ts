@@ -23,6 +23,32 @@ test("instrumented deep dispatch stays stack safe", () => {
   let node: Node = { kind: "literal", value: 7 };
   for (let i = 0; i < 20000; i++) node = { kind: "nested", child: node };
   assert.deepEqual(run(j.synth(node)), { success: true, value: { type: "number", term: 7 } });
+  let failing: Node = { kind: "only" };
+  for (let i = 0; i < 20000; i++) failing = { kind: "nested", child: failing };
+  const failure = run(j.synth(failing));
+  assert.equal(failure.success, false);
+  if (!failure.success) assert.equal(failure.errors[0]!.code, "judgment.synthesis-unavailable");
+});
+test("source attribution applies to recovered diagnostics inside a rule", () => {
+  const trace = createTrace<string, number>((x) => x, (x) => x);
+  const j = createJudgments<Node, string, number>({ ...rules, literal: { mode: "synth", check: "fromSynth", *synth(n) {
+    yield* fail("recoverable").recover();
+    return { type: "number", term: n.value };
+  } } }, { trace, source: () => ({ span: { start: 3, end: 4 }, document: "memory:source" }), modes: { enter: (t, body) => body(t), accept: (a) => pure(a.term) } });
+  const result = runDetailed(check(function* () { yield* j.synth({ kind: "literal", value: 1 }); return yield* trace.snapshot(); }));
+  assert(result.status === "completed");
+  assert.equal(result.diagnostics[0]!.invocation, result.value[0]!.id);
+  assert.equal(result.diagnostics[0]!.code, "judgment.failed");
+  assert.deepEqual(result.diagnostics[0]!.origin, { uri: "memory:source", span: { start: 3, end: 4 } });
+});
+test("void terms do not force an expression representation", () => {
+  const j = createJudgments<Node, string, void>({
+    literal: { mode: "synth", check: "fromSynth", *synth() { return { type: "number", term: undefined }; } },
+    nested: { mode: "unsupported", reason: "no nested schema" },
+    only: { mode: "checkingOnly", *check() {} },
+  }, { modes: { enter: (t, body) => body(t), accept: () => pure(undefined) } });
+  assert.deepEqual(run(j.check({ kind: "literal", value: 1 }, "number")), { success: true, value: undefined });
+  assert.equal(run(j.synth({ kind: "nested", child: { kind: "only" } })).success, false);
 });
 test("trace constraints have actual invocation and source; abandoned attempts disappear", () => {
   const trace = createTrace<string, number>((x) => x, (x) => x);

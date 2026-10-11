@@ -26,6 +26,13 @@ test("fresh compiler configurations and detached snapshots", () => {
   assert(first.status === "checked" && second.status === "checked");
   assert.equal(compiler.emit(first.artifact), "1");
   assert.notEqual(first.facts[0]!.id, second.facts[0]!.id);
+  assert.throws(() => compiler.emit({ value: 1 } as typeof first.artifact), /clean finalized artifact/);
+  assert.throws(() => compiler.emit(Object.create(Object.getPrototypeOf(first.artifact))), /clean finalized artifact/);
+});
+test("finalization and observation host exceptions propagate; observation failure cannot publish invented facts", () => {
+  const base = { elaborate: pure(1), snapshot: (x: number) => x, facts: pure([]) };
+  assert.throws(() => elaborate({ ...base, finalize: () => check(function* () { throw new Error("host finalizer"); }) }), /host finalizer/);
+  assert.throws(() => elaborate({ ...base, finalize: pure, facts: fail("observation policy failure") }), /Observation publication must complete/);
 });
 test("speculation rolls back observations without reusing retained diagnostic identities", () => {
   const trace = createTrace<string, void>((x) => x, (x) => x);

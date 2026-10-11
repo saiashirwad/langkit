@@ -27,8 +27,14 @@ const wrong: RuleTable<N, string, number> = {
 };
 const j = createJudgments(table, { modes: { enter: (expected, body) => body(expected), accept: (actual) => pure(actual.term) } });
 const concrete: Check<Synthesized<string, number>> = j.synth({ kind: "num", value: 1 });
+type IsAny<T> = 0 extends (1 & T) ? true : false;
+type NotAny<T> = IsAny<T> extends true ? never : true;
+const noAnyTerm: NotAny<Synthesized<string, number>["term"]> = true;
 // @ts-expect-error configured expected type is string
 j.check({ kind: "num", value: 1 }, false);
 // @ts-expect-error consumers cannot construct the private publication brand
 const forged: CheckedArtifact<number> = { value: 1 };
-void [missing, wrong, concrete, forged];
+declare const checked: CheckedArtifact<number>;
+// @ts-expect-error spreading a checked artifact cannot carry its private nominal proof
+const altered: CheckedArtifact<number> = { ...checked, value: 2 };
+void [missing, wrong, concrete, forged, altered, noAnyTerm];
