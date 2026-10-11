@@ -169,3 +169,52 @@ test("recovered errors retain execution order and nested failures", () => {
   assert.equal(result.success, false);
   if (!result.success) assert.deepEqual(result.errors.map(({ message }) => message), ["first", "second", "terminal"]);
 });
+
+test("atomic commits recovered mutations while attempt reports the earliest recovery", () => {
+  const external = { value: 0 };
+  const key = state(() => external, (cell) => {
+    const saved = cell.value;
+    return () => { cell.value = saved; };
+  });
+  const recovered = get(key).map((cell) => { cell.value += 1; })
+    .flatMap(() => fail("first recovery").recover(pure(undefined)));
+  const committed = run(recovered.atomic());
+  assert.equal(committed.success, false);
+  assert.equal(external.value, 1);
+  if (!committed.success) assert.deepEqual(committed.errors.map((error) => error.message), ["first recovery"]);
+  const speculative = run(attempt(recovered.flatMap(() => fail("terminal"))));
+  assert.equal(speculative.success, false);
+  assert.equal(external.value, 1);
+  if (!speculative.success) assert.deepEqual(speculative.errors.map((error) => error.message), ["first recovery"]);
+});
+
+test("recovery and ordered choice propagate programming exceptions without fallback", () => {
+  let fallback = false;
+  const thrown = pure(undefined).map(() => { throw new Error("programming error"); });
+  const other = pure(undefined).map(() => { fallback = true; });
+  assert.throws(() => run(thrown.recover(other)), /programming error/);
+  assert.throws(() => run(choice(thrown, other)), /programming error/);
+  assert.equal(fallback, false);
+});
+
+test("forced return bypasses catch and cleanup exceptions unwind enclosing transactions", () => {
+  const external = { value: 0 };
+  const key = state(() => external, (cell) => {
+    const saved = cell.value;
+    return () => { cell.value = saved; };
+  });
+  const events: string[] = [];
+  const inner = check(function* () {
+    yield* get(key).map((cell) => { cell.value = 1; });
+    try { yield* fail("pending failure"); }
+    catch { events.push("catch"); }
+    finally { events.push("inner"); throw new Error("cleanup wins"); }
+  });
+  const outer = check(function* () {
+    try { yield* inner.atomic(); }
+    finally { events.push("outer"); }
+  });
+  assert.throws(() => run(attempt(outer)), /cleanup wins/);
+  assert.deepEqual(events, ["inner", "outer"]);
+  assert.equal(external.value, 0);
+});

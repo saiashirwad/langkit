@@ -82,90 +82,169 @@ class Runtime {
   }
 }
 
+type Instruction =
+  | { readonly kind: "primitive"; readonly step: (runtime: Runtime) => Reply<unknown> }
+  | { readonly kind: "bind"; readonly child: Check<unknown>; readonly next: (value: unknown) => Check<unknown> }
+  | { readonly kind: "generator"; readonly body: () => Generator<Check<unknown>, unknown, unknown> }
+  | { readonly kind: "scoped"; readonly child: Check<unknown>; readonly derive: (runtime: Runtime) => Runtime }
+  | { readonly kind: "recovery"; readonly child: Check<unknown>; readonly fallback: Check<unknown> }
+  | { readonly kind: "transaction"; readonly child: Check<unknown>; readonly speculative: boolean }
+  | { readonly kind: "choice"; readonly children: readonly Check<unknown>[] };
+
+type Completion = Reply<unknown> | { readonly kind: "throw"; readonly error: unknown };
+type Frame =
+  | { readonly kind: "bind"; readonly next: (value: unknown) => Check<unknown> }
+  | { readonly kind: "generator"; readonly iterator: Generator<Check<unknown>, unknown, unknown> }
+  | { readonly kind: "scoped"; readonly outer: Runtime }
+  | { readonly kind: "recovery"; readonly fallback: Check<unknown> }
+  | { readonly kind: "transaction"; readonly restore: () => void; readonly start: number; readonly speculative: boolean }
+  | { readonly kind: "choice"; readonly children: readonly Check<unknown>[]; readonly index: number; readonly first: Reply<unknown> | undefined };
+
+const instructions = new WeakMap<Check<unknown>, Instruction>();
+const instructed = <A>(instruction: Instruction): Check<A> => {
+  const checker: Check<A> = new Check<A>((runtime) => evaluate(checker, runtime));
+  instructions.set(checker, instruction);
+  return checker;
+};
+
+const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
+  let runtime = initial;
+  let current: Check<unknown> | undefined = checker;
+  let completion: Completion = { ok: true, value: undefined };
+  const frames: Frame[] = [];
+  const advance = (iterator: Generator<Check<unknown>, unknown, unknown>, value?: unknown) => {
+    const result = iterator.next(value);
+    if (result.done) completion = { ok: true, value: result.value };
+    else {
+      frames.push({ kind: "generator", iterator });
+      current = result.value;
+    }
+  };
+  while (current !== undefined || frames.length > 0) {
+    try {
+      if (current !== undefined) {
+        const instruction: Instruction = instructions.get(current)!;
+        current = undefined;
+        switch (instruction.kind) {
+          case "primitive": completion = instruction.step(runtime); break;
+          case "bind": frames.push({ kind: "bind", next: instruction.next }); current = instruction.child; break;
+          case "generator": advance(instruction.body()); break;
+          case "scoped": {
+            const inner = instruction.derive(runtime);
+            frames.push({ kind: "scoped", outer: runtime });
+            runtime = inner;
+            current = instruction.child;
+            break;
+          }
+          case "recovery": frames.push({ kind: "recovery", fallback: instruction.fallback }); current = instruction.child; break;
+          case "transaction": {
+            const start = runtime.storage.errors.length;
+            const restore = runtime.checkpoint();
+            frames.push({ kind: "transaction", restore, start, speculative: instruction.speculative });
+            current = instruction.child;
+            break;
+          }
+          case "choice":
+            frames.push({ kind: "choice", children: instruction.children, index: 0, first: undefined });
+            current = attempt(instruction.children[0]!);
+            break;
+        }
+      } else {
+        const frame = frames.pop()!;
+        switch (frame.kind) {
+          case "bind": if (!("kind" in completion) && completion.ok) current = frame.next(completion.value); break;
+          case "generator":
+            if (!("kind" in completion) && completion.ok) advance(frame.iterator, completion.value);
+            else if (!frame.iterator.return(undefined).done) throw new TypeError("Checks cannot be yielded during generator cleanup");
+            break;
+          case "scoped": runtime = frame.outer; break;
+          case "recovery":
+            if (!("kind" in completion) && !completion.ok) {
+              runtime.storage.errors.push(completion.error);
+              current = frame.fallback;
+            }
+            break;
+          case "transaction": {
+            const recovered = frame.speculative ? runtime.storage.errors[frame.start] : undefined;
+            if ("kind" in completion || !completion.ok || recovered !== undefined) {
+              try { frame.restore(); } finally {
+                if (frame.speculative) runtime.storage.errors.length = frame.start;
+              }
+              if (!("kind" in completion) && recovered !== undefined) completion = { ok: false, error: recovered };
+            }
+            break;
+          }
+          case "choice":
+            if (!("kind" in completion) && !completion.ok) {
+              const first: Reply<unknown> = frame.first ?? completion;
+              const index = frame.index + 1;
+              if (index === frame.children.length) completion = first;
+              else {
+                frames.push({ ...frame, first, index });
+                current = attempt(frame.children[index]!);
+              }
+            }
+            break;
+        }
+      }
+    } catch (error) {
+      current = undefined;
+      completion = { kind: "throw", error };
+    }
+  }
+  if ("kind" in completion) throw completion.error;
+  return completion as Reply<A>;
+};
+
 export class Check<A> {
   readonly step: (runtime: Runtime) => Reply<A>;
 
-  constructor(step: (runtime: Runtime) => Reply<A>) { this.step = step; }
+  constructor(step: (runtime: Runtime) => Reply<A>) {
+    this.step = step;
+    instructions.set(this, { kind: "primitive", step });
+  }
   *[Symbol.iterator](): Generator<Check<A>, A, unknown> { return (yield this) as A; }
 
   map<B>(f: (value: A) => B): Check<B> {
-    return new Check((runtime) => {
-      const reply = this.step(runtime);
-      return reply.ok ? { ok: true, value: f(reply.value) } : reply;
-    });
+    return this.flatMap((value) => pure(f(value)));
   }
 
   flatMap<B>(f: (value: A) => Check<B>): Check<B> {
-    return new Check((runtime) => {
-      const reply = this.step(runtime);
-      return reply.ok ? f(reply.value).step(runtime) : reply;
-    });
+    return instructed({ kind: "bind", child: this, next: (value) => f(value as A) });
   }
 
   recover<B>(fallback: Check<B>): Check<A | B>;
   recover(this: Check<void>): Check<void>;
   recover(fallback: Check<unknown> = pure(undefined)): Check<unknown> {
-    return new Check((runtime) => {
-      const reply = this.step(runtime);
-      if (reply.ok) return reply;
-      runtime.storage.errors.push(reply.error);
-      return fallback.step(runtime);
-    });
+    return instructed({ kind: "recovery", child: this, fallback });
   }
 
   atomic(): Check<A> {
-    return new Check((runtime) => {
-      const restore = runtime.checkpoint();
-      try {
-        const reply = this.step(runtime);
-        if (!reply.ok) restore();
-        return reply;
-      } catch (error) {
-        restore();
-        throw error;
-      }
-    });
+    return instructed({ kind: "transaction", child: this, speculative: false });
   }
 
   context(label: string): Check<A> {
-    return new Check((runtime) => this.step(runtime.derive({ labels: [...runtime.labels, label] })));
+    return instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ labels: [...runtime.labels, label] }) });
   }
 
   at(span: Span | undefined): Check<A> {
-    return span === undefined ? this : new Check((runtime) => this.step(runtime.derive({ span })));
+    return span === undefined ? this : instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ span }) });
   }
 
   inDocument(uri: string): Check<A> {
-    return new Check((runtime) => this.step(runtime.derive({ document: uri })));
+    return instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ document: uri }) });
   }
 }
 
 export const check = <A>(body: () => Generator<Check<unknown>, A, unknown>): Check<A> =>
-  new Check((runtime) => {
-    const iterator = body();
-    let current: IteratorResult<Check<unknown>, A> | undefined;
-    try {
-      current = iterator.next();
-      while (!current.done) {
-        const reply = current.value.step(runtime);
-        if (!reply.ok) return reply;
-        current = iterator.next(reply.value);
-      }
-      return { ok: true, value: current.value };
-    } finally {
-      if (current !== undefined && !current.done) {
-        const cleanup = iterator.return(undefined as A);
-        if (!cleanup.done) throw new TypeError("Checks cannot be yielded during generator cleanup");
-      }
-    }
-  });
+  instructed({ kind: "generator", body });
 
 export const pure = <A>(value: A): Check<A> => new Check(() => ({ ok: true, value }));
 export const fail = (message: string): Check<never> => new Check((runtime) => ({ ok: false, error: runtime.diagnostic(message) }));
 export const get = <T>(key: State<T> | Scoped<T>): Check<T> => new Check((runtime) => ({ ok: true, value: runtime.get(key) }));
 
 export const within = <T, A>(key: Scoped<T>, update: (current: T) => T, body: Check<A>): Check<A> =>
-  new Check((runtime) => body.step(runtime.derive({ values: new Map(runtime.values).set(key, update(runtime.get(key))) })));
+  instructed({ kind: "scoped", child: body, derive: (runtime) => runtime.derive({ values: new Map(runtime.values).set(key, update(runtime.get(key))) }) });
 
 export const bind = <T, A>(env: Scoped<ReadonlyMap<string, T>>, entries: Iterable<readonly [string, T]>, body: Check<A>): Check<A> =>
   within(env, (current) => new Map([...current, ...entries]), body);
@@ -183,37 +262,14 @@ export const sequence = <const Checks extends readonly Check<unknown>[]>(checks:
     return values as Values<Checks>;
   });
 
-export const attempt = <A>(checker: Check<A>): Check<A> => new Check((runtime) => {
-  const start = runtime.storage.errors.length;
-  const restore = runtime.checkpoint();
-  try {
-    const reply = checker.step(runtime);
-    const recovered = runtime.storage.errors[start];
-    if (reply.ok && recovered === undefined) return reply;
-    restore();
-    runtime.storage.errors.length = start;
-    return recovered === undefined ? reply : { ok: false, error: recovered };
-  } catch (error) {
-    restore();
-    runtime.storage.errors.length = start;
-    throw error;
-  }
-});
+export const attempt = <A>(checker: Check<A>): Check<A> => instructed({ kind: "transaction", child: checker, speculative: true });
 
 export const choice = <const Checks extends readonly [Check<unknown>, ...Check<unknown>[]]>(...checks: Checks): Check<Value<Checks[number]>> =>
-  new Check((runtime) => {
-    const initial = attempt(checks[0]).step(runtime);
-    if (initial.ok) return initial as Reply<Value<Checks[number]>>;
-    for (const checker of checks.slice(1)) {
-      const reply = attempt(checker).step(runtime);
-      if (reply.ok) return reply as Reply<Value<Checks[number]>>;
-    }
-    return initial;
-  });
+  instructed({ kind: "choice", children: checks });
 
 export const run = <A>(checker: Check<A>): Result<A> => {
   const runtime = new Runtime();
-  const reply = checker.step(runtime);
+  const reply = evaluate(checker, runtime);
   const errors = runtime.storage.errors;
   if (!reply.ok) {
     const allErrors: [Diagnostic, ...Diagnostic[]] = errors.length === 0

@@ -42,11 +42,10 @@ const runMixed = <T, A>(factory: MixedGenerator<T, A>, active: Scoped<State<Decl
     }
   });
 
-/** Bridges pure generator IR into diagnostics without introducing a second declaration protocol. */
 export const elaboration = <T, Methods extends object>(builder: LanguageBuilder<T, Methods>): Elaboration<T, Methods> => {
   const active = scoped<State<Declaration<T>[]> | undefined>(undefined);
   const checkFactory = <A>(factory: MixedGenerator<T, A>): Check<A> => runMixed(factory, active);
-  const body = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Body<T>> => {
+  const body = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Body<T>> => check(function* () {
     const collection = state<Declaration<T>[]>(() => [], (current) => {
       const length = current.length;
       return () => { current.length = length; };
@@ -54,10 +53,10 @@ export const elaboration = <T, Methods extends object>(builder: LanguageBuilder<
     const computation = check(function* () {
       const result = yield* runMixed(factory, active);
       const declarations = yield* get(collection);
-      return builder.body({ declarations, result });
+      return builder.body({ declarations: [...declarations], result });
     });
-    return within(active, () => collection, computation);
-  };
+    return yield* within(active, () => collection, computation);
+  });
   const scope = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Value<T>> =>
     body(factory).map((built) => builder.block(built.result.type, built));
   const api = { ...builder } as PureMethods<T, Methods> & Record<string, unknown>;
