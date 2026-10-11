@@ -11,7 +11,7 @@ import {
   Check,
   type Result,
 } from "langkit";
-import { create, type Body, type Binding, type Value } from "langkit/ir";
+import { create, type Body, type Binding, type Program, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -598,7 +598,7 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
 
 export type Compiled = {
   readonly type: Type;
-  readonly ir: Body<Type>;
+  readonly ir: Program<Type>;
   readonly javascript: string;
 };
 export const compile = (source: string): Result<Compiled> => {
@@ -606,9 +606,10 @@ export const compile = (source: string): Result<Compiled> => {
   if (!parsed.success) return parsed;
   const built = run(build(parsed.value));
   if (!built.success) return built;
+  const ir = code.program(built.value);
   return {
     success: true,
-    value: { type: built.value.result.type, ir: built.value, javascript: javascript.emit(built.value, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }) },
+    value: { type: built.value.result.type, ir, javascript: javascript.emit(ir) },
   };
 };
 export const analyze = (source: string): Analysis<EditorType> => {

@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { create, type Body, type OperationNode, type Value } from "../src/ir.ts";
+import { check, run } from "../src/check.ts";
+import { create, mapBody, validate, type Body, type OperationNode, type Value } from "../src/ir.ts";
 import { emit, createJavaScriptEmitter, type JavaScriptContext } from "../src/javascript.ts";
 import { coreJavaScript } from "../src/javascript/core.ts";
 import { printingJavaScript } from "../src/javascript/printing.ts";
@@ -9,13 +10,13 @@ import { asDispatcherHandler, defineJavaScriptHandler } from "../src/javascript/
 import { defineOperation, traversalOf } from "../src/operations/descriptor.ts";
 import { records } from "../src/operations/records.ts";
 import { printing } from "../src/operations/printing.ts";
-
 test("language builders compose explicitly selected feature methods", () => {
   const recordSet = records<string>();
   const language = create<string>().use(recordSet).use(printing<string>());
   const record = language.record("record", [{ name: "n", value: language.literal("number", 1) }]);
   const selected = language.field("number", record, "n");
   assert.equal(selected.operationId, recordSet.operations.find((operation) => operation.kind === "field")?.id);
+  assert.throws(() => create<string>().use({ methods: { program: () => undefined }, operations: [] }), /Duplicate language feature method: program/);
 });
 
 test("custom operation traversal rejects a binding that escapes its scope", () => {
@@ -70,14 +71,24 @@ test("custom JavaScript dispatch rejects missing handlers and supports explicit 
   });
   const value = descriptor.make("string", { kind: "custom-text", text: "custom" });
   const root: Body<string> = { declarations: [], result: value };
-  const operations = [traversalOf(descriptor)];
-  assert.throws(() => emit(root, { operations }), /Missing JavaScript handler for operation: custom-text/);
+  const base = create<string>();
+  const language = base.use({ methods: {}, operations: [traversalOf(descriptor)] });
+  const program = language.program(root);
+  assert.throws(() => emit(program), /Missing JavaScript handler for operation: custom-text/);
 
   const handler = asDispatcherHandler(defineJavaScriptHandler<string, CustomNode, JavaScriptContext<string>>(
     descriptor,
     (node) => JSON.stringify(node.text),
   ));
-  assert.equal(runInNewContext(emit(root, { operations, handlers: [handler] })), "custom");
+  assert.throws(() => createJavaScriptEmitter([handler], [handler]), /Duplicate JavaScript handler: custom-text/);
+  const transformed = mapBody(program.body, program.operations, undefined, (original, mapped) =>
+    original.operationId === descriptor.id
+      ? { ...mapped, node: { ...(mapped.node as CustomNode), text: "transformed" } }
+      : mapped,
+  );
+  const transformedProgram = { ...program, body: transformed };
+  validate(transformedProgram);
+  assert.equal(runInNewContext(emit(transformedProgram, [handler])), "transformed");
 });
 
 test("composed operations preserve left-to-right evaluation order", () => {
@@ -96,11 +107,36 @@ test("composed operations preserve left-to-right evaluation order", () => {
     result: language.binary("number", "+", effect("left", num(1)), effect("right", num(2))),
   };
   const log: string[] = [];
-  const operations = language.operationTraversals();
   const javascript = createJavaScriptEmitter(
     coreJavaScript(language.coreOperationTraversals()),
     printingJavaScript(printSet.operations),
   );
-  assert.equal(runInNewContext(javascript.emit(root, { operations }), { console: { log: (message: string) => log.push(message) } }), 3);
+  assert.equal(runInNewContext(javascript.emit(language.program(root)), { console: { log: (message: string) => log.push(message) } }), 3);
   assert.deepEqual(log, ["left", "right"]);
+});
+
+test("recursive programs carry their core function identity through validation and emission", () => {
+  const language = create<string>();
+  const backend = createJavaScriptEmitter(coreJavaScript(language.coreOperationTraversals()));
+  const num = (value: number) => language.literal("number", value);
+  const empty = (result: Value<string>): Body<string> => ({ declarations: [], result });
+  const built = run(language.body(check(function* () {
+    const factorial = language.binding("factorial", "number -> number");
+    const n = language.binding("n", "number");
+    const fn = language.fn(factorial.type, n, empty(language.conditional(
+      "number",
+      language.binary("boolean", "==", language.ref(n), num(0)),
+      empty(num(1)),
+      empty(language.binary("number", "*", language.ref(n), language.call(
+        "number", language.ref(factorial), language.binary("number", "-", language.ref(n), num(1)),
+      ))),
+    )));
+    const reference = yield* language.declareRecursive(factorial, fn);
+    return language.call("number", reference, num(5));
+  })));
+  assert.equal(built.success, true);
+  if (!built.success) return;
+  const program = language.program(built.value);
+  validate(program);
+  assert.equal(runInNewContext(backend.emit(program)), 120);
 });

@@ -6,8 +6,8 @@ import { emit as emitJavaScript } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
 
-const emit = (code: ReturnType<typeof create<string>>, root: Body<string>) => emitJavaScript(root, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId(), handlers: coreJavaScript(code.coreOperationTraversals()) });
-
+const emit = (code: ReturnType<typeof create<string>>, body: Body<string>) =>
+  emitJavaScript(code.program(body), coreJavaScript(code.coreOperationTraversals()));
 const unwrap = <T>(result: ReturnType<typeof run<T>>): T => {
   if (!result.success) throw new Error(result.error.message);
   return result.value;
@@ -123,9 +123,9 @@ test("body construction can be reused without accumulating declarations", () => 
   assert.equal(first.declarations.length, 1);
   assert.equal(second.declarations.length, 1);
   assert.notEqual(first.declarations[0]!.binding.id, second.declarations[0]!.binding.id);
-  assert.equal(emit(code, first), emit(code, second));
+  assert.equal(runInNewContext(emit(code, first)), 42);
+  assert.equal(runInNewContext(emit(code, second)), 42);
 });
-
 test("reference types can vary without changing binding identity or scope", () => {
   const code = create<string>();
   const binding = code.binding("id", "a -> a");

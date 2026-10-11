@@ -18,7 +18,7 @@ const javascript = createJavaScriptEmitter(
   printingJavaScript(printSet.operations),
 );
 const body = (result: Value<string>) => ({ declarations: [], result });
-const emit = (result: Value<string>) => javascript.emit(body(result), { operations: code.operationTraversals() });
+const emit = (result: Value<string>) => javascript.emit(code.program(body(result)));
 const evaluate = (result: Value<string>, context = {}) => runInNewContext(emit(result), context);
 
 test("record fields evaluate once in source order before the base, which merges first", () => {
@@ -102,7 +102,7 @@ test("record merge evaluates each side once, left to right, without inherited pr
 test("record emission does not capture bindings named like its temporaries", () => {
   const binding = code.binding("field0", "number");
   const result = code.field("number", code.record("record", [{ name: "x", value: code.ref(binding) }]), "x");
-  assert.equal(runInNewContext(javascript.emit({
+  assert.equal(runInNewContext(javascript.emit(code.program({
     declarations: [{ binding, value: code.literal("number", 42) }], result,
-  }, { operations: code.operationTraversals() }),), 42);
+  }))), 42);
 });

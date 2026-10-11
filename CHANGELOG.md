@@ -2,7 +2,7 @@
 
 ## Unreleased — composable operation descriptors (breaking)
 
-The IR and JavaScript backend now compose around explicitly selected operation descriptors. This is a breaking API cutover; the former closed-node/automatic-feature model is removed rather than retained as a compatibility layer.
+The compiler's public `ir` result is now a portable `Program<T>` rather than a bare `Body<T>`. JavaScript emission and standalone structural validation now consume that program directly; the former per-call emit options API is removed. This is a breaking clean cutover with no compatibility overloads.
 
 - `create<T>()` is the core builder. Add optional capabilities explicitly with `.use(records<T>())`, `.use(variants<T>())`, `.use(printing<T>())`, `.use(folders<T>())`, or custom `OperationFeature` values.
 - Every `Value<T>` now requires `operationId`; `node` is an opaque `OperationNode`, not a closed `Node`/`BuiltinNode` union. Construct extension values through descriptor `make` methods and narrow with that descriptor's `is` predicate.

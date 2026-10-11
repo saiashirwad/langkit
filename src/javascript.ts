@@ -1,4 +1,4 @@
-import { validate, type Binding, type Body, type OperationTraversal, type Value } from "./ir.ts";
+import { validate, type Binding, type Body, type OperationNode, type Program, type Value } from "./ir.ts";
 import { createJavaScriptDispatcher, type DispatcherHandler } from "./javascript/operations.ts";
 
 export type JavaScriptContext<T> = {
@@ -8,17 +8,12 @@ export type JavaScriptContext<T> = {
   readonly name: (binding: Binding<T>) => string;
 };
 
-export type JavaScriptEmitOptions<T> = {
-  readonly operations?: readonly OperationTraversal<T>[];
-  readonly coreFunctionId?: symbol;
-  readonly handlers?: readonly DispatcherHandler<JavaScriptContext<T>>[];
-};
+const noHandlers: readonly [] = [];
+type JavaScriptDispatcher<T> = (operationId: symbol, node: OperationNode, context: JavaScriptContext<T>) => string;
 
-/** Validates selected operations, then emits through identity-matched handlers only. */
-export const emit = <T>(root: Body<T>, options: JavaScriptEmitOptions<T> = {}): string => {
-  const operations = options.operations ?? [];
-  validate(root, operations, options.coreFunctionId);
-  const dispatch = createJavaScriptDispatcher(...(options.handlers ?? []));
+const emitWithDispatcher = <T>(program: Program<T>, dispatch: JavaScriptDispatcher<T>): string => {
+  const root = program.body;
+  validate(program);
   const names = new Map<symbol, string>();
   const name = (binding: Binding<T>): string => {
     const known = names.get(binding.id);
@@ -42,15 +37,18 @@ export const emit = <T>(root: Body<T>, options: JavaScriptEmitOptions<T> = {}): 
   return `(() => ${block(root, 0)})()\n`;
 };
 
+/** Validates selected operations, then emits through identity-matched handlers only. */
+export const emit = <T>(
+  program: Program<T>,
+  handlers: readonly DispatcherHandler<JavaScriptContext<T>>[] = noHandlers,
+): string => emitWithDispatcher(program, createJavaScriptDispatcher(...handlers));
+
 /** Compose backend feature sets; duplicate descriptor handlers are rejected by dispatch. */
 export const createJavaScriptEmitter = <T>(
   ...sets: readonly (readonly DispatcherHandler<JavaScriptContext<T>>[])[]
 ) => {
-  const handlers = sets.flat();
+  const dispatch = createJavaScriptDispatcher(...sets.flat());
   return {
-    emit: (
-      root: Body<T>,
-      options: Omit<JavaScriptEmitOptions<T>, "handlers"> = {},
-    ): string => emit(root, { ...options, handlers }),
+    emit: (program: Program<T>): string => emitWithDispatcher(program, dispatch),
   };
 };

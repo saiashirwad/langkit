@@ -101,8 +101,8 @@ test("reports the offending operand's source location", () => {
 test("IR carries the language's inferred function type and source origin", () => {
   const result = compiled("fn(x: number) => x > 0");
   assert.equal(show(result.type), "(number -> boolean)");
-  assert.equal(result.ir.result.node.kind, "fn");
-  assert.deepEqual(result.ir.result.span, { start: 0, end: 22 });
+  assert.equal(result.ir.body.result.node.kind, "fn");
+  assert.deepEqual(result.ir.body.result.span, { start: 0, end: 22 });
 });
 
 test("compilation is repeatable and failures do not leak state", () => {

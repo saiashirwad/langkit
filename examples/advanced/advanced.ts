@@ -12,7 +12,7 @@ import {
   type Result,
   type Span,
 } from "langkit";
-import { create, type Binding, type Body, type Value } from "langkit/ir";
+import { create, type Binding, type Body, type Program, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -528,7 +528,7 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
 
 export type Compiled = {
   readonly type: Type;
-  readonly ir: Body<Type>;
+  readonly ir: Program<Type>;
   readonly javascript: string;
 };
 
@@ -763,15 +763,13 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
   if (!graph.success) return graph;
   const built = run(buildModules(graph.value, new Map()));
   if (!built.success) return { success: false, error: graph.value.routeDiagnostic(built.error) };
+  const ir = code.program(built.value);
   return {
     success: true,
     value: {
       type: built.value.result.type,
-      ir: built.value,
-      javascript: javascript.emit(built.value, {
-        operations: code.operationTraversals(),
-        coreFunctionId: code.coreFunctionId(),
-      }),
+      ir,
+      javascript: javascript.emit(ir),
     },
   };
 };

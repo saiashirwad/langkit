@@ -23,7 +23,7 @@ import {
   type Result,
   type Span,
 } from "langkit";
-import { create, type Binding, type Body, type Operator, type Value } from "langkit/ir";
+import { create, type Binding, type Operator, type Program, type Value } from "langkit/ir";
 import {
   create as createAnalysis,
   highlight,
@@ -356,7 +356,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
 
 export type Compiled = {
   readonly type: Type;
-  readonly ir: Body<Type>;
+  readonly ir: Program<Type>;
   readonly javascript: string;
 };
 
@@ -393,15 +393,13 @@ export const compile = (source: string): Result<Compiled> => {
   if (!parsed.success) return parsed;
   const built = run(code.body(elaborate(parsed.value)));
   if (!built.success) return built;
+  const ir = code.program(built.value);
   return {
     success: true,
     value: {
       type: built.value.result.type,
-      ir: built.value,
-      javascript: javascript.emit(built.value, {
-        operations: code.operationTraversals(),
-        coreFunctionId: code.coreFunctionId(),
-      }),
+      ir,
+      javascript: javascript.emit(ir),
     },
   };
 };

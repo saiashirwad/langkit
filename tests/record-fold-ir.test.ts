@@ -36,7 +36,7 @@ const makeStep = (): Value<string> => {
   })))));
 };
 const evaluate = (result: Value<string>, output: unknown[]) => runInNewContext(
-  javascript.emit(body(result), { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }),
+  javascript.emit(code.program(body(result))),
   { console: { log: (value: unknown) => output.push(value) } },
 );
 
@@ -70,6 +70,6 @@ test("record-fold validates scope in every operand", () => {
     operands[index] = code.ref(code.binding("missing", "unknown"));
     const result = code.recordFold("number", operands[0]!, operands[1]!, operands[2]!, operands[3]!, operands[4]!);
     assert.throws(() => code.validate(body(result)), /Out-of-scope binding: missing/);
-    assert.throws(() => javascript.emit(body(result), { operations: code.operationTraversals() }), /Out-of-scope binding: missing/);
+    assert.throws(() => javascript.emit(code.program(body(result))), /Out-of-scope binding: missing/);
   }
 });

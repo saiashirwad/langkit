@@ -19,7 +19,7 @@ This executable example selects core and records, then adds a typed custom opera
 
 ```ts
 import { runInNewContext } from "node:vm";
-import { create, type Body, type OperationNode, type Value } from "langkit/ir";
+import { create, validate, type Body, type OperationNode, type Value } from "langkit/ir";
 import { defineOperation, traversalOf } from "langkit/operations/descriptor";
 import { records } from "langkit/operations/records";
 import { createJavaScriptEmitter } from "langkit/javascript";
@@ -50,13 +50,13 @@ const result = code.field("number", code.record("object", [
   { name: "answer", value: code.twice("number", code.literal("number", 21)) },
 ]), "answer");
 const body: Body<Type> = { declarations: [], result };
-const js = handlers.emit(body, {
-  operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId(),
-});
+const program = code.program(body);
+validate(program);
+const js = handlers.emit(program);
 console.log(runInNewContext(js)); // 42 (trusted demonstration only)
 ```
 
-Each selected descriptor owns child evaluation order, scoped bodies and bindings, references, and immutable reconstruction. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the root against the selected traversals and throws if a selected operation has no handler. `validate` checks structural scope and declaration invariants; it does not prove language-level typing. [Operation contracts and runtime representations](docs/operations.md) cover the complete API, recursion option, mapper contract, and built-in features.
+Each selected descriptor owns child evaluation order, scoped bodies and bindings, references, and immutable reconstruction. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the portable `Program<T>` and throws if a selected operation has no handler. A `Body<T>` is a scoped fragment; a `Program<T>` supplies the body together with the builder's selected readonly operation registry and core function identity needed by standalone validation and backends. `validate(program)` checks structural scope and declaration invariants; it does not prove language-level typing. [Operation contracts and runtime representations](docs/operations.md) cover the complete API, recursion option, mapper contract, and built-in features.
 
 ## Optional tools
 

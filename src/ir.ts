@@ -10,6 +10,11 @@ export type OperationValue<T, Node extends OperationNode> = Value<T> & { readonl
 export type Reference<T> = OperationValue<T, { readonly kind: "ref"; readonly binding: Binding<T> }>;
 export type Declaration<T> = { readonly recursive?: true; readonly binding: Binding<T>; readonly value: Value<T> };
 export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readonly result: Value<T> };
+export type Program<T> = {
+  readonly body: Body<T>;
+  readonly operations: readonly OperationTraversal<T>[];
+  readonly coreFunctionId?: symbol;
+};
 export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T> };
 export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T> };
 
@@ -33,9 +38,9 @@ export type LanguageBuilder<T, Methods extends object> = Methods & {
   coreOperationTraversals(): readonly OperationTraversal<T>[];
   coreReferenceId(): symbol;
   coreFunctionId(): symbol;
+  program(body: Body<T>): Program<T>;
   validate(root: Body<T>): void;
 };
-
 /** Narrow only values created by the given core reference descriptor instance. */
 export const isReference = <T>(value: Value<T>, referenceOperationId: symbol): value is Reference<T> =>
   value.operationId === referenceOperationId && value.node.kind === "ref";
@@ -80,7 +85,7 @@ export const create = <T>() => {
   const methodNames = new Set(Object.keys(core));
   const use = <Methods extends object>(feature: OperationFeature<T, Methods>) => {
     for (const method of Object.keys(feature.methods)) {
-      if (methodNames.has(method) || method === "use" || method === "validate" || method === "operationTraversals" || method === "coreOperationTraversals" || method === "coreReferenceId" || method === "coreFunctionId")
+      if (methodNames.has(method) || method === "use" || method === "program" || method === "validate" || method === "operationTraversals" || method === "coreOperationTraversals" || method === "coreReferenceId" || method === "coreFunctionId")
         throw new Error(`Duplicate language feature method: ${method}`);
     }
     for (const operation of feature.operations) {
@@ -97,12 +102,15 @@ export const create = <T>() => {
     coreOperationTraversals: (): readonly OperationTraversal<T>[] => coreFeature.operations,
     coreReferenceId: (): symbol => coreFeature.refId,
     coreFunctionId: (): symbol => coreFeature.functionId,
-    validate: (root: Body<T>): void => validate(root, operations, coreFeature.functionId),
+    program: (root: Body<T>): Program<T> => ({ body: root, operations, coreFunctionId: coreFeature.functionId }),
+    validate: (root: Body<T>): void => validateBody(root, operations, coreFeature.functionId),
   });
 };
-
 /** Scope validation is descriptor-driven; recursive declarations require this core function id. */
-export const validate = <T>(root: Body<T>, operations: readonly OperationTraversal<T>[], coreFunctionId?: symbol): void => {
+export const validate = <T>(program: Program<T>): void =>
+  validateBody(program.body, program.operations, program.coreFunctionId);
+
+const validateBody = <T>(root: Body<T>, operations: readonly OperationTraversal<T>[], coreFunctionId?: symbol): void => {
   const byId = new Map<symbol, OperationTraversal<T>>();
   for (const operation of operations) {
     if (byId.has(operation.id)) throw new Error(`Duplicate operation descriptor: ${operation.kind}`);

@@ -1,5 +1,5 @@
 import { check, fail, render, run, type Check, type Result } from "langkit";
-import { create, type Binding, type Body, type Value } from "langkit/ir";
+import { create, type Binding, type Body, type Program, type Value } from "langkit/ir";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -500,7 +500,7 @@ const parse = (source: string): Result<readonly Declaration[]> => {
 
 export type Compiled = {
   readonly type: Type;
-  readonly ir: Body<Type>;
+  readonly ir: Program<Type>;
   readonly javascript: string;
   readonly entry: "value" | "function";
 };
@@ -510,12 +510,13 @@ export const compile = (source: string): Result<Compiled> => {
   if (!parsed.success) return parsed;
   const built = run(build(parsed.value, true));
   if (!built.success) return built;
+  const ir = code.program(built.value);
   return {
     success: true,
     value: {
       type: built.value.result.type,
-      ir: built.value,
-      javascript: javascript.emit(built.value, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }),
+      ir,
+      javascript: javascript.emit(ir),
       entry: parsed.value.some((decl) => decl.kind === "function" && decl.name.name === "main")
         ? "function"
         : "value",

@@ -24,7 +24,7 @@ const body = (result: Value<string>): Body<string> => ({ declarations: [], resul
 const num = (n: number) => code.literal("number", n);
 
 const evaluate = (root: Body<string>, context = {}) =>
-  runInNewContext(javascript.emit(root, { operations: code.operationTraversals(), coreFunctionId: code.coreFunctionId() }), context, { timeout: 1000 });
+  runInNewContext(javascript.emit(code.program(root)), context, { timeout: 1000 });
 
 test("recursive declarations preserve identity and execute factorial", () => {
   const computation = code.body(
