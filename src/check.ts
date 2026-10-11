@@ -87,14 +87,13 @@ class Runtime {
 
   mapDiagnostics(error: Diagnostic): Diagnostic {
     if (this.diagnosticMapper === undefined) return error;
-    const applied = this.storage.mapped.get(error) ?? new Set<DiagnosticMapper>();
-    this.storage.mapped.set(error, applied);
+    const applied = new Set(this.storage.mapped.get(error));
     for (let mapper: DiagnosticMapper | undefined = this.diagnosticMapper; mapper !== undefined; mapper = mapper.outer) {
       if (applied.has(mapper)) continue;
       error = mapper.map(error);
       applied.add(mapper);
-      this.storage.mapped.set(error, applied);
     }
+    this.storage.mapped.set(error, applied);
     return error;
   }
 

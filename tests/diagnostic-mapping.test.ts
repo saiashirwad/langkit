@@ -58,6 +58,17 @@ test("new failures in one scope each map normally", () => {
   assert.deepEqual(runDetailed(program).diagnostics.map(({ message }) => message), ["bad!", "bad!"]);
 });
 
+for (const innerIdentity of [false, true]) {
+  test(`reusing a raw diagnostic in one scope preserves transformations, identity scope=${innerIdentity}`, () => {
+    const error: Diagnostic = { message: "bad", context: [] };
+    const raw = new Check<never>(() => ({ ok: false, error }));
+    const child = innerIdentity ? raw.withDiagnostics(value => value) : raw;
+    const program = sequence([child.recover(pure(1)), child.recover(pure(2))]).withDiagnostics(suffix("!"));
+    assert.deepEqual(runDetailed(program).diagnostics.map(({ message }) => message), ["bad!", "bad!"]);
+    assert.equal(error.message, "bad");
+  });
+}
+
 test("attempt and choice keep mapped terminal failures without replaying scopes", () => {
   const program = reenter(choice(attempt(composite().recover(pure(1))), composite())).withDiagnostics(suffix("!"));
   assert.deepEqual(runDetailed(program).diagnostics.map(({ message }) => message), ["bad!"]);
