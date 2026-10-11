@@ -5,7 +5,7 @@ import { createStagingAdapter } from "../src/adapters/staging.ts";
 import { runInNewContext } from "node:vm";
 import { emitProgram } from "../src/staging/javascript.ts";
 import type { Program } from "../src/staging.ts";
-import { Unknown } from "../src/staging.ts";
+import { Number as Numeric, Unknown } from "../src/staging.ts";
 import { records } from "../src/operations/records.ts";
 
 const setup = () => {
@@ -27,16 +27,31 @@ test("rejects same-kind foreign descriptors and missing registrations", () => {
   assert.throws(() => adapter.lower({ body: { declarations: [], result: own }, operations: [] }), /Unsupported staging descriptor/);
   assert.equal(execute(adapter.lower({ body: { declarations: [], result: own }, operations: ir.operationTraversals().map((d) => ({ ...d })) }).program), 1);
 });
-test("rejects unsupported literal, operator, merge, record base and field names", () => {
+test("rejects unsupported literal, operator, merge and record base", () => {
   const { ir, lower } = setup(); const one = ir.literal("n", 1);
   for (const n of [NaN, Infinity]) assert.throws(() => lower(ir.literal("n", n)), /finite/);
   const nullNode = { kind: "literal", value: null };
   assert.throws(() => lower({ ...one, node: nullNode }), /Unsupported staging literal/);
   assert.throws(() => lower(ir.merge("r", one, one)), /Unsupported staging descriptor/);
   assert.throws(() => lower(ir.record("r", [], one)), /record bases/);
-  assert.throws(() => lower(ir.record("r", [{ name: "a-b", value: one }])), /identifier field/);
   const unsupportedBinary = { kind: "binary", op: "%", left: one, right: one };
   assert.throws(() => lower({ ...one, node: unsupportedBinary, operationId: ir.coreDescriptors.binary.id }), /Unsupported staging binary/);
+});
+test("local staging lowers arbitrary string field names as own properties", () => {
+  const { ir, lower } = setup();
+  for (const name of ["a-b", "__proto__", "", 'quote"', "if", "λ"]) {
+    const record = ir.record("r", [{ name, value: ir.literal("n", 42) }]);
+    assert.equal(execute(lower(ir.field("n", record, name)).program), 42);
+  }
+});
+
+test("host witness policies accept numeric witnesses without promising a host output type", () => {
+  const { ir } = setup();
+  const { conditional, ...descriptors } = ir.coreDescriptors;
+  const adapter = createStagingAdapter<string>({ core: { ...descriptors, if: conditional } }, guest => guest === "n" ? Numeric : Unknown);
+  const parameter = ir.binding("x", "n");
+  const fn = ir.fn("f", parameter, { declarations: [], result: ir.ref(parameter) });
+  assert.equal(execute(adapter.lower(ir.program({ declarations: [], result: ir.call("n", fn, ir.literal("n", 42)) })).program), 42);
 });
 test("preserves ordering, lazy branches, blocks, capture and shadowing", () => {
   const { ir, adapter } = setup();

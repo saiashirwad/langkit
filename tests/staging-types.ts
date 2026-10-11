@@ -1,5 +1,7 @@
 import * as S from "../src/staging.ts";
 import { emitProgram } from "../src/staging/javascript.ts";
+import { createStagingAdapter } from "langkit/adapters/staging";
+import { create } from "langkit/ir";
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Assert<A extends true> = A;
@@ -15,6 +17,9 @@ const result = S.call(fn, one, S.string("value"));
 const program = S.build(function* () { const known = yield* S.const("one", one); return known; });
 const unknownFn = S.arrow({ params: [S.param("unknown", S.Unknown)], body: function* ([unknown]) { return unknown; } });
 const unknownResult = S.call(unknownFn, one);
+const ir = create<string>();
+const adapter = createStagingAdapter<string>({ core: { literal: ir.coreDescriptors.literal } }, guest => guest === "number" ? S.Number : S.Unknown);
+const dynamic = adapter.lower(ir.program({ declarations: [], result: ir.literal("number", 1) }));
 export type Contracts = [
   Assert<Equal<S.Denotes<typeof one>, 1>>,
   Assert<Equal<S.Denotes<typeof record>, { count: 1; label: "ok"; ready: true }>>,
@@ -22,7 +27,8 @@ export type Contracts = [
   Assert<Equal<S.Denotes<typeof result>, { sum: number; label: string }>>,
   Assert<Equal<S.Denotes<typeof program.result>, 1>>,
   Assert<Equal<S.Denotes<typeof unknownResult>, unknown>>,
-  Assert<NotAny<S.Denotes<typeof result>>>, Assert<NotNever<S.Denotes<typeof result>>>
+  Assert<NotAny<S.Denotes<typeof result>>>, Assert<NotNever<S.Denotes<typeof result>>>,
+  Assert<Equal<typeof dynamic.program, S.Program<unknown>>>
 ];
 // @ts-expect-error invariant expression denotations are not interchangeable
 const widened: S.Expr<number> = one;

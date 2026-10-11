@@ -6,6 +6,44 @@ import { emitProgram } from "../src/staging/javascript.ts";
 import { makeNode } from "../src/staging/internal.ts";
 
 const run = <A>(program: S.Program<A>, context: object = {}): unknown => runInNewContext(emitProgram(program), context);
+test("staging closes a rejected declaration generator and cleanup failures supersede validation", () => {
+  for (const materialize of [
+    (body: () => Generator<S.Statement, S.Expr<1>, unknown>) => S.build(body),
+    (body: () => Generator<S.Statement, S.Expr<1>, unknown>) => S.arrow({ params: [], body }),
+  ]) {
+    let closed = 0;
+    assert.throws(() => materialize(function* () {
+      try {
+        yield {} as S.Statement;
+        return S.number(1);
+      } finally { closed++; }
+    }), /Invalid staging statement/);
+    assert.equal(closed, 1);
+    const cleanup = new Error("cleanup");
+    assert.throws(() => materialize(function* () {
+      try {
+        yield {} as S.Statement;
+        return S.number(1);
+      } finally { throw cleanup; }
+    }), error => error === cleanup);
+    assert.throws(() => materialize(function* () {
+      try {
+        yield {} as S.Statement;
+        return S.number(1);
+      } finally { yield* S.const("cleanup", S.number(0)); }
+    }), /Staging cleanup cannot yield declarations/);
+  }
+});
+
+test("successful staging builders collect declarations yielded from normal finally blocks", () => {
+  const program = S.build(function* () {
+    try { return S.number(1); }
+    finally { yield* S.const("cleanup", S.number(0)); }
+  });
+  assert.equal(program.statements.length, 1);
+  assert.equal(run(program), 1);
+});
+
 test("typed constructors build literals, records and typed tuple functions", () => {
   const program = S.build(function* () {
     const capture = yield* S.const("x", S.number(40), S.Number);
