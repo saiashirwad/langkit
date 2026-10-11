@@ -40,11 +40,11 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [x] Add compile-time, editor, mutation-control, and compiler-cost checks.
 - [x] Replace the injected external target with local constructors, witnesses, and emission; delete the old entrypoints.
 - [x] Inspect the scoped diff with `no-comments`; retain only comments for external constraints and compiler test directives. The audit removed 57 blocks without changing application code; the corrected report has no remaining workaround flags.
-- [ ] Review the complete artifacts and decision trail with an independent read-only reviewer. Foundation review reproduced two descriptor defects; both now have passing regressions.
-- [ ] Run the full completion gates on this branch and record exact outcomes.
-- [x] Prune duplicate legacy tests and retain representative source-to-compilation programs, as the user requested. The integrated suite has 240 tests, including eight language programs and five source-level regressions.
+- [x] Review the complete artifacts and decision trail with an independent read-only reviewer. Descriptor aliases, source origins, and reused function initializers now have passing regressions; the final ownership fix has no remaining review flags.
+- [x] Run the full completion gates on this branch and record exact outcomes in `docs/verification.md`. The source at `0430421` passes 242 tests, TypeScript, 25 LSP probes, six compiler controls, ten local staging checks, and all compiler-cost bounds.
+- [x] Prune duplicate legacy tests and retain representative source-to-compilation programs, as the user requested. The integrated suite has 242 tests, including eight language programs and five source-level regressions.
 - [x] Format all code with pinned dprint, then rerun runtime, compiler, editor, mutation-control, and staging gates. Formatting required moving four compiler directives to their diagnostic lines; no tests were disabled.
-- [ ] Commit and push this branch, as the user explicitly requested during integration.
+- [x] Commit and push this branch, as the user explicitly requested during integration. The verified source at `0430421` is pushed to the existing origin; the final documentation records the completion gates.
 - [x] Opening a PR: skipped because the user requested a push, not a PR.
 
 ## Phase ownership and checks

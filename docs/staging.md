@@ -35,6 +35,8 @@ assert.equal(runInNewContext(javascript), 42);
 
 Runtime validation rejects forged expressions, statements, witnesses, and programs. It checks binding scope, declaration identity, and supported shapes. Object fields and projection use arbitrary string keys, including `__proto__`, as ordinary own properties.
 
+Reusing a declaration builder creates a fresh declaration identity, including when its initializer is a function. Revisited function expressions retain their own lexical binder identities; validation checks captured references against each occurrence's scope. Duplicate identities within one body or across different lexical owners remain invalid.
+
 Normal generator completion permits declarations yielded from `finally`. Forced closure after a rejected yield runs cleanup and rejects further yielded declarations. A cleanup exception supersedes the pending validation error.
 
 The supported operations are finite primitive literals, arithmetic and comparison, strict equality, negation, lexical functions and calls, lazy conditionals, and objects with field access. Validation and emission use explicit work stacks. This does not make arbitrary recursive host callbacks stack-safe.

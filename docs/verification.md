@@ -72,3 +72,18 @@ npm run staging:integration
 ```
 
 The gate builds, lowers, emits, and executes local staged programs. It observes lexical capture, order, lazy branches, arbitrary string fields, deep construction, and a direct host-typed function. It does not load TS Macros or inspect a sibling repository.
+
+## Verified integration
+
+The formatted implementation at `0430421` passes 242 runtime tests, TypeScript checking, 25 real LSP probes, six exact compiler mutation controls, and ten local staging integration checks. `dprint` checks the complete code and guides. The three shared-syntax programs in the compiler-authoring guide execute to their expected results.
+
+The compiler profile uses TypeScript 7.0.2 and Node 24.21.0, with three cold samples per workload. Deterministic counts are below the configured bounds:
+
+| Workload                                   |   Types | Instantiations |
+| ------------------------------------------ | ------: | -------------: |
+| Main project                               | 160,139 |        257,522 |
+| 10 descriptor, judgment, and staging cases |  95,277 |        133,003 |
+| 50 cases                                   | 101,292 |        156,847 |
+| 200 cases                                  | 123,934 |        303,297 |
+
+The profiled TypeScript source hash is `b1c213e1416ff5996f3315b1461a0b00297da5e5caebfd4022b0468ae8cdb3f3`. Run the commands above to measure a later revision. These results establish the tested contracts, not a universal solver soundness proof.
