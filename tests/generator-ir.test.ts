@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { choice, fail, lookup, run, scoped, type Check } from "langkit";
+import { attempt, check, choice, fail, lookup, run, scoped, type Check } from "langkit";
 import { create, type Body, type Declaration, type Reference, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { createJavaScriptEmitter } from "langkit/javascript";
@@ -22,6 +22,49 @@ const evaluate = (body: Body<string>, output: unknown[] = []) => runInNewContext
   { timeout: 1000 },
 );
 const number = (value: number) => code.literal("number", value);
+
+test("one elaboration body reused in one run owns distinct declaration snapshots", () => {
+  const api = elaboration(code);
+  const body = api.body(function* () { return yield* declare("local", number(42)); });
+  const result = run(check(function* () { return [yield* body, yield* body]; }));
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  const [first, second] = result.value;
+  assert.ok(first && second);
+  assert.notEqual(first.declarations, second.declarations);
+  assert.equal(first.declarations.length, 1);
+  assert.equal(second.declarations.length, 1);
+  assert.notEqual(first.declarations[0]!.binding.id, second.declarations[0]!.binding.id);
+  assert.equal(evaluate(first), 42);
+  assert.equal(evaluate(second), 42);
+});
+
+test("published body survives enclosing speculative rollback", () => {
+  const api = elaboration(code);
+  let published: Body<string> | undefined;
+  run(attempt(check(function* () {
+    published = yield* api.body(function* () { return yield* declare("local", number(42)); });
+    yield* fail("abandon");
+  })));
+  assert.ok(published);
+  assert.equal(published.declarations.length, 1);
+  assert.equal(evaluate(published), 42);
+});
+
+test("nested active collectors restore the outer declaration collection", () => {
+  const api = elaboration(code);
+  const result = run(api.body(function* () {
+    yield* declare("before", number(1));
+    const inner = yield* api.body(function* () { return yield* declare("inner", number(42)); });
+    assert.deepEqual(inner.declarations.map((d) => d.binding.name), ["inner"]);
+    return yield* declare("after", number(42));
+  }));
+  assert.equal(result.success, true);
+  if (result.success) {
+    assert.deepEqual(result.value.declarations.map((d) => d.binding.name), ["before", "after"]);
+    assert.equal(evaluate(result.value), 42);
+  }
+});
 
 function* declare(name: string, value: Value<string>): Generator<Declaration<string>, Reference<string>, unknown> {
   return yield* code.declare(name, value);
