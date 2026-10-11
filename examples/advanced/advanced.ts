@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve as resolvePath } from "node:path";
 import { loadModules, type ModuleOptions, type ModuleGraph } from "langkit/modules";
+import { parseImports } from "../../src/modules/imports.ts";
 import { runInNewContext } from "node:vm";
 import {
   program,
@@ -707,7 +708,7 @@ const buildModules = (
   });
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
-  const graph = loadModules(source, options, "advanced");
+  const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   const lexical = highlight(source, tokens);
   if (!graph.success)
     return { diagnostics: graph.errors, types: [], definitions: [], references: [], tokens: lexical };
@@ -737,7 +738,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
 };
 
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
-  const graph = loadModules(source, options, "advanced");
+  const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   if (!graph.success) return graph;
   const built = run(buildModules(graph.value, new Map()));
   if (!built.success) {

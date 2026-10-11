@@ -4,10 +4,86 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
-import { loadModules } from "langkit/modules";
+import { loadModules as loadGraph, type ImportParser } from "langkit/modules";
+import { parseImports } from "../src/modules/imports.ts";
 import { definitionAt, semanticTokens, type Analysis } from "langkit/analysis";
 
 const root = "file:///workspace/main.strict";
+const loadModules = (source: string, options: Parameters<typeof loadGraph>[1], extension: string) =>
+  loadGraph(source, options, { extension, imports: parseImports });
+
+const useImports: ImportParser = (source) => ({
+  success: true,
+  value: [...source.matchAll(/use\("([^"]+)"\)/g)].map((match) => ({
+    path: match[1]!, span: { start: match.index, end: match.index + match[0].length },
+  })).toReversed(),
+});
+
+test("module graphs accept independently composed grammar and unsorted UTF-16 spans", () => {
+  const source = '😀\r\nuse("./child.strict")\nbody\nuse("./other.strict")';
+  const result = loadGraph(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
+  assert.ok(result.success);
+  const masked = result.value.module(root)!.source;
+  assert.equal(masked.length, source.length);
+  assert.equal(masked, '😀\r\n' + ' '.repeat(21) + '\nbody\n' + ' '.repeat(21));
+  assert.equal(result.value.modules.length, 3);
+});
+
+test("module graphs preserve parser failure details and dependency origin", () => {
+  const source = 'use("./child.strict")';
+  const imports: ImportParser = (text) => text === source ? useImports(text) : ({
+    success: false, errors: [
+      { message: "custom syntax failure", context: ["custom imports"], span: { start: 1, end: 2 },
+        related: [{ message: "parser detail", location: { uri: "file:///detail.strict", span: { start: 3, end: 4 } } }] },
+      { message: "failure without span", context: [] },
+    ],
+  });
+  const result = loadGraph(source, { uri: root, read: () => "bad" }, { extension: "strict", imports });
+  assert.ok(!result.success);
+  assert.equal(result.errors.length, 2);
+  for (const error of result.errors) {
+    assert.equal(error.origin?.uri, "file:///workspace/child.strict");
+    assert.equal(error.location?.uri, root);
+    assert.deepEqual(error.span, { start: 0, end: source.length });
+  }
+  assert.deepEqual(result.errors[0]!.context, ["custom imports"]);
+  assert.ok(result.errors[0]!.related?.some((entry) => entry.message === "parser detail"));
+});
+
+for (const spans of [
+  [{ start: -1, end: 2 }], [{ start: 0, end: 99 }], [{ start: 1, end: 1 }],
+  [{ start: 0.5, end: 2 }], [{ start: NaN, end: 2 }], [{ start: 2, end: 1 }],
+  [{ start: 0, end: 3 }, { start: 2, end: 4 }],
+]) {
+  test("module graphs reject invalid directive spans " + JSON.stringify(spans), () => {
+    const result = loadGraph("body", { uri: root, read: () => { throw new Error("must not read"); } }, {
+      extension: "strict", imports: () => ({ success: true, value: spans.map((span) => ({ path: "./child.strict", span })) }),
+    });
+    assert.ok(!result.success);
+    assert.match(result.errors[0]!.message, /Invalid import directive span/);
+    assert.equal(result.errors[0]!.origin?.uri, root);
+  });
+}
+
+test("module graphs propagate parser programming exceptions", () => {
+  const bug = new Error("parser bug");
+  assert.throws(() => loadGraph("body", { uri: root }, {
+    extension: "strict", imports: () => { throw bug; },
+  }), (error) => error === bug);
+});
+
+test("module graph snapshots cannot be corrupted through exposed collections", () => {
+  const source = 'use("./child.strict")';
+  const result = loadGraph(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
+  assert.ok(result.success);
+  const graph = result.value;
+  assert.ok(Object.isFrozen(graph.modules));
+  assert.ok(Object.isFrozen(graph.dependencyUris));
+  assert.ok(Object.isFrozen(graph.module(root)!.imports));
+  assert.ok(Object.isFrozen(graph.module(root)!.imports[0]!.span));
+  (graph.sources as Map<string, string>).clear();
+  assert.equal(graph.sources.get(root), source);
+});
 
 const sources = (files: Record<string, string>) => (uri: string) => {
   const source = files[uri];

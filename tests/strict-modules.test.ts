@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
 import { analyze, compile, show } from "../examples/strict/strict.ts";
 import { loadModules } from "langkit/modules";
+import { parseImports } from "../src/modules/imports.ts";
 for (const declaration of [
   "class Monad (m : Type -> Type) where { bind : forall a. m a -> number; } instance Monad Effect where { bind action = 42; }",
   "class Monad (m : Type -> Type) where { other : forall a. m a -> m a; } instance Monad Effect where { other action = action; }",
@@ -40,7 +41,7 @@ const options = (files: Readonly<Record<string, string>>) => ({
 });
 
 const parsedImportSpan = (source: string, target: string, files: Readonly<Record<string, string>>) => {
-  const graph = loadModules(source, options(files), "strict");
+  const graph = loadModules(source, options(files), { extension: "strict", imports: parseImports });
   assert.ok(graph.success);
   const edge = graph.value.module("file:///modules/main.strict")?.imports.find((dependency) => dependency.uri === target);
   assert.ok(edge);

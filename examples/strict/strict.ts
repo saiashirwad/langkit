@@ -30,6 +30,7 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadModules, type ModuleOptions, type ModuleGraph, type ModuleSource } from "langkit/modules";
+import { parseImports } from "../../src/modules/imports.ts";
 import { runInNewContext } from "node:vm";
 import {
   program,
@@ -1347,7 +1348,7 @@ const build = (graph: Graph, locations: Map<symbol, Origin>): Check<Body<Type>> 
 
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
-  const loaded = loadModules(source, options, "strict");
+  const loaded = loadModules(source, options, { extension: "strict", imports: parseImports });
   const lexical = highlight(source, tokens);
   if (!loaded.success)
     return {
@@ -1376,7 +1377,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
 };
 
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
-  const loaded = loadModules(source, options, "strict");
+  const loaded = loadModules(source, options, { extension: "strict", imports: parseImports });
   if (!loaded.success) return loaded;
   const built = run(build(loaded.value, new Map()));
   if (!built.success)

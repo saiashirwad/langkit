@@ -47,6 +47,7 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { loadModules, type ModuleOptions, type ModuleGraph } from "langkit/modules";
+import { parseImports } from "../../src/modules/imports.ts";
 
 // Inference belongs to this language, not the IR or the checking runner.
 export type Type =
@@ -688,7 +689,7 @@ const buildModules = (
 
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
-  const graph = loadModules(source, options, "rows");
+  const graph = loadModules(source, options, { extension: "rows", imports: parseImports });
   const lexical = highlight(source, tokens);
   if (!graph.success)
     return {
@@ -725,7 +726,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
 };
 
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
-  const graph = loadModules(source, options, "rows");
+  const graph = loadModules(source, options, { extension: "rows", imports: parseImports });
   if (!graph.success) return graph;
   const built = run(buildModules(graph.value, new Map()));
   if (!built.success) {

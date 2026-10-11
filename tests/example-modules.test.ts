@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
 import { loadModules } from "langkit/modules";
+import { parseImports } from "../src/modules/imports.ts";
 import * as rows from "../examples/rows/rows.ts";
 import * as advanced from "../examples/advanced/advanced.ts";
 
@@ -23,7 +24,7 @@ for (const [extension, language] of [
   });
 
   const parsedImportSpan = (source: string, target: string, files: Record<string, string>) => {
-    const graph = loadModules(source, options(files), extension);
+    const graph = loadModules(source, options(files), { extension, imports: parseImports });
     assert.ok(graph.success);
     const edge = graph.value.module(uri)?.imports.find((dependency) => dependency.uri === target);
     assert.ok(edge);
