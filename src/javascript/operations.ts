@@ -1,6 +1,6 @@
 import type { OperationNode } from "../ir.ts";
 import type { JavaScriptContext } from "../javascript.ts";
-import { defineBackend, type BackendHandlers, type DescriptorRecord, type Dialect, type DialectType } from "../operations/dialect.ts";
+import { defineBackend, type BackendHandlers, type CompleteBackendHandlers, type DescriptorRecord, type Dialect, type DialectType } from "../operations/dialect.ts";
 import type { OperationDescriptor, OperationHandler } from "../operations/descriptor.ts";
 
 export type JavaScriptHandler<T, Node extends OperationNode, Context> = {
@@ -19,10 +19,10 @@ export const defineJavaScriptHandler = <T, Node extends OperationNode, Context>(
   emit: OperationHandler<Node, Context, string>,
 ): JavaScriptHandler<T, Node, Context> => ({ operationId: operation.id, kind: operation.kind, emit });
 
-export const defineJavaScriptBackend = <const D extends DescriptorRecord>(
+export const defineJavaScriptBackend = <const D extends DescriptorRecord, const H extends BackendHandlers<NoInfer<D>, JavaScriptContext<DialectType<D>>, string>>(
   dialect: Dialect<D>,
-  handlers: BackendHandlers<NoInfer<D>, JavaScriptContext<DialectType<D>>, string>,
-): readonly DispatcherHandler<JavaScriptContext<DialectType<D>>>[] => defineBackend<JavaScriptContext<DialectType<D>>>()(dialect, handlers);
+  handlers: H & CompleteBackendHandlers<NoInfer<D>, H>,
+): readonly DispatcherHandler<JavaScriptContext<DialectType<D>>>[] => defineBackend<JavaScriptContext<DialectType<D>>>()<D, H>(dialect, handlers);
 
 /** Narrow internal erasure at the heterogeneous backend handler-list boundary. */
 export const asDispatcherHandler = <T, Node extends OperationNode, Context>(

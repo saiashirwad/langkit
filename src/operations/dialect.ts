@@ -21,6 +21,7 @@ export type Dialect<D extends DescriptorRecord, T = DialectType<D>> = {
 export type BackendHandlers<D extends DescriptorRecord, Context, Output> = {
   readonly [Key in keyof D]: (node: DescriptorNode<D[Key]>, context: Context) => Output;
 };
+export type CompleteBackendHandlers<D extends DescriptorRecord, H> = Exclude<keyof D, keyof H> extends never ? H : never;
 export type BackendHandler<Context, Output> = {
   readonly operationId: symbol;
   readonly kind: string;
@@ -28,6 +29,11 @@ export type BackendHandler<Context, Output> = {
 };
 
 export const defineDialect = <const D extends DescriptorRecord>(descriptors: D): Dialect<D> => {
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== "string" || !Object.prototype.propertyIsEnumerable.call(descriptors, key)) {
+      throw new Error("Dialect descriptor keys must be enumerable string keys");
+    }
+  }
   const ids = new Set<symbol>();
   const operations = Object.values(descriptors).map((entry) => {
     const descriptor = Object.freeze(entry);
@@ -45,10 +51,11 @@ export const composeDialects = <A extends DescriptorRecord, B extends Descriptor
   return defineDialect({ ...left.descriptors, ...right.descriptors });
 };
 
-export const defineBackend = <Context, Output = string>() => <const D extends DescriptorRecord>(
+export const defineBackend = <Context, Output = string>() => <const D extends DescriptorRecord, const H extends BackendHandlers<NoInfer<D>, Context, Output>>(
   dialect: Dialect<D>,
-  handlers: BackendHandlers<NoInfer<D>, Context, Output>,
+  handlers: H & CompleteBackendHandlers<NoInfer<D>, H>,
 ): readonly BackendHandler<Context, Output>[] => Object.entries(dialect.descriptors).map(([key, descriptor]) => {
+  if (!Object.hasOwn(handlers, key)) throw new Error(`Missing backend handler: ${key}`);
   const emit = handlers[key];
   if (typeof emit !== "function") throw new Error(`Missing backend handler: ${key}`);
   return {

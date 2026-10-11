@@ -17,6 +17,66 @@ const operation = defineOperation<"number", { readonly kind: "same-kind"; readon
   children: () => [], scopedBodies: () => [], references: () => [], map: (node) => node,
 });
 const dialect = defineDialect({ authorKey: operation });
+const prototypeDialect = defineDialect({ toString: operation, constructor: operation, valueOf: operation });
+// @ts-expect-error An intrinsic toString is not an explicitly supplied handler.
+defineJavaScriptBackend(defineDialect({ toString: operation }), {});
+// @ts-expect-error An intrinsic toString is not an explicitly supplied Python handler.
+definePythonBackend(defineDialect({ toString: operation }), {});
+// @ts-expect-error An intrinsic toString is not an explicitly supplied generic handler.
+defineBackend<{}>()(defineDialect({ toString: operation }), {});
+// @ts-expect-error An intrinsic constructor is not a handler.
+defineJavaScriptBackend(defineDialect({ constructor: operation }), {});
+// @ts-expect-error An intrinsic valueOf is not a handler.
+defineJavaScriptBackend(defineDialect({ valueOf: operation }), {});
+// @ts-expect-error A normal handler cannot hide an absent toString key.
+defineJavaScriptBackend(defineDialect({ toString: operation, own: operation }), { own: node => String(node.count) });
+// @ts-expect-error Python also rejects absent constructor keys.
+definePythonBackend(defineDialect({ constructor: operation }), {});
+// @ts-expect-error Python also rejects absent valueOf keys.
+definePythonBackend(defineDialect({ valueOf: operation }), {});
+// @ts-expect-error Python cannot hide an absent toString key behind a normal handler.
+definePythonBackend(defineDialect({ toString: operation, own: operation }), { own: node => String(node.count) });
+// @ts-expect-error Generic backends also reject absent constructor keys.
+defineBackend<{}>()(defineDialect({ constructor: operation }), {});
+// @ts-expect-error Generic backends also reject absent valueOf keys.
+defineBackend<{}>()(defineDialect({ valueOf: operation }), {});
+// @ts-expect-error Generic backends cannot hide an absent toString key behind a normal handler.
+defineBackend<{}>()(defineDialect({ toString: operation, own: operation }), { own: node => String(node.count) });
+defineJavaScriptBackend(prototypeDialect, {
+  toString: (node, context) => {
+    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number }>>(true);
+    expect<Equal<typeof context, JavaScriptContext<"number">>>(true);
+    return String(node.count);
+  },
+  constructor: node => String(node.count),
+  valueOf: node => String(node.count),
+});
+definePythonBackend(prototypeDialect, {
+  toString: (node, context) => {
+    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number }>>(true);
+    expect<Equal<typeof context, PythonContext<"number">>>(true);
+    return String(node.count);
+  },
+  constructor: node => String(node.count),
+  valueOf: node => String(node.count),
+});
+defineBackend<{ prefix: string }>()(prototypeDialect, {
+  toString: (node, context) => context.prefix + node.count,
+  constructor: node => String(node.count),
+  valueOf: node => String(node.count),
+});
+// @ts-expect-error Prototype members do not supply table keys.
+defineJavaScriptBackend(prototypeDialect, {});
+// @ts-expect-error Partial prototype-name tables are incomplete.
+defineJavaScriptBackend(prototypeDialect, { constructor: node => String(node.count) });
+// @ts-expect-error Prototype members do not supply Python table keys.
+definePythonBackend(prototypeDialect, {});
+// @ts-expect-error Partial Python tables are incomplete.
+definePythonBackend(prototypeDialect, { toString: node => String(node.count) });
+// @ts-expect-error Prototype members do not supply generic table keys.
+defineBackend<{}>()(prototypeDialect, {});
+// @ts-expect-error Partial generic tables are incomplete.
+defineBackend<{}>()(prototypeDialect, { valueOf: node => String(node.count) });
 expect<Equal<keyof typeof dialect.descriptors, "authorKey">>(true);
 
 defineJavaScriptBackend(dialect, {

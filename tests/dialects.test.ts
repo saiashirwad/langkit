@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { create } from "../src/ir.ts";
 import { defineOperation, traversalOf } from "../src/operations/descriptor.ts";
-import { composeDialects, defineDialect } from "../src/operations/dialect.ts";
+import { composeDialects, defineBackend, defineDialect } from "../src/operations/dialect.ts";
 import { records } from "../src/operations/records.ts";
 import { variants } from "../src/operations/variants.ts";
 import { folders } from "../src/operations/folders.ts";
@@ -17,6 +17,35 @@ import { emit as emitPython } from "../src/python.ts";
 
 const custom = () => defineOperation<string, { kind: "shared"; count: number }>("shared", {
   children: () => [], scopedBodies: () => [], references: () => [], map: (node) => node,
+});
+
+test("backend tables require own callable handlers even for prototype names", () => {
+  const context = { depth: 0, expr: () => "", block: () => "", name: () => "" };
+  for (const key of ["toString", "constructor", "valueOf", "0"]) {
+    const operation = custom();
+    const dialect = defineDialect({ [key]: operation });
+    type Table = { [key: string]: (node: { kind: "shared"; count: number }) => string };
+    for (const backend of [
+      (table: Table) => defineJavaScriptBackend(dialect, table),
+      (table: Table) => definePythonBackend(dialect, table),
+      (table: Table) => defineBackend<typeof context>()(dialect, table),
+    ]) {
+      assert.throws(() => backend({}), /Missing backend handler/);
+      assert.throws(() => backend(Object.create({ [key]: () => "inherited" })), /Missing backend handler/);
+      const invalid: Table = {};
+      Object.defineProperty(invalid, key, { value: null });
+      assert.throws(() => backend(invalid), /Missing backend handler/);
+      const table = { [key]: (node: { kind: "shared"; count: number }) => String(node.count) };
+      const handlers = backend(table);
+      table[key] = () => "replacement";
+      assert.equal(createJavaScriptDispatcher(...handlers)(operation.id, operation.make("number", { kind: "shared", count: 42 }).node, context), "42");
+    }
+  }
+});
+
+test("dialects reject symbol and nonenumerable descriptor keys", () => {
+  assert.throws(() => defineDialect({ [Symbol("hidden")]: custom() }), /enumerable string/);
+  assert.throws(() => defineDialect(Object.defineProperty({}, "hidden", { value: custom() })), /enumerable string/);
 });
 
 test("dialects preserve actual descriptors and reject duplicate identities and keys", () => {
