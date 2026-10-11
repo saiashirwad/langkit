@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { test } from "node:test";
 import { loadModules as loadGraph, type ImportParser } from "langkit/modules";
-import { parseImports } from "../src/modules/imports.ts";
+import { parseImports } from "langkit/modules/imports";
 import { definitionAt, semanticTokens, type Analysis } from "langkit/analysis";
 
 const root = "file:///workspace/main.strict";

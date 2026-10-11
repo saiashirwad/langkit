@@ -16,6 +16,7 @@
     "./javascript/*": "./src/javascript/*.ts",
     "./inference": "./src/inference.ts",
     "./modules": "./src/modules.ts",
+    "./modules/imports": "./src/modules/imports.ts",
     "./analysis": "./src/analysis.ts",
     "./lsp": "./src/lsp.ts"
   },

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
 import { loadModules } from "langkit/modules";
-import { parseImports } from "../src/modules/imports.ts";
+import { parseImports } from "langkit/modules/imports";
 import * as rows from "../examples/rows/rows.ts";
 import * as advanced from "../examples/advanced/advanced.ts";
 

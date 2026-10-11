@@ -33,7 +33,7 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [ ] Introduce judgments and binder combinators; migrate representative rules.
 - [ ] Establish reusable higher-rank checking and document its grammar, annotation policy, and limitations.
 - [ ] Add partial/finalized elaboration and structured rule/constraint evidence.
-- [ ] Separate module graph management from import parsing through a language-supplied parser.
+- [x] Separate module graph management from import parsing through a language-supplied parser.
 - [ ] Add the shared-syntax language demonstration and the supported TS Macros adapter.
 - [ ] Add compile-time, editor, mutation-control, and compiler-cost checks.
 - [ ] Scrap and redesign a unit if its implementation requires repeated workarounds.

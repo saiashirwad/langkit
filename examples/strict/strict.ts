@@ -30,7 +30,7 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { loadModules, type ModuleOptions, type ModuleGraph, type ModuleSource } from "langkit/modules";
-import { parseImports } from "../../src/modules/imports.ts";
+import { parseImports } from "langkit/modules/imports";
 import { runInNewContext } from "node:vm";
 import {
   program,

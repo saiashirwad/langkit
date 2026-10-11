@@ -28,7 +28,7 @@ import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { resolve as resolvePath } from "node:path";
 import { loadModules, type ModuleOptions, type ModuleGraph } from "langkit/modules";
-import { parseImports } from "../../src/modules/imports.ts";
+import { parseImports } from "langkit/modules/imports";
 import { runInNewContext } from "node:vm";
 import {
   program,

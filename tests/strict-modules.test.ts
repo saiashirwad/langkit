@@ -5,7 +5,7 @@ import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
 import { analyze, compile, show } from "../examples/strict/strict.ts";
 import { loadModules } from "langkit/modules";
-import { parseImports } from "../src/modules/imports.ts";
+import { parseImports } from "langkit/modules/imports";
 for (const declaration of [
   "class Monad (m : Type -> Type) where { bind : forall a. m a -> number; } instance Monad Effect where { bind action = 42; }",
   "class Monad (m : Type -> Type) where { other : forall a. m a -> m a; } instance Monad Effect where { other action = action; }",
