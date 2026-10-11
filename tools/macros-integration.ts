@@ -11,8 +11,10 @@ const target = await import(pathToFileURL(publicPath).href);
 const js = await import(pathToFileURL(jsPath).href);
 const feature = records<string>();
 const ir = IR.create<string>().use(feature);
-const core = Object.fromEntries(ir.coreOperationTraversals().map((d) => [d.kind, d]));
-const selectedRecords = Object.fromEntries(feature.operations.filter((d) => d.kind !== "merge").map((d) => [d.kind, d]));
+const { conditional, ...coreDescriptors } = ir.coreDescriptors;
+const core = { ...coreDescriptors, if: conditional };
+const { record, field } = feature.descriptors;
+const selectedRecords = { record, field };
 const adapter = createTSMacrosAdapter(target, { core, records: selectedRecords }, (_guest: string) => target.Unknown);
 let checks = 0;
 const check = (body: IR.Body<string>, expected: unknown) => {

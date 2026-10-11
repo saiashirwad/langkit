@@ -46,8 +46,10 @@ const fixture = {
 };
 const setup = () => {
   const feature = records<string>(); const ir = IR.create<string>().use(feature);
-  const core = Object.fromEntries(ir.coreOperationTraversals().map((d) => [d.kind, d]));
-  const recordDescriptors = Object.fromEntries(feature.operations.filter((d) => d.kind !== "merge").map((d) => [d.kind, d]));
+  const { conditional, ...coreDescriptors } = ir.coreDescriptors;
+  const core = { ...coreDescriptors, if: conditional };
+  const { record, field } = feature.descriptors;
+  const recordDescriptors = { record, field };
   const adapter = createTSMacrosAdapter(fixture, { core, records: recordDescriptors }, (_guest: string) => undefined);
   const lower = (value: IR.Value<string>) => adapter.lower({ body: { declarations: [], result: value }, operations: ir.operationTraversals() });
   return { ir, adapter, lower };
@@ -74,7 +76,7 @@ test("rejects unsupported literal, operator, merge, record base and field names"
   assert.throws(() => lower(ir.record("r", [], one)), /record bases/);
   assert.throws(() => lower(ir.record("r", [{ name: "a-b", value: one }])), /identifier field/);
   const unsupportedBinary = { kind: "binary", op: "%", left: one, right: one };
-  assert.throws(() => lower({ ...one, node: unsupportedBinary, operationId: ir.coreOperationTraversals().find((d) => d.kind === "binary")!.id }), /Unsupported TS Macros binary/);
+  assert.throws(() => lower({ ...one, node: unsupportedBinary, operationId: ir.coreDescriptors.binary.id }), /Unsupported TS Macros binary/);
 });
 test("preserves ordering, lazy branches, blocks, capture and shadowing", () => {
   const { ir, adapter } = setup(); trace.length = 0;

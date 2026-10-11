@@ -16,6 +16,8 @@
     "./javascript/*": "./src/javascript/*.ts",
     "./inference": "./src/inference.ts",
     "./types/*": "./src/types/*.ts",
+    "./syntax": "./src/syntax.ts",
+    "./adapters/ts-macros": "./src/adapters/ts-macros.ts",
     "./modules": "./src/modules.ts",
     "./modules/imports": "./src/modules/imports.ts",
     "./analysis": "./src/analysis.ts",
@@ -24,6 +26,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
+    "macros:integration": "node tools/macros-integration.ts",
     "toy": "node examples/toy/toy.ts",
     "toy:lsp": "node examples/toy/toy-lsp.ts --stdio",
     "hm": "node examples/hm/hm.ts",
