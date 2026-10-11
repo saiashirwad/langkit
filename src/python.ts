@@ -1,4 +1,4 @@
-import { validate, type Binding, type Body, type OperationNode, type Program, type Value } from "./ir.ts";
+import { type Binding, type Body, type OperationNode, type Program, validate, type Value } from "./ir.ts";
 import { createPythonDispatcher, type DispatcherHandler } from "./python/operations.ts";
 
 export type PythonContext<T> = {
@@ -22,7 +22,9 @@ const emitWithDispatcher = <T>(program: Program<T>, dispatch: PythonDispatcher<T
     return chosen;
   };
   const block = (body: Body<T>, depth: number): string => {
-    const expressions = body.declarations.map(({ binding, value }) => `(${name(binding)} := ${expr(value, depth + 1)})`);
+    const expressions = body.declarations.map(({ binding, value }) =>
+      `(${name(binding)} := ${expr(value, depth + 1)})`
+    );
     expressions.push(expr(body.result, depth + 1));
     return `(lambda: (${expressions.join(", ")},)[-1])()`;
   };

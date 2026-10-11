@@ -273,7 +273,7 @@ does not check unused templates or resolve names declared later.
 ## Compiler and editor API
 
 ```ts
-import { compile, analyze, show } from "./shapes.ts";
+import { analyze, compile, show } from "./shapes.ts";
 
 const result = compile("(fn [r] (. r name))");
 if (result.success) {

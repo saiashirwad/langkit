@@ -1,17 +1,19 @@
-import assert from "node:assert/strict";
-import { test } from "node:test";
-import { readFileSync } from "node:fs";
-import { runInNewContext } from "node:vm";
 import { definitionAt, typeAt } from "langkit/analysis";
 import { loadModules } from "langkit/modules";
 import { parseImports } from "langkit/modules/imports";
-import * as rows from "../examples/rows/rows.ts";
+import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 import * as advanced from "../examples/advanced/advanced.ts";
+import * as rows from "../examples/rows/rows.ts";
 
-for (const [extension, language] of [
-  ["rows", rows],
-  ["advanced", advanced],
-] as const) {
+for (
+  const [extension, language] of [
+    ["rows", rows],
+    ["advanced", advanced],
+  ] as const
+) {
   const uri = `file:///modules/main.${extension}`;
 
   const options = (files: Record<string, string>) => ({
@@ -46,11 +48,11 @@ for (const [extension, language] of [
     assert.equal(language.compile("print(42)").success, true);
     if (extension === "advanced") assert.equal(language.compile("Some(42)").success, false);
   });
-  if (extension === "rows")
+  if (extension === "rows") {
     test("rows routes every dependency type diagnostic through the module graph", () => {
       const dependency = "file:///modules/bad.rows";
-      const source = 'import "./bad.rows"; 1';
-      const files = { [dependency]: '{ left = true + "x" }' };
+      const source = "import \"./bad.rows\"; 1";
+      const files = { [dependency]: "{ left = true + \"x\" }" };
       const analysis = language.analyze(source, options(files));
       assert.equal(analysis.diagnostics.length, 2);
       assert.ok(analysis.diagnostics.every((diagnostic) => diagnostic.origin?.uri === dependency));
@@ -58,6 +60,7 @@ for (const [extension, language] of [
       assert.equal(result.success, false);
       if (!result.success) assert.equal(result.errors.length, 2);
     });
+  }
 
   test(`${extension} stdlib is a normal standalone editor document`, () => {
     const file = new URL(`../examples/${extension}/stdlib.${extension}`, import.meta.url);
@@ -112,8 +115,7 @@ for (const [extension, language] of [
 
   test(`${extension} exports navigate to exact record labels`, () => {
     const dependencyUri = `file:///modules/answer.${extension}`;
-    const dependency =
-      extension === "advanced" ? "{ answer = // answer is here\n 42 }" : "{ answer = 42 }";
+    const dependency = extension === "advanced" ? "{ answer = // answer is here\n 42 }" : "{ answer = 42 }";
     const source = `import "./answer.${extension}"; answer`;
     const analysis = language.analyze(source, options({ [dependencyUri]: dependency }));
     assert.deepEqual(analysis.diagnostics, []);
@@ -203,9 +205,9 @@ for (const [extension, language] of [
 test("advanced constructor exports cannot overwrite an imported ordinary value", () => {
   const files: Record<string, string> = {
     "file:///modules/value.advanced": "{ Box = 42 }",
-    "file:///modules/constructor.advanced": 'import "./value.advanced"; type T = Box {}',
+    "file:///modules/constructor.advanced": "import \"./value.advanced\"; type T = Box {}",
   };
-  const result = advanced.compile('import "./constructor.advanced"; Box', {
+  const result = advanced.compile("import \"./constructor.advanced\"; Box", {
     uri: "file:///modules/main.advanced",
     read: (uri) => files[uri]!,
   });
@@ -213,9 +215,8 @@ test("advanced constructor exports cannot overwrite an imported ordinary value",
 });
 
 test("advanced imports nominal datatype constructors and definitions", () => {
-  const source = 'import "./box.advanced"; match Box(42) { Box(x) => unbox(Box(x)) }';
-  const dependency =
-    "type Box(a) = Box(a) let unbox = fn(box) => match box { Box(x) => x } in { unbox = unbox }";
+  const source = "import \"./box.advanced\"; match Box(42) { Box(x) => unbox(Box(x)) }";
+  const dependency = "type Box(a) = Box(a) let unbox = fn(box) => match box { Box(x) => x } in { unbox = unbox }";
   const options = { uri: "file:///modules/main.advanced", read: () => dependency };
   const result = advanced.compile(source, options);
   assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));

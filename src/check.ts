@@ -1,12 +1,12 @@
-import { withDocument, type Diagnostic, type Span } from "./diagnostic.ts";
+import { type Diagnostic, type Span, withDocument } from "./diagnostic.ts";
 
 export type Result<A> =
-  | { readonly success: true; readonly value: A }
-  | { readonly success: false; readonly errors: readonly [Diagnostic, ...Diagnostic[]] };
+  | { readonly success: true; readonly value: A; }
+  | { readonly success: false; readonly errors: readonly [Diagnostic, ...Diagnostic[]]; };
 
 type Reply<A> =
-  | { readonly ok: true; readonly value: A }
-  | { readonly ok: false; readonly error: Diagnostic };
+  | { readonly ok: true; readonly value: A; }
+  | { readonly ok: false; readonly error: Diagnostic; };
 
 const invariant = Symbol();
 
@@ -17,14 +17,25 @@ type Checkpointable<T> = {
 };
 
 export type State<T> = Checkpointable<T>;
-export type Scoped<T> = { readonly kind: "scoped"; readonly initial: T; readonly [invariant]: (value: T) => T };
+export type Scoped<T> = { readonly kind: "scoped"; readonly initial: T; readonly [invariant]: (value: T) => T; };
 
-export const state = <T>(init: () => T, checkpoint: (value: T) => () => void): State<T> => ({ kind: "state", init, checkpoint });
+export const state = <T>(init: () => T, checkpoint: (value: T) => () => void): State<T> => ({
+  kind: "state",
+  init,
+  checkpoint,
+});
 export const scoped = <T>(initial: T): Scoped<T> => ({ kind: "scoped", initial, [invariant]: (value) => value });
 
-type Entry = { readonly value: unknown; readonly initialRestore: () => void; readonly checkpoint: () => () => void };
-type Storage = { readonly states: Map<State<unknown>, Entry>; readonly errors: Diagnostic[]; readonly mapped: WeakMap<Diagnostic, Set<DiagnosticMapper>> };
-type DiagnosticMapper = { readonly map: (error: Diagnostic) => Diagnostic; readonly outer: DiagnosticMapper | undefined };
+type Entry = { readonly value: unknown; readonly initialRestore: () => void; readonly checkpoint: () => () => void; };
+type Storage = {
+  readonly states: Map<State<unknown>, Entry>;
+  readonly errors: Diagnostic[];
+  readonly mapped: WeakMap<Diagnostic, Set<DiagnosticMapper>>;
+};
+type DiagnosticMapper = {
+  readonly map: (error: Diagnostic) => Diagnostic;
+  readonly outer: DiagnosticMapper | undefined;
+};
 type RuntimeInit = {
   readonly storage: Storage;
   readonly values: ReadonlyMap<object, unknown>;
@@ -52,7 +63,15 @@ class Runtime {
   }
 
   derive(changes: Partial<Omit<RuntimeInit, "storage">>): Runtime {
-    return new Runtime({ storage: this.storage, values: this.values, labels: this.labels, span: this.span, document: this.document, diagnosticMapper: this.diagnosticMapper, ...changes });
+    return new Runtime({
+      storage: this.storage,
+      values: this.values,
+      labels: this.labels,
+      span: this.span,
+      document: this.document,
+      diagnosticMapper: this.diagnosticMapper,
+      ...changes,
+    });
   }
 
   get<T>(key: State<T> | Scoped<T>): T {
@@ -81,14 +100,20 @@ class Runtime {
   }
 
   diagnostic(message: string): Diagnostic {
-    const local: Diagnostic = this.span === undefined ? { message, context: this.labels } : { message, context: this.labels, span: this.span };
+    const local: Diagnostic = this.span === undefined
+      ? { message, context: this.labels }
+      : { message, context: this.labels, span: this.span };
     return this.document === undefined ? local : withDocument(local, this.document);
   }
 
   mapDiagnostics(error: Diagnostic): Diagnostic {
     if (this.diagnosticMapper === undefined) return error;
     const applied = new Set(this.storage.mapped.get(error));
-    for (let mapper: DiagnosticMapper | undefined = this.diagnosticMapper; mapper !== undefined; mapper = mapper.outer) {
+    for (
+      let mapper: DiagnosticMapper | undefined = this.diagnosticMapper;
+      mapper !== undefined;
+      mapper = mapper.outer
+    ) {
       if (applied.has(mapper)) continue;
       error = mapper.map(error);
       applied.add(mapper);
@@ -106,24 +131,34 @@ class Runtime {
 }
 
 type Instruction =
-  | { readonly kind: "primitive"; readonly step: (runtime: Runtime) => Reply<unknown> }
-  | { readonly kind: "bind"; readonly child: Check<unknown>; readonly next: (value: unknown) => Check<unknown> }
-  | { readonly kind: "generator"; readonly body: () => Generator<Check<unknown>, unknown, unknown> }
-  | { readonly kind: "scoped"; readonly child: Check<unknown>; readonly derive: (runtime: Runtime) => Runtime }
-  | { readonly kind: "recovery"; readonly child: Check<unknown>; readonly fallback: Check<unknown> }
-  | { readonly kind: "transaction"; readonly child: Check<unknown>; readonly speculative: boolean }
-  | { readonly kind: "mapError"; readonly child: Check<unknown>; readonly map: (error: Diagnostic) => Diagnostic }
-  | { readonly kind: "choice"; readonly children: readonly Check<unknown>[] };
+  | { readonly kind: "primitive"; readonly step: (runtime: Runtime) => Reply<unknown>; }
+  | { readonly kind: "bind"; readonly child: Check<unknown>; readonly next: (value: unknown) => Check<unknown>; }
+  | { readonly kind: "generator"; readonly body: () => Generator<Check<unknown>, unknown, unknown>; }
+  | { readonly kind: "scoped"; readonly child: Check<unknown>; readonly derive: (runtime: Runtime) => Runtime; }
+  | { readonly kind: "recovery"; readonly child: Check<unknown>; readonly fallback: Check<unknown>; }
+  | { readonly kind: "transaction"; readonly child: Check<unknown>; readonly speculative: boolean; }
+  | { readonly kind: "mapError"; readonly child: Check<unknown>; readonly map: (error: Diagnostic) => Diagnostic; }
+  | { readonly kind: "choice"; readonly children: readonly Check<unknown>[]; };
 
-type Completion = Reply<unknown> | { readonly kind: "throw"; readonly error: unknown };
+type Completion = Reply<unknown> | { readonly kind: "throw"; readonly error: unknown; };
 type Frame =
-  | { readonly kind: "mapError"; readonly map: (error: Diagnostic) => Diagnostic }
-  | { readonly kind: "bind"; readonly next: (value: unknown) => Check<unknown> }
-  | { readonly kind: "generator"; readonly iterator: Generator<Check<unknown>, unknown, unknown> }
-  | { readonly kind: "scoped"; readonly outer: Runtime }
-  | { readonly kind: "recovery"; readonly fallback: Check<unknown> }
-  | { readonly kind: "transaction"; readonly restore: () => void; readonly start: number; readonly speculative: boolean }
-  | { readonly kind: "choice"; readonly children: readonly Check<unknown>[]; readonly index: number; readonly first: Reply<unknown> | undefined };
+  | { readonly kind: "mapError"; readonly map: (error: Diagnostic) => Diagnostic; }
+  | { readonly kind: "bind"; readonly next: (value: unknown) => Check<unknown>; }
+  | { readonly kind: "generator"; readonly iterator: Generator<Check<unknown>, unknown, unknown>; }
+  | { readonly kind: "scoped"; readonly outer: Runtime; }
+  | { readonly kind: "recovery"; readonly fallback: Check<unknown>; }
+  | {
+    readonly kind: "transaction";
+    readonly restore: () => void;
+    readonly start: number;
+    readonly speculative: boolean;
+  }
+  | {
+    readonly kind: "choice";
+    readonly children: readonly Check<unknown>[];
+    readonly index: number;
+    readonly first: Reply<unknown> | undefined;
+  };
 
 const instructions = new WeakMap<Check<unknown>, Instruction>();
 const instructed = <A>(instruction: Instruction): Check<A> => {
@@ -157,9 +192,17 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
             else completion = { ok: false, error: runtime.mapDiagnostics(reply.error) };
             break;
           }
-          case "mapError": frames.push({ kind: "mapError", map: instruction.map }); current = instruction.child; break;
-          case "bind": frames.push({ kind: "bind", next: instruction.next }); current = instruction.child; break;
-          case "generator": advance(instruction.body()); break;
+          case "mapError":
+            frames.push({ kind: "mapError", map: instruction.map });
+            current = instruction.child;
+            break;
+          case "bind":
+            frames.push({ kind: "bind", next: instruction.next });
+            current = instruction.child;
+            break;
+          case "generator":
+            advance(instruction.body());
+            break;
           case "scoped": {
             const inner = instruction.derive(runtime);
             frames.push({ kind: "scoped", outer: runtime });
@@ -167,7 +210,10 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
             current = instruction.child;
             break;
           }
-          case "recovery": frames.push({ kind: "recovery", fallback: instruction.fallback }); current = instruction.child; break;
+          case "recovery":
+            frames.push({ kind: "recovery", fallback: instruction.fallback });
+            current = instruction.child;
+            break;
           case "transaction": {
             const start = runtime.storage.errors.length;
             const restore = runtime.checkpoint();
@@ -183,13 +229,23 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
       } else {
         const frame = frames.pop()!;
         switch (frame.kind) {
-          case "bind": if (!("kind" in completion) && completion.ok) current = frame.next(completion.value); break;
-          case "mapError": if (!("kind" in completion) && !completion.ok) completion = { ok: false, error: runtime.mapError(completion.error, frame.map) }; break;
+          case "bind":
+            if (!("kind" in completion) && completion.ok) current = frame.next(completion.value);
+            break;
+          case "mapError":
+            if (!("kind" in completion) && !completion.ok) {
+              completion = { ok: false, error: runtime.mapError(completion.error, frame.map) };
+            }
+            break;
           case "generator":
             if (!("kind" in completion) && completion.ok) advance(frame.iterator, completion.value);
-            else if (!frame.iterator.return(undefined).done) throw new TypeError("Checks cannot be yielded during generator cleanup");
+            else if (!frame.iterator.return(undefined).done) {
+              throw new TypeError("Checks cannot be yielded during generator cleanup");
+            }
             break;
-          case "scoped": runtime = frame.outer; break;
+          case "scoped":
+            runtime = frame.outer;
+            break;
           case "recovery":
             if (!("kind" in completion) && !completion.ok) {
               runtime.storage.errors.push(completion.error);
@@ -199,7 +255,9 @@ const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
           case "transaction": {
             const recovered = frame.speculative ? runtime.storage.errors[frame.start] : undefined;
             if ("kind" in completion || !completion.ok || recovered !== undefined) {
-              try { frame.restore(); } finally {
+              try {
+                frame.restore();
+              } finally {
                 if (frame.speculative) runtime.storage.errors.length = frame.start;
               }
               if (!("kind" in completion) && recovered !== undefined) completion = { ok: false, error: recovered };
@@ -235,7 +293,9 @@ export class Check<A> {
     this.step = step;
     instructions.set(this, { kind: "primitive", step });
   }
-  *[Symbol.iterator](): Generator<Check<A>, A, unknown> { return (yield this) as A; }
+  *[Symbol.iterator](): Generator<Check<A>, A, unknown> {
+    return (yield this) as A;
+  }
 
   map<B>(f: (value: A) => B): Check<B> {
     return this.flatMap((value) => pure(f(value)));
@@ -246,7 +306,11 @@ export class Check<A> {
   }
 
   withDiagnostics(map: (error: Diagnostic) => Diagnostic): Check<A> {
-    return instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ diagnosticMapper: { map, outer: runtime.diagnosticMapper } }) });
+    return instructed({
+      kind: "scoped",
+      child: this,
+      derive: (runtime) => runtime.derive({ diagnosticMapper: { map, outer: runtime.diagnosticMapper } }),
+    });
   }
 
   flatMap<B>(f: (value: A) => Check<B>): Check<B> {
@@ -264,11 +328,17 @@ export class Check<A> {
   }
 
   context(label: string): Check<A> {
-    return instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ labels: [...runtime.labels, label] }) });
+    return instructed({
+      kind: "scoped",
+      child: this,
+      derive: (runtime) => runtime.derive({ labels: [...runtime.labels, label] }),
+    });
   }
 
   at(span: Span | undefined): Check<A> {
-    return span === undefined ? this : instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ span }) });
+    return span === undefined
+      ? this
+      : instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ span }) });
   }
 
   inDocument(uri: string): Check<A> {
@@ -280,32 +350,43 @@ export const check = <A>(body: () => Generator<Check<unknown>, A, unknown>): Che
   instructed({ kind: "generator", body });
 
 export const pure = <A>(value: A): Check<A> => new Check(() => ({ ok: true, value }));
-export const fail = (message: string): Check<never> => new Check((runtime) => ({ ok: false, error: runtime.diagnostic(message) }));
-export const get = <T>(key: State<T> | Scoped<T>): Check<T> => new Check((runtime) => ({ ok: true, value: runtime.get(key) }));
+export const fail = (message: string): Check<never> =>
+  new Check((runtime) => ({ ok: false, error: runtime.diagnostic(message) }));
+export const get = <T>(key: State<T> | Scoped<T>): Check<T> =>
+  new Check((runtime) => ({ ok: true, value: runtime.get(key) }));
 
 export const within = <T, A>(key: Scoped<T>, update: (current: T) => T, body: Check<A>): Check<A> =>
-  instructed({ kind: "scoped", child: body, derive: (runtime) => runtime.derive({ values: new Map(runtime.values).set(key, update(runtime.get(key))) }) });
+  instructed({
+    kind: "scoped",
+    child: body,
+    derive: (runtime) => runtime.derive({ values: new Map(runtime.values).set(key, update(runtime.get(key))) }),
+  });
 
-export const bind = <T, A>(env: Scoped<ReadonlyMap<string, T>>, entries: Iterable<readonly [string, T]>, body: Check<A>): Check<A> =>
-  within(env, (current) => new Map([...current, ...entries]), body);
+export const bind = <T, A>(
+  env: Scoped<ReadonlyMap<string, T>>,
+  entries: Iterable<readonly [string, T]>,
+  body: Check<A>,
+): Check<A> => within(env, (current) => new Map([...current, ...entries]), body);
 
 export const lookup = <T>(env: Scoped<ReadonlyMap<string, T>>, name: string): Check<T> =>
   get(env).flatMap((current) => current.has(name) ? pure(current.get(name) as T) : fail(`Unbound variable: ${name}`));
 
 type Value<C> = C extends Check<infer A> ? A : never;
-type Values<Checks extends readonly Check<unknown>[]> = { -readonly [K in keyof Checks]: Value<Checks[K]> };
+type Values<Checks extends readonly Check<unknown>[]> = { -readonly [K in keyof Checks]: Value<Checks[K]>; };
 
 export const sequence = <const Checks extends readonly Check<unknown>[]>(checks: Checks): Check<Values<Checks>> =>
-  check(function* () {
+  check(function*() {
     const values: unknown[] = [];
     for (const checker of checks) values.push(yield* checker);
     return values as Values<Checks>;
   });
 
-export const attempt = <A>(checker: Check<A>): Check<A> => instructed({ kind: "transaction", child: checker, speculative: true });
+export const attempt = <A>(checker: Check<A>): Check<A> =>
+  instructed({ kind: "transaction", child: checker, speculative: true });
 
-export const choice = <const Checks extends readonly [Check<unknown>, ...Check<unknown>[]]>(...checks: Checks): Check<Value<Checks[number]>> =>
-  instructed({ kind: "choice", children: checks });
+export const choice = <const Checks extends readonly [Check<unknown>, ...Check<unknown>[]]>(
+  ...checks: Checks
+): Check<Value<Checks[number]>> => instructed({ kind: "choice", children: checks });
 
 export const run = <A>(checker: Check<A>): Result<A> => {
   const runtime = new Runtime();
@@ -317,12 +398,14 @@ export const run = <A>(checker: Check<A>): Result<A> => {
       : [errors[0]!, ...errors.slice(1), reply.error];
     return { success: false, errors: allErrors };
   }
-  return errors.length ? { success: false, errors: [...errors] as [Diagnostic, ...Diagnostic[]] } : { success: true, value: reply.value };
+  return errors.length
+    ? { success: false, errors: [...errors] as [Diagnostic, ...Diagnostic[]] }
+    : { success: true, value: reply.value };
 };
 
 export type DetailedResult<A> =
-  | { readonly status: "completed"; readonly value: A; readonly diagnostics: readonly Diagnostic[] }
-  | { readonly status: "failed"; readonly diagnostics: readonly [Diagnostic, ...Diagnostic[]] };
+  | { readonly status: "completed"; readonly value: A; readonly diagnostics: readonly Diagnostic[]; }
+  | { readonly status: "failed"; readonly diagnostics: readonly [Diagnostic, ...Diagnostic[]]; };
 
 export const runDetailed = <A>(checker: Check<A>): DetailedResult<A> => {
   const runtime = new Runtime();
@@ -330,7 +413,10 @@ export const runDetailed = <A>(checker: Check<A>): DetailedResult<A> => {
   const diagnostics = [...runtime.storage.errors];
   return reply.ok
     ? { status: "completed", value: reply.value, diagnostics }
-    : { status: "failed", diagnostics: diagnostics.length ? [diagnostics[0]!, ...diagnostics.slice(1), reply.error] : [reply.error] };
+    : {
+      status: "failed",
+      diagnostics: diagnostics.length ? [diagnostics[0]!, ...diagnostics.slice(1), reply.error] : [reply.error],
+    };
 };
 
 export const diagnostics = (): Check<readonly Diagnostic[]> =>

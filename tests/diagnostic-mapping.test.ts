@@ -1,6 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Check, attempt, check, choice, diagnostics, fail, get, pure, runDetailed, sequence, state } from "../src/check.ts";
+import {
+  attempt,
+  Check,
+  check,
+  choice,
+  diagnostics,
+  fail,
+  get,
+  pure,
+  runDetailed,
+  sequence,
+  state,
+} from "../src/check.ts";
 import type { Diagnostic } from "../src/diagnostic.ts";
 import { createTrace } from "../src/trace.ts";
 
@@ -10,18 +22,23 @@ const composite = (): Check<never> => pure(0).flatMap(() => fail("bad"));
 
 test("composite step rereturn maps a terminal diagnostic exactly once", () => {
   assert.deepEqual(runDetailed(reenter(composite()).withDiagnostics(suffix("!"))), {
-    status: "failed", diagnostics: [{ message: "bad!", context: [] }],
+    status: "failed",
+    diagnostics: [{ message: "bad!", context: [] }],
   });
   assert.equal(runDetailed(reenter(fail("bad")).withDiagnostics(suffix("!"))).diagnostics[0]?.message, "bad!");
 });
 
 test("recovered inner failures are mapped before returning from step", () => {
-  const child = composite().recover(pure(7)).flatMap((value) => diagnostics().map((errors) => {
-    assert.equal(errors[0]?.message, "bad!");
-    return value;
-  }));
+  const child = composite().recover(pure(7)).flatMap((value) =>
+    diagnostics().map((errors) => {
+      assert.equal(errors[0]?.message, "bad!");
+      return value;
+    })
+  );
   assert.deepEqual(runDetailed(reenter(child).withDiagnostics(suffix("!"))), {
-    status: "completed", value: 7, diagnostics: [{ message: "bad!", context: [] }],
+    status: "completed",
+    value: 7,
+    diagnostics: [{ message: "bad!", context: [] }],
   });
 });
 
@@ -39,13 +56,16 @@ test("scope identity is distinct even when nested scopes share one callback", ()
 test("mapError replacements retain scoped mapper provenance", () => {
   const child = composite().mapError((error) => ({ message: `${error.message}?`, context: ["replacement"] }));
   assert.deepEqual(runDetailed(reenter(child).withDiagnostics(suffix("!"))), {
-    status: "failed", diagnostics: [{ message: "bad!?", context: ["replacement"] }],
+    status: "failed",
+    diagnostics: [{ message: "bad!?", context: ["replacement"] }],
   });
 });
 
 test("a repeated Check allocates distinct mapping scopes within and between runs", () => {
   const shared: Diagnostic = { message: "bad", context: [] };
-  const child = reenter(pure(0).flatMap(() => new Check<never>(() => ({ ok: false, error: shared })))).withDiagnostics(suffix("!"));
+  const child = reenter(pure(0).flatMap(() => new Check<never>(() => ({ ok: false, error: shared })))).withDiagnostics(
+    suffix("!"),
+  );
   const program = sequence([child.recover(pure(1)), child.recover(pure(2))]);
   for (let i = 0; i < 2; i++) {
     assert.deepEqual(runDetailed(program).diagnostics.map(({ message }) => message), ["bad!", "bad!"]);
@@ -76,7 +96,12 @@ test("attempt and choice keep mapped terminal failures without replaying scopes"
 
 test("trace constraint causes are unique through custom step reentry", () => {
   const trace = createTrace<string, string>((value) => value, (value) => value);
-  const program = trace.constrain("outer", [], "outer", reenter(trace.constrain("inner", [], "inner", reenter(composite()))));
+  const program = trace.constrain(
+    "outer",
+    [],
+    "outer",
+    reenter(trace.constrain("inner", [], "inner", reenter(composite()))),
+  );
   const result = runDetailed(program);
   const reasons = result.diagnostics[0]?.reasons;
   assert.equal(reasons?.length, 2);
@@ -92,7 +117,9 @@ test("retained rolled-back errors do not inherit later constraint identities", (
     return reply;
   });
   const rereturn = new Check<never>(() => ({ ok: false, error: retained! }));
-  const result = runDetailed(attempt(capture).recover(pure(0)).flatMap(() => trace.constrain("later", [], "later", rereturn)));
+  const result = runDetailed(
+    attempt(capture).recover(pure(0)).flatMap(() => trace.constrain("later", [], "later", rereturn)),
+  );
   assert.equal(retained?.reasons?.length, 1);
   assert.equal(result.diagnostics[1]?.reasons?.length, 2);
   assert.notEqual(result.diagnostics[1]?.reasons?.[1], retained?.reasons?.[0]);
@@ -104,16 +131,22 @@ for (const mapping of ["scoped", "mapError"] as const) {
       const external = { value: 0 };
       const cell = state(() => external, (value) => {
         const saved = value.value;
-        return () => { value.value = saved; };
+        return () => {
+          value.value = saved;
+        };
       });
       const exception = new Error("mapping bug");
       let closed = 0;
-      const body = check(function* () {
+      const body = check(function*() {
         try {
           yield* fail("recovered").recover(pure(0));
-          yield* get(cell).map((value) => { value.value = 1; });
+          yield* get(cell).map((value) => {
+            value.value = 1;
+          });
           return yield* composite();
-        } finally { closed += 1; }
+        } finally {
+          closed += 1;
+        }
       });
       const map = (error: Diagnostic): Diagnostic => {
         if (error.message === "bad") throw exception;

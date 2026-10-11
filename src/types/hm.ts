@@ -1,19 +1,21 @@
-import { check, fail, type Check } from "../check.ts";
+import { type Check, check, fail } from "../check.ts";
 import { assign, pruneLink } from "../inference.ts";
 
 export type Type =
-  | { readonly kind: "number" | "boolean" }
-  | { readonly kind: "function"; readonly param: Type; readonly result: Type }
+  | { readonly kind: "number" | "boolean"; }
+  | { readonly kind: "function"; readonly param: Type; readonly result: Type; }
   | Variable;
 
-export type Variable = { readonly kind: "variable"; instance?: Type };
-export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<Variable> };
+export type Variable = { readonly kind: "variable"; instance?: Type; };
+export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<Variable>; };
 
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
 export const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
 export const fresh = (): Check<Variable> =>
-  check(function* () { return { kind: "variable" }; });
+  check(function*() {
+    return { kind: "variable" };
+  });
 export const prune = (type: Type): Type =>
   pruneLink(type, (value) => value.kind === "variable" ? value : null, (variable) => variable.instance);
 
@@ -43,7 +45,7 @@ export const free = (input: Type, found = new Set<Variable>()): Set<Variable> =>
 };
 
 export const unify = (left: Type, right: Type): Check<void> =>
-  check(function* () {
+  check(function*() {
     const a = prune(left);
     const b = prune(right);
     if (a === b) return;
@@ -60,7 +62,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
 export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> =>
-  check(function* () {
+  check(function*() {
     const variables = free(type);
     for (const scheme of environment) {
       for (const variable of free(scheme.type)) {
@@ -71,7 +73,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Sch
   });
 
 export const instantiate = (scheme: Scheme): Check<Type> =>
-  check(function* () {
+  check(function*() {
     const replacements = new Map<Variable, Variable>();
     const visit = (input: Type): Type => {
       const type = prune(input);

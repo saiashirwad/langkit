@@ -29,11 +29,11 @@ Inferred constrained bindings must be functions or aliases, not overloaded compu
 
 `Effect a` is opaque to source programs. The following runtime primitives are available without an import:
 
-| Primitive | Type | Role |
-| --- | --- | --- |
-| `print` | `forall a. a -> Effect {}` | Construct an action that prints a value. |
-| `pureEffect` | `forall a. a -> Effect a` | Construct a completed action. |
-| `bindEffect` | `forall a b. Effect a -> (a -> Effect b) -> Effect b` | Sequence actions. |
+| Primitive    | Type                                                  | Role                                     |
+| ------------ | ----------------------------------------------------- | ---------------------------------------- |
+| `print`      | `forall a. a -> Effect {}`                            | Construct an action that prints a value. |
+| `pureEffect` | `forall a. a -> Effect a`                             | Construct a completed action.            |
+| `bindEffect` | `forall a b. Effect a -> (a -> Effect b) -> Effect b` | Sequence actions.                        |
 
 The library defines `Monad`, `pure`, and `bind` in source, including the `Effect` instance. A `do { ... }` block sequences actions; its final expression supplies the result:
 

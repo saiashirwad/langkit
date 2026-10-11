@@ -1,6 +1,6 @@
-import { runInNewContext } from "node:vm";
 import { render } from "langkit/diagnostic";
-import { hm, higherRank } from "./mini.ts";
+import { runInNewContext } from "node:vm";
+import { higherRank, hm } from "./mini.ts";
 
 const compiler = process.argv[2] === "higher-rank" ? higherRank : hm;
 const source = process.argv[3] ?? "let id = fn x => x; (id(1), id(true))";

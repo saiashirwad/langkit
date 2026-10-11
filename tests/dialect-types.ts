@@ -1,20 +1,23 @@
 import { create, type Value } from "../src/ir.ts";
+import { elaboration } from "../src/ir/check.ts";
+import type { JavaScriptContext } from "../src/javascript.ts";
+import { defineJavaScriptBackend } from "../src/javascript/operations.ts";
 import { defineOperation } from "../src/operations/descriptor.ts";
 import { defineBackend, defineDialect } from "../src/operations/dialect.ts";
+import { folders } from "../src/operations/folders.ts";
 import { records } from "../src/operations/records.ts";
 import { variants } from "../src/operations/variants.ts";
-import { folders } from "../src/operations/folders.ts";
-import { defineJavaScriptBackend } from "../src/javascript/operations.ts";
-import { definePythonBackend } from "../src/python/operations.ts";
-import type { JavaScriptContext } from "../src/javascript.ts";
 import type { PythonContext } from "../src/python.ts";
-import { elaboration } from "../src/ir/check.ts";
+import { definePythonBackend } from "../src/python/operations.ts";
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type IsAny<T> = 0 extends 1 & T ? true : false;
 const expect = <T extends true>(_proof: T): void => {};
-const operation = defineOperation<"number", { readonly kind: "same-kind"; readonly count: number }>("same-kind", {
-  children: () => [], scopedBodies: () => [], references: () => [], map: (node) => node,
+const operation = defineOperation<"number", { readonly kind: "same-kind"; readonly count: number; }>("same-kind", {
+  children: () => [],
+  scopedBodies: () => [],
+  references: () => [],
+  map: (node) => node,
 });
 const dialect = defineDialect({ authorKey: operation });
 const prototypeDialect = defineDialect({ toString: operation, constructor: operation, valueOf: operation });
@@ -44,7 +47,7 @@ defineBackend<{}>()(defineDialect({ valueOf: operation }), {});
 defineBackend<{}>()(defineDialect({ toString: operation, own: operation }), { own: node => String(node.count) });
 defineJavaScriptBackend(prototypeDialect, {
   toString: (node, context) => {
-    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number }>>(true);
+    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number; }>>(true);
     expect<Equal<typeof context, JavaScriptContext<"number">>>(true);
     return String(node.count);
   },
@@ -53,14 +56,14 @@ defineJavaScriptBackend(prototypeDialect, {
 });
 definePythonBackend(prototypeDialect, {
   toString: (node, context) => {
-    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number }>>(true);
+    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number; }>>(true);
     expect<Equal<typeof context, PythonContext<"number">>>(true);
     return String(node.count);
   },
   constructor: node => String(node.count),
   valueOf: node => String(node.count),
 });
-defineBackend<{ prefix: string }>()(prototypeDialect, {
+defineBackend<{ prefix: string; }>()(prototypeDialect, {
   toString: (node, context) => context.prefix + node.count,
   constructor: node => String(node.count),
   valueOf: node => String(node.count),
@@ -81,7 +84,7 @@ expect<Equal<keyof typeof dialect.descriptors, "authorKey">>(true);
 
 defineJavaScriptBackend(dialect, {
   authorKey: (node, context) => {
-    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number }>>(true);
+    expect<Equal<typeof node, { readonly kind: "same-kind"; readonly count: number; }>>(true);
     expect<Equal<IsAny<typeof node>, false>>(true);
     expect<Equal<typeof context, JavaScriptContext<"number">>>(true);
     expect<Equal<IsAny<typeof context>, false>>(true);
@@ -99,7 +102,7 @@ definePythonBackend(dialect, {
     return String(node.count + context.depth);
   },
 });
-defineBackend<{ readonly prefix: string }>()(dialect, {
+defineBackend<{ readonly prefix: string; }>()(dialect, {
   authorKey: (node, context) => context.prefix + node.count,
 });
 // @ts-expect-error Exact dialect keys cannot widen to an empty record.
@@ -107,18 +110,23 @@ defineJavaScriptBackend(dialect, {});
 // @ts-expect-error Python also requires the exact selected key.
 definePythonBackend(dialect, {});
 // @ts-expect-error The generic factory also prevents missing-handler inference.
-defineBackend<{ readonly prefix: string }>()(dialect, {});
+defineBackend<{ readonly prefix: string; }>()(dialect, {});
 defineJavaScriptBackend(dialect, {
   // @ts-expect-error Incorrect callback nodes are rejected.
-  authorKey: (node: { kind: "same-kind"; missing: string }) => node.missing,
+  authorKey: (node: { kind: "same-kind"; missing: string; }) => node.missing,
 });
 definePythonBackend(dialect, {
   // @ts-expect-error Incorrect callback context is rejected.
-  authorKey: (_node, context: { incorrect: true }) => String(context.incorrect),
+  authorKey: (_node, context: { incorrect: true; }) => String(context.incorrect),
 });
 const recordFeature = records<"number">();
 const builder = create<"number">().use(recordFeature);
-expect<Equal<keyof typeof builder.descriptors, "literal" | "ref" | "binary" | "call" | "fn" | "conditional" | "block" | "record" | "merge" | "field">>(true);
+expect<
+  Equal<
+    keyof typeof builder.descriptors,
+    "literal" | "ref" | "binary" | "call" | "fn" | "conditional" | "block" | "record" | "merge" | "field"
+  >
+>(true);
 const checked = elaboration(builder);
 expect<Equal<keyof typeof checked.descriptors, keyof typeof builder.descriptors>>(true);
 expect<Equal<keyof ReturnType<typeof checked.dialect>["descriptors"], keyof typeof builder.descriptors>>(true);
@@ -140,18 +148,21 @@ defineJavaScriptBackend(defineDialect({ chosenField: builder.descriptors.field }
     return context.expr(node.record, context.depth) + node.name;
   },
 });
-defineJavaScriptBackend(defineDialect({ literal: builder.coreDescriptors.literal, conditional: builder.coreDescriptors.conditional }), {
-  literal: (node) => {
-    expect<Equal<typeof node.value, number | boolean | string>>(true);
-    expect<Equal<IsAny<typeof node.value>, false>>(true);
-    return String(node.value);
+defineJavaScriptBackend(
+  defineDialect({ literal: builder.coreDescriptors.literal, conditional: builder.coreDescriptors.conditional }),
+  {
+    literal: (node) => {
+      expect<Equal<typeof node.value, number | boolean | string>>(true);
+      expect<Equal<IsAny<typeof node.value>, false>>(true);
+      return String(node.value);
+    },
+    conditional: (node, context) => {
+      expect<Equal<typeof node.kind, "if">>(true);
+      expect<Equal<typeof node.cond, Value<"number">>>(true);
+      return context.block(node.then, context.depth);
+    },
   },
-  conditional: (node, context) => {
-    expect<Equal<typeof node.kind, "if">>(true);
-    expect<Equal<typeof node.cond, Value<"number">>>(true);
-    return context.block(node.then, context.depth);
-  },
-});
+);
 const variantFeature = variants<"number">();
 definePythonBackend(defineDialect({ injection: variantFeature.descriptors.variant }), {
   injection: (node) => {
@@ -169,6 +180,8 @@ defineJavaScriptBackend(defineDialect({ order: folderFeature.descriptors.fieldOr
   },
 });
 // @ts-expect-error Both selected operation keys are required, not just those in the table.
-defineJavaScriptBackend(defineDialect({ one: operation, two: builder.coreDescriptors.literal }), { one: (node) => String(node.count) });
+defineJavaScriptBackend(defineDialect({ one: operation, two: builder.coreDescriptors.literal }), {
+  one: (node) => String(node.count),
+});
 // @ts-expect-error Registry entries must be operation descriptors, not merely IDs.
 defineDialect({ invalid: { id: Symbol(), kind: "invalid" } });

@@ -1,20 +1,20 @@
-import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
-import { test } from "node:test";
-import { runInNewContext } from "node:vm";
-import { create, type Body, type Declaration, type Reference, type Value } from "langkit/ir";
+import { type Body, create, type Declaration, type Reference, type Value } from "langkit/ir";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
 import { foldersJavaScript } from "langkit/javascript/folders";
 import { printingJavaScript } from "langkit/javascript/printing";
 import { recordsJavaScript } from "langkit/javascript/records";
+import { folders } from "langkit/operations/folders";
+import { printing } from "langkit/operations/printing";
+import { records } from "langkit/operations/records";
 import { createPythonEmitter } from "langkit/python";
 import { corePython } from "langkit/python/core";
 import { foldersPython, printingPython } from "langkit/python/features";
 import { recordsPython } from "langkit/python/records";
-import { folders } from "langkit/operations/folders";
-import { printing } from "langkit/operations/printing";
-import { records } from "langkit/operations/records";
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { test } from "node:test";
+import { runInNewContext } from "node:vm";
 
 const recordSet = records<string>();
 const printingSet = printing<string>();
@@ -40,7 +40,7 @@ function* declare(name: string, value: Value<string>): Generator<Declaration<str
   return yield* code.declare(name, value);
 }
 
-const pythonRun = (source: string): { result: unknown; prints: string[] } => {
+const pythonRun = (source: string): { result: unknown; prints: string[]; } => {
   const wrapper = [
     "import contextlib, io, json, sys",
     "out = io.StringIO(); ns = {}",
@@ -53,23 +53,27 @@ const pythonRun = (source: string): { result: unknown; prints: string[] } => {
   }
   if (child.error) assert.fail("Python 3 execution failed: " + child.error.message);
   assert.equal(child.status, 0, "Python 3 program failed (status " + child.status + "):\n" + child.stderr);
-  return JSON.parse(child.stdout) as { result: unknown; prints: string[] };
+  return JSON.parse(child.stdout) as { result: unknown; prints: string[]; };
 };
 
-const effect = (label: string, value: Value<string>): Value<string> => code.block(value.type, function* () {
-  yield* declare(`${label}_effect`, code.print("unit", string(label)));
-  return value;
-});
+const effect = (label: string, value: Value<string>): Value<string> =>
+  code.block(value.type, function*() {
+    yield* declare(`${label}_effect`, code.print("unit", string(label)));
+    return value;
+  });
 
 const makeStep = (): Value<string> => {
   const acc = code.binding("acc", "number");
-  return code.fn("function", acc, function* () {
+  return code.fn("function", acc, function*() {
     const meta = code.binding("meta", "number");
-    return code.fn("function", meta, function* () {
+    return code.fn("function", meta, function*() {
       const value = code.binding("value", "number");
-      return code.fn("function", value, function* () {
-        const label = code.conditional("string", code.binary("boolean", "==", code.ref(value), number(1)),
-          function* () { return string("b"); }, function* () { return string("a"); });
+      return code.fn("function", value, function*() {
+        const label = code.conditional("string", code.binary("boolean", "==", code.ref(value), number(1)), function*() {
+          return string("b");
+        }, function*() {
+          return string("a");
+        });
         yield* declare("step_label", code.print("unit", label));
         const scaled = code.binary("number", "*", code.ref(acc), number(10));
         const withMetadata = code.binary("number", "+", scaled, code.ref(meta));
@@ -88,14 +92,16 @@ const buildFold = (empty: boolean): Body<string> => {
   const recordFields = empty
     ? []
     : [{ name: "a", value: number(100) }, { name: "b", value: number(1) }];
-  return code.body(function* () {
+  return code.body(function*() {
     const step = yield* declare("step", makeStep());
-    return code.recordFold("number",
+    return code.recordFold(
+      "number",
       effect("order", code.fieldOrder("folder", orderedNames)),
       effect("metadata", code.record("record", metadataFields)),
       effect("record", code.record("record", recordFields)),
       effect("initial", number(initial)),
-      effect("step", step));
+      effect("step", step),
+    );
   });
 };
 
@@ -110,8 +116,7 @@ const compareTargets = (programBody: Body<string>, expectedResult: number, expec
 };
 
 test("nonempty record fold follows explicit order and curries metadata before each field", () => {
-  compareTargets(buildFold(false), 440,
-    ["order", "metadata", "record", "initial", "step", "b", "a"]);
+  compareTargets(buildFold(false), 440, ["order", "metadata", "record", "initial", "step", "b", "a"]);
 });
 
 test("empty record fold evaluates operands but never invokes the step", () => {

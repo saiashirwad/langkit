@@ -17,14 +17,14 @@ The three supported theories own separate runtime type grammars. Their types are
 import { check, run } from "langkit";
 import * as hm from "langkit/types/hm";
 
-const result = run(check(function* () {
-	const a = yield* hm.fresh();
-	const identity = yield* hm.generalize(hm.fn(a, a), []);
-	const numeric = yield* hm.instantiate(identity);
-	const logical = yield* hm.instantiate(identity);
-	yield* hm.unify(numeric, hm.fn(hm.number, hm.number));
-	yield* hm.unify(logical, hm.fn(hm.boolean, hm.boolean));
-	return [hm.show(numeric), hm.show(logical)];
+const result = run(check(function*() {
+  const a = yield* hm.fresh();
+  const identity = yield* hm.generalize(hm.fn(a, a), []);
+  const numeric = yield* hm.instantiate(identity);
+  const logical = yield* hm.instantiate(identity);
+  yield* hm.unify(numeric, hm.fn(hm.number, hm.number));
+  yield* hm.unify(logical, hm.fn(hm.boolean, hm.boolean));
+  return [hm.show(numeric), hm.show(logical)];
 }));
 ```
 
@@ -66,8 +66,8 @@ Type objects are mutable solver data, not detached editor snapshots. Retaining a
 
 ## Verification
 
-`tests/theories.test.ts` covers computation reuse, solved-environment generalization, row re-flattening, absence propagation, rollback, and rigid escape. Existing HM, Rows, and Advanced suites check source behavior and emitted execution.
+`tests/theories.test.ts` covers computation reuse, solved-environment generalization, row re-flattening, absence propagation, rollback, and rigid escape. `tests/languages.test.ts` and `tests/mini.test.ts` check source behavior and emitted execution.
 
 ```sh
-node --test tests/theories.test.ts tests/hm.test.ts tests/rows.test.ts tests/advanced-types.test.ts tests/advanced.test.ts
+node --test tests/theories.test.ts tests/languages.test.ts tests/mini.test.ts
 ```

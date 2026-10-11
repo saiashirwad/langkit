@@ -1,7 +1,14 @@
 import type { OperationNode } from "../ir.ts";
-import type { PythonContext } from "../python.ts";
-import { defineBackend, type BackendHandlers, type CompleteBackendHandlers, type DescriptorRecord, type Dialect, type DialectType } from "../operations/dialect.ts";
 import type { OperationDescriptor, OperationHandler } from "../operations/descriptor.ts";
+import {
+  type BackendHandlers,
+  type CompleteBackendHandlers,
+  defineBackend,
+  type DescriptorRecord,
+  type Dialect,
+  type DialectType,
+} from "../operations/dialect.ts";
+import type { PythonContext } from "../python.ts";
 
 export type PythonHandler<T, Node extends OperationNode, Context> = {
   readonly operationId: symbol;
@@ -19,10 +26,14 @@ export const definePythonHandler = <T, Node extends OperationNode, Context>(
   emit: OperationHandler<Node, Context, string>,
 ): PythonHandler<T, Node, Context> => ({ operationId: operation.id, kind: operation.kind, emit });
 
-export const definePythonBackend = <const D extends DescriptorRecord, const H extends BackendHandlers<NoInfer<D>, PythonContext<DialectType<D>>, string>>(
+export const definePythonBackend = <
+  const D extends DescriptorRecord,
+  const H extends BackendHandlers<NoInfer<D>, PythonContext<DialectType<D>>, string>,
+>(
   dialect: Dialect<D>,
   handlers: H & CompleteBackendHandlers<NoInfer<D>, H>,
-): readonly DispatcherHandler<PythonContext<DialectType<D>>>[] => defineBackend<PythonContext<DialectType<D>>>()<D, H>(dialect, handlers);
+): readonly DispatcherHandler<PythonContext<DialectType<D>>>[] =>
+  defineBackend<PythonContext<DialectType<D>>>()<D, H>(dialect, handlers);
 
 export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
   handler: PythonHandler<T, Node, Context>,

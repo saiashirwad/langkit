@@ -12,12 +12,19 @@ const literal = (value: number | boolean | string): string => {
   return String(value);
 };
 
-export const coreJavaScript = <T>(descriptors: CoreDescriptors<T>) => defineJavaScriptBackend(defineDialect(descriptors), {
-  literal: (node) => literal(node.value),
-  ref: (node, context) => context.name(node.binding),
-  binary: (node, context) => `(${context.expr(node.left, context.depth)} ${node.op === "==" ? "===" : node.op} ${context.expr(node.right, context.depth)})`,
-  call: (node, context) => `(${context.expr(node.fn, context.depth)})(${context.expr(node.arg, context.depth)})`,
-  fn: (node, context) => `((${context.name(node.param)}) => ${context.block(node.body, context.depth)})`,
-  conditional: (node, context) => `(${context.expr(node.cond, context.depth)} ? (() => ${context.block(node.then, context.depth)})() : (() => ${context.block(node.else, context.depth)})())`,
-  block: (node, context) => `(() => ${context.block(node.body, context.depth)})()`,
-});
+export const coreJavaScript = <T>(descriptors: CoreDescriptors<T>) =>
+  defineJavaScriptBackend(defineDialect(descriptors), {
+    literal: (node) => literal(node.value),
+    ref: (node, context) => context.name(node.binding),
+    binary: (node, context) =>
+      `(${context.expr(node.left, context.depth)} ${node.op === "==" ? "===" : node.op} ${
+        context.expr(node.right, context.depth)
+      })`,
+    call: (node, context) => `(${context.expr(node.fn, context.depth)})(${context.expr(node.arg, context.depth)})`,
+    fn: (node, context) => `((${context.name(node.param)}) => ${context.block(node.body, context.depth)})`,
+    conditional: (node, context) =>
+      `(${context.expr(node.cond, context.depth)} ? (() => ${context.block(node.then, context.depth)})() : (() => ${
+        context.block(node.else, context.depth)
+      })())`,
+    block: (node, context) => `(() => ${context.block(node.body, context.depth)})()`,
+  });

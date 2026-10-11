@@ -8,14 +8,21 @@ import { editorFile, observe, position, probes, record, validate, validateRespon
 import { compiler, fragment, root } from "./type-contracts.ts";
 
 const args = process.argv.slice(2);
-assert.ok(args.every((arg) => ["--update", "--inspect"].includes(arg)), "usage: editor-check.ts [--update] [--inspect]");
+assert.ok(
+  args.every((arg) => ["--update", "--inspect"].includes(arg)),
+  "usage: editor-check.ts [--update] [--inspect]",
+);
 const source = readFileSync(join(root, editorFile), "utf8");
 const uri = pathToFileURL(join(root, editorFile)).href;
 const rootUri = pathToFileURL(root).href;
 const snapshotFile = join(root, "tests/editor-consumer.snapshot.json");
 for (const probe of probes) position(source, probe);
 const child = spawn(process.execPath, [compiler, "--lsp", "--stdio"], { cwd: root, stdio: ["pipe", "pipe", "pipe"] });
-type Pending = { resolve: (value: unknown) => void; reject: (error: unknown) => void; timer: ReturnType<typeof setTimeout> };
+type Pending = {
+  resolve: (value: unknown) => void;
+  reject: (error: unknown) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
 const pending = new Map<number, Pending>();
 let sequence = 0;
 let bytes = Buffer.alloc(0);
@@ -79,68 +86,124 @@ child.stdout.on("data", (chunk: Buffer) => {
     child.kill();
   }
 });
-child.stderr.on("data", (chunk: Buffer) => { logs = `${logs}${chunk}`.slice(-8000); });
+child.stderr.on("data", (chunk: Buffer) => {
+  logs = `${logs}${chunk}`.slice(-8000);
+});
 child.on("error", fail);
 child.stdin.on("error", fail);
 child.on("exit", (code, signal) => fail(new Error(`LSP exited ${code ?? signal}\n${logs}`)));
-const request = (method: string, params?: unknown): Promise<unknown> => new Promise((resolve, reject) => {
-  if (failed) { reject(failed); return; }
-  const id = ++sequence;
-  const timer = setTimeout(() => {
-    pending.delete(id);
-    reject(new Error(`LSP timeout: ${method}\n${logs}`));
-  }, 30_000);
-  pending.set(id, { resolve, reject, timer });
-  send({ id, method, params });
-});
+const request = (method: string, params?: unknown): Promise<unknown> =>
+  new Promise((resolve, reject) => {
+    if (failed) {
+      reject(failed);
+      return;
+    }
+    const id = ++sequence;
+    const timer = setTimeout(() => {
+      pending.delete(id);
+      reject(new Error(`LSP timeout: ${method}\n${logs}`));
+    }, 30_000);
+    pending.set(id, { resolve, reject, timer });
+    send({ id, method, params });
+  });
 
 try {
   const initialized = await request("initialize", {
-    processId: process.pid, rootUri, workspaceFolders: [{ uri: rootUri, name: "langkit" }],
-    capabilities: { general: { positionEncodings: ["utf-16"] }, textDocument: { hover: { contentFormat: ["markdown"] }, completion: { completionItem: { snippetSupport: true } }, signatureHelp: { signatureInformation: { parameterInformation: { labelOffsetSupport: true } } } } },
+    processId: process.pid,
+    rootUri,
+    workspaceFolders: [{ uri: rootUri, name: "langkit" }],
+    capabilities: {
+      general: { positionEncodings: ["utf-16"] },
+      textDocument: {
+        hover: { contentFormat: ["markdown"] },
+        completion: { completionItem: { snippetSupport: true } },
+        signatureHelp: { signatureInformation: { parameterInformation: { labelOffsetSupport: true } } },
+      },
+    },
   });
   record(initialized, "invalid initialize result");
   record(initialized.serverInfo, "invalid serverInfo");
   record(initialized.capabilities, "invalid capabilities");
   assert.equal(initialized.serverInfo.version, version, "LSP must use installed compiler");
   assert.equal(initialized.capabilities.positionEncoding, "utf-16");
-  for (const key of ["hoverProvider", "completionProvider", "signatureHelpProvider", "diagnosticProvider"]) assert.ok(initialized.capabilities[key], `LSP lacks ${key}`);
+  for (const key of ["hoverProvider", "completionProvider", "signatureHelpProvider", "diagnosticProvider"]) {
+    assert.ok(initialized.capabilities[key], `LSP lacks ${key}`);
+  }
   send({ method: "initialized", params: {} });
-  send({ method: "textDocument/didOpen", params: { textDocument: { uri, languageId: "typescript", version: 1, text: source } } });
+  send({
+    method: "textDocument/didOpen",
+    params: { textDocument: { uri, languageId: "typescript", version: 1, text: source } },
+  });
   const diagnostics = await request("textDocument/diagnostic", { textDocument: { uri } });
   record(diagnostics, "invalid diagnostics");
   assert.equal(diagnostics.kind, "full");
   assert.deepEqual(diagnostics.items, [], "editor corpus must compile cleanly");
   const observations: Record<string, ReturnType<typeof observe>> = {};
   for (const probe of probes) {
-    const observation = observe(probe, await request(`textDocument/${probe.method}`, { textDocument: { uri }, position: position(source, probe) }));
+    const observation = observe(
+      probe,
+      await request(`textDocument/${probe.method}`, { textDocument: { uri }, position: position(source, probe) }),
+    );
     if (args.includes("--inspect")) console.log(`${probe.id}: ${JSON.stringify(observation)}`);
     validate(probe, observation);
     observations[probe.id] = observation;
   }
   const controls = [
-    { id: "yield-literal", original: 'pure("ready" as const)', replacement: (type: string) => type === "any" ? 'pure<any>("ready")' : "pure<never>(undefined as never)" },
-    { id: "judgment-synth-yield", original: 'judgments.synth({ kind: "number", value: 42 })', replacement: (type: string) => `pure<${type}>(undefined as ${type})` },
-    { id: "staged-output", original: 'staged.prop(stagedProgram.result, "total")', replacement: (type: string) => `undefined as ${type}` },
+    {
+      id: "yield-literal",
+      original: "pure(\"ready\" as const)",
+      replacement: (type: string) => type === "any" ? "pure<any>(\"ready\")" : "pure<never>(undefined as never)",
+    },
+    {
+      id: "judgment-synth-yield",
+      original: "judgments.synth({ kind: \"number\", value: 42 })",
+      replacement: (type: string) => `pure<${type}>(undefined as ${type})`,
+    },
+    {
+      id: "staged-output",
+      original: "staged.prop(stagedProgram.result, \"total\")",
+      replacement: (type: string) => `undefined as ${type}`,
+    },
   ];
   let documentVersion = 1;
   for (const mutation of controls) {
-  const control = probes.find((probe) => probe.id === mutation.id)!;
-  const seed = fragment(source, mutation.original);
-  for (const type of ["any", "never"]) {
-    const mutated = source.slice(0, seed.index) + mutation.replacement(type) + source.slice(seed.index + seed.text.length);
-    send({ method: "textDocument/didChange", params: { textDocument: { uri, version: ++documentVersion }, contentChanges: [{ text: mutated }] } });
-    const observation = observe(control, await request("textDocument/hover", { textDocument: { uri }, position: position(mutated, control) }));
-    assert.match(observation.text, new RegExp(`\\b${type}\\b`), `real LSP must observe ${type} mutation`);
-    assert.throws(() => validate(control, observation), /missing|degraded/, "mutant hover must fail gate");
-    console.log(`Real LSP ${control.id} ${type} control rejected: ${observation.text.replaceAll("\n", " ")}`);
-  }
-  send({ method: "textDocument/didChange", params: { textDocument: { uri, version: ++documentVersion }, contentChanges: [{ text: source }] } });
-  assert.deepEqual(observe(control, await request("textDocument/hover", { textDocument: { uri }, position: position(source, control) })), observations[control.id], "restored hover must recover");
+    const control = probes.find((probe) => probe.id === mutation.id)!;
+    const seed = fragment(source, mutation.original);
+    for (const type of ["any", "never"]) {
+      const mutated = source.slice(0, seed.index) + mutation.replacement(type)
+        + source.slice(seed.index + seed.text.length);
+      send({
+        method: "textDocument/didChange",
+        params: { textDocument: { uri, version: ++documentVersion }, contentChanges: [{ text: mutated }] },
+      });
+      const observation = observe(
+        control,
+        await request("textDocument/hover", { textDocument: { uri }, position: position(mutated, control) }),
+      );
+      assert.match(observation.text, new RegExp(`\\b${type}\\b`), `real LSP must observe ${type} mutation`);
+      assert.throws(() => validate(control, observation), /missing|degraded/, "mutant hover must fail gate");
+      console.log(`Real LSP ${control.id} ${type} control rejected: ${observation.text.replaceAll("\n", " ")}`);
+    }
+    send({
+      method: "textDocument/didChange",
+      params: { textDocument: { uri, version: ++documentVersion }, contentChanges: [{ text: source }] },
+    });
+    assert.deepEqual(
+      observe(
+        control,
+        await request("textDocument/hover", { textDocument: { uri }, position: position(source, control) }),
+      ),
+      observations[control.id],
+      "restored hover must recover",
+    );
   }
   const snapshot = { compilerVersion: version, observations };
   if (args.includes("--update")) writeFileSync(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`);
-  else assert.deepEqual(snapshot, JSON.parse(readFileSync(snapshotFile, "utf8")), "editor output changed: inspect before --update");
+  else {assert.deepEqual(
+      snapshot,
+      JSON.parse(readFileSync(snapshotFile, "utf8")),
+      "editor output changed: inspect before --update",
+    );}
   console.log(`TS ${version} LSP: ${probes.length} probes, clean diagnostics, any/never controls passed`);
   await request("shutdown");
   send({ method: "exit" });

@@ -6,7 +6,9 @@ const schema = defineSyntax({
   variable: syntax.node("variable", { name: syntax.data<string>() }),
   fn: syntax.node("fn", { param: syntax.binder(), body: syntax.scopedChild({ binds: ["param"] }) }),
   let: syntax.node("let", {
-    name: syntax.binder(), value: syntax.child(), body: syntax.scopedChild({ binds: ["name"] }),
+    name: syntax.binder(),
+    value: syntax.child(),
+    body: syntax.scopedChild({ binds: ["name"] }),
   }),
   pair: syntax.node("pair", { left: syntax.child(), right: syntax.child() }),
   record: syntax.node("record", { fields: syntax.entries(), note: syntax.optionalData<string>() }),
@@ -37,7 +39,9 @@ type EntryChild = Assert<Equal<(typeof record.fields)[number]["child"], Node>>;
 type Args = Assert<Equal<typeof call.args, readonly Node[]>>;
 type Kinds = Assert<Equal<Node["kind"], "number" | "variable" | "fn" | "let" | "pair" | "record" | "call">>;
 type Mapped = Assert<Equal<ReturnType<typeof mapNumber>, typeof number>>;
-function mapNumber() { return schema.map(number, child => child); }
+function mapNumber() {
+  return schema.map(number, child => child);
+}
 
 schema.map(tree, (child, edge) => {
   type Child = Assert<Equal<typeof child, Node>>;
@@ -77,18 +81,20 @@ syntax.node("bad", { value: syntax.data<string>(), body: syntax.scopedChild({ bi
 syntax.node("bad", { name: syntax.binder(), body: syntax.scopedChild({ binds: ["missing"] }) });
 // @ts-expect-error key and kind must match
 defineSyntax({ other: syntax.node("number", { value: syntax.data<number>() }) });
-// @ts-expect-error direct declarations also check binder selections
-defineSyntax({ bad: { kind: "bad", fields: { value: syntax.data<string>(), body: syntax.scopedChild({ binds: ["value"] }) } } });
+defineSyntax({
+  // @ts-expect-error direct declarations also check binder selections
+  bad: { kind: "bad", fields: { value: syntax.data<string>(), body: syntax.scopedChild({ binds: ["value"] }) } },
+});
 const other = defineSyntax({ text: syntax.node("text", { value: syntax.data<string>() }) });
 // @ts-expect-error selected schema rejects other child variant
 schema.make.fn({ param, body: other.make.text({ value: "x" }) });
 
 const literalSchema = defineSyntax({
-  literal: syntax.node("literal", { value: syntax.data<"yes" | "no">(), info: syntax.data<{ items: number[] }>() }),
+  literal: syntax.node("literal", { value: syntax.data<"yes" | "no">(), info: syntax.data<{ items: number[]; }>() }),
 });
 const literal = literalSchema.make.literal({ value: "yes", info: { items: [1] } });
 type LiteralScalar = Assert<Equal<typeof literal.value, "yes" | "no">>;
-type FrozenData = Assert<Equal<typeof literal.info, { readonly items: readonly number[] }>>;
+type FrozenData = Assert<Equal<typeof literal.info, { readonly items: readonly number[]; }>>;
 // @ts-expect-error unknown scalar literal
 literalSchema.make.literal({ value: "other", info: { items: [] } });
 // @ts-expect-error nested data is immutable

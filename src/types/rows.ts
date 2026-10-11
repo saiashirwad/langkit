@@ -1,26 +1,34 @@
-import { check, fail, type Check } from "../check.ts";
+import { type Check, check, fail } from "../check.ts";
 import { add, assign, pruneLink } from "../inference.ts";
 
 export type Type =
-  | { readonly kind: "number" | "boolean" | "string" }
-  | { readonly kind: "function"; readonly param: Type; readonly result: Type }
-  | { readonly kind: "record"; readonly row: Row }
+  | { readonly kind: "number" | "boolean" | "string"; }
+  | { readonly kind: "function"; readonly param: Type; readonly result: Type; }
+  | { readonly kind: "record"; readonly row: Row; }
   | Variable;
-export type Variable = { readonly kind: "variable"; instance?: Type };
-export type RowVariable = { readonly kind: "row-variable"; readonly lacks: Set<string>; instance?: Row };
-export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null };
+export type Variable = { readonly kind: "variable"; instance?: Type; };
+export type RowVariable = { readonly kind: "row-variable"; readonly lacks: Set<string>; instance?: Row; };
+export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null; };
 export type FreeVariable = Variable | RowVariable;
-export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable> };
+export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable>; };
 
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
 export const string: Type = { kind: "string" };
 export const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
 export const record = (row: Row): Type => ({ kind: "record", row });
-export const row = (fields: ReadonlyMap<string, Type> = new Map(), tail: RowVariable | null = null): Row => ({ fields, tail });
-export const fresh = (): Check<Variable> => check(function* () { return { kind: "variable" }; });
+export const row = (fields: ReadonlyMap<string, Type> = new Map(), tail: RowVariable | null = null): Row => ({
+  fields,
+  tail,
+});
+export const fresh = (): Check<Variable> =>
+  check(function*() {
+    return { kind: "variable" };
+  });
 export const freshRow = (lacks: Iterable<string> = []): Check<RowVariable> =>
-  check(function* () { return { kind: "row-variable", lacks: new Set(lacks) }; });
+  check(function*() {
+    return { kind: "row-variable", lacks: new Set(lacks) };
+  });
 export const prune = (type: Type): Type =>
   pruneLink(type, (value) => value.kind === "variable" ? value : null, (variable) => variable.instance);
 
@@ -42,7 +50,9 @@ export const show = (type: Type): string => {
     if (type.kind === "function") return `(${visit(type.param)} -> ${visit(type.result)})`;
     if (type.kind === "record") {
       const { fields, tail } = flatten(type.row);
-      const labels = [...fields].sort(([a], [b]) => a.localeCompare(b)).map(([name, type]) => `${name}: ${visit(type)}`);
+      const labels = [...fields].sort(([a], [b]) => a.localeCompare(b)).map(([name, type]) =>
+        `${name}: ${visit(type)}`
+      );
       if (tail) {
         if (!rows.has(tail)) rows.set(tail, `r${rows.size || ""}`);
         return `{ ${labels.join(", ")}${labels.length ? " " : ""}| ${rows.get(tail)} }`;
@@ -57,7 +67,9 @@ export const show = (type: Type): string => {
     return names.get(type)!;
   };
   const result = visit(type);
-  const constraints = [...rows].filter(([variable]) => variable.lacks.size).map(([variable, name]) => `${name} lacks ${[...variable.lacks].sort().join(", ")}`);
+  const constraints = [...rows].filter(([variable]) => variable.lacks.size).map(([variable, name]) =>
+    `${name} lacks ${[...variable.lacks].sort().join(", ")}`
+  );
   return result + (constraints.length ? ` where ${constraints.join("; ")}` : "");
 };
 
@@ -77,7 +89,7 @@ export const free = (input: Type, found = new Set<FreeVariable>()): Set<FreeVari
 };
 
 export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
-  check(function* () {
+  check(function*() {
     const { fields, tail } = flatten(input);
     for (const label of labels) {
       if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
@@ -86,7 +98,7 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
   }).atomic();
 
 const constrain = (input: Type): Check<void> =>
-  check(function* () {
+  check(function*() {
     const type = prune(input);
     if (type.kind === "function") {
       yield* constrain(type.param);
@@ -100,19 +112,19 @@ const constrain = (input: Type): Check<void> =>
   });
 
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
-  check(function* () {
+  check(function*() {
     const target = flatten(input);
     if (!target.fields.size && target.tail === variable) return;
     const variables = new Set<FreeVariable>();
     freeRow(target, variables);
     if (variables.has(variable)) return yield* fail("Infinite row");
     yield* exclude(target, variable.lacks);
-    if (target.tail) for (const label of target.fields.keys()) yield* add(target.tail.lacks, label);
+    if (target.tail) { for (const label of target.fields.keys()) yield* add(target.tail.lacks, label); }
     yield* assign(variable, "instance", target);
   }).atomic();
 
 export const unifyRows = (left: Row, right: Row): Check<void> =>
-  check(function* () {
+  check(function*() {
     yield* constrain(record(left));
     yield* constrain(record(right));
     let a = flatten(left);
@@ -130,8 +142,9 @@ export const unifyRows = (left: Row, right: Row): Check<void> =>
     }
     const onlyA = new Map([...a.fields].filter(([label]) => !b.fields.has(label)));
     const onlyB = new Map([...b.fields].filter(([label]) => !a.fields.has(label)));
-    if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size))
+    if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size)) {
       return yield* fail(`Missing field: ${[...(!a.tail ? onlyB : onlyA).keys()].join(", ")}`);
+    }
     if (a.tail === b.tail) {
       if (onlyA.size || onlyB.size) return yield* fail("Infinite row: incompatible fields share a tail");
       return;
@@ -145,7 +158,7 @@ export const unifyRows = (left: Row, right: Row): Check<void> =>
   }).atomic();
 
 export const unify = (left: Type, right: Type): Check<void> =>
-  check(function* () {
+  check(function*() {
     yield* constrain(left);
     yield* constrain(right);
     const a = prune(left);
@@ -164,7 +177,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> =>
-  check(function* () {
+  check(function*() {
     yield* constrain(type);
     const variables = free(type);
     for (const scheme of environment) {
@@ -176,7 +189,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Sch
   }).atomic();
 
 export const instantiate = (scheme: Scheme): Check<Type> =>
-  check(function* () {
+  check(function*() {
     const replacements = new Map<Variable, Variable>();
     const rows = new Map<RowVariable, RowVariable>();
     const visitRow = (input: Row): Row => {

@@ -1,6 +1,6 @@
-export type Span = { readonly start: number; readonly end: number };
+export type Span = { readonly start: number; readonly end: number; };
 
-export type SourceLocation = { readonly uri: string; readonly span: Span };
+export type SourceLocation = { readonly uri: string; readonly span: Span; };
 
 export type RelatedDiagnostic = {
   readonly location: SourceLocation;
@@ -28,7 +28,8 @@ export const withDocument = (diagnostic: Diagnostic, uri: string): Diagnostic =>
 };
 
 export const withLocation = (diagnostic: Diagnostic, location: SourceLocation): Diagnostic => {
-  const origin = diagnostic.origin ?? diagnostic.location ?? (diagnostic.span ? { uri: location.uri, span: diagnostic.span } : undefined);
+  const origin = diagnostic.origin ?? diagnostic.location
+    ?? (diagnostic.span ? { uri: location.uri, span: diagnostic.span } : undefined);
   return origin ? { ...diagnostic, origin, location } : { ...diagnostic, location };
 };
 

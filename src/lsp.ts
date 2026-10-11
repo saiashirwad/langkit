@@ -1,29 +1,22 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { TextDocument } from "vscode-languageserver-textdocument";
 import {
   createConnection,
   DiagnosticSeverity,
   MarkupKind,
   PositionEncodingKind,
+  type Range,
   TextDocuments,
   TextDocumentSyncKind,
-  type Range,
 } from "vscode-languageserver/node";
-import { TextDocument } from "vscode-languageserver-textdocument";
-import {
-  definitionAt,
-  semanticTokens,
-  tokenKinds,
-  typeAt,
-  type Analysis,
-  type Token,
-} from "./analysis.ts";
+import { type Analysis, definitionAt, semanticTokens, type Token, tokenKinds, typeAt } from "./analysis.ts";
 import type { SourceLocation, Span } from "./diagnostic.ts";
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 
 /** LSP tokens cannot cross line endings; lengths and columns are UTF-16. */
 export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): number[] => {
   const source = document.getText();
-  const parts: { line: number; character: number; length: number; type: number }[] = [];
+  const parts: { line: number; character: number; length: number; type: number; }[] = [];
   for (const token of tokens) {
     const start = Math.max(0, Math.min(source.length, token.span.start));
     const end = Math.max(start, Math.min(source.length, token.span.end));
@@ -132,11 +125,12 @@ export const serve = <T>(
       severity: DiagnosticSeverity;
       source: string;
       message: string;
-      relatedInformation?: { location: { uri: string; range: Range }; message: string }[];
+      relatedInformation?: { location: { uri: string; range: Range; }; message: string; }[];
     };
     const diagnostics = new Map<string, RoutedDiagnostic[]>();
     for (const error of analysis.diagnostics) {
-      const location = error.location ?? error.origin ?? (error.span ? { uri: document.uri, span: error.span } : undefined);
+      const location = error.location ?? error.origin
+        ?? (error.span ? { uri: document.uri, span: error.span } : undefined);
       const target = location ? sourceDocument(analysis, location.uri) : document;
       const uri = target && location ? location.uri : document.uri;
       const localSpan = error.span ?? { start: 0, end: 0 };
@@ -149,13 +143,13 @@ export const serve = <T>(
           : error.message,
         ...(error.related
           ? {
-              relatedInformation: error.related.flatMap(({ location: related, message }) => {
-                const relatedDocument = sourceDocument(analysis, related.uri);
-                return relatedDocument
-                  ? [{ location: { uri: related.uri, range: range(relatedDocument, related.span) }, message }]
-                  : [];
-              }),
-            }
+            relatedInformation: error.related.flatMap(({ location: related, message }) => {
+              const relatedDocument = sourceDocument(analysis, related.uri);
+              return relatedDocument
+                ? [{ location: { uri: related.uri, range: range(relatedDocument, related.span) }, message }]
+                : [];
+            }),
+          }
           : {}),
       };
       const uriDiagnostics = diagnostics.get(uri) ?? [];

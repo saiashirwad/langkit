@@ -37,12 +37,12 @@ The reusable [row theory](../../docs/inference-theories.md) provides ordinary HM
 
 This remains a pure expression language: there is no statement syntax or effect system. `print` is an intrinsic with type `a -> {}`: it prints one value and returns the empty record. Sequence it with `let ignored = print(value) in ...`. The source-defined `id`, `const`, and `compose` are ordinary polymorphic functions, not special typing rules. `const(x)(y)` keeps `x`, but both calls still evaluate their arguments. These names may be shadowed.
 
-| Name | Type | Behavior |
-| --- | --- | --- |
-| `print` | `a -> {}` | Prints one value and returns the empty record. |
-| `id` | `a -> a` | Returns its argument. |
-| `const` | `a -> b -> a` | Keeps the first argument; both arguments are evaluated. |
-| `compose` | `(b -> c) -> (a -> b) -> a -> c` | `compose(f)(g)(x)` computes `f(g(x))`. |
+| Name      | Type                             | Behavior                                                |
+| --------- | -------------------------------- | ------------------------------------------------------- |
+| `print`   | `a -> {}`                        | Prints one value and returns the empty record.          |
+| `id`      | `a -> a`                         | Returns its argument.                                   |
+| `const`   | `a -> b -> a`                    | Keeps the first argument; both arguments are evaluated. |
+| `compose` | `(b -> c) -> (a -> b) -> a -> c` | `compose(f)(g)(x)` computes `f(g(x))`.                  |
 
 ## Compile, analyze, and run
 

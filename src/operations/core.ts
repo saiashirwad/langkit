@@ -2,13 +2,23 @@ import type { Binding, Body, OperationFeature, OperationNode, OperationValue, Op
 import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
 import { defineDialect } from "./dialect.ts";
 
-type Literal<T> = OperationNode & { readonly kind: "literal"; readonly value: number | boolean | string };
-type ReferenceNode<T> = OperationNode & { readonly kind: "ref"; readonly binding: Binding<T> };
-type Binary<T> = OperationNode & { readonly kind: "binary"; readonly op: Operator; readonly left: Value<T>; readonly right: Value<T> };
-type Call<T> = OperationNode & { readonly kind: "call"; readonly fn: Value<T>; readonly arg: Value<T> };
-type FunctionNode<T> = OperationNode & { readonly kind: "fn"; readonly param: Binding<T>; readonly body: Body<T> };
-type Conditional<T> = OperationNode & { readonly kind: "if"; readonly cond: Value<T>; readonly then: Body<T>; readonly else: Body<T> };
-type Block<T> = OperationNode & { readonly kind: "block"; readonly body: Body<T> };
+type Literal<T> = OperationNode & { readonly kind: "literal"; readonly value: number | boolean | string; };
+type ReferenceNode<T> = OperationNode & { readonly kind: "ref"; readonly binding: Binding<T>; };
+type Binary<T> = OperationNode & {
+  readonly kind: "binary";
+  readonly op: Operator;
+  readonly left: Value<T>;
+  readonly right: Value<T>;
+};
+type Call<T> = OperationNode & { readonly kind: "call"; readonly fn: Value<T>; readonly arg: Value<T>; };
+type FunctionNode<T> = OperationNode & { readonly kind: "fn"; readonly param: Binding<T>; readonly body: Body<T>; };
+type Conditional<T> = OperationNode & {
+  readonly kind: "if";
+  readonly cond: Value<T>;
+  readonly then: Body<T>;
+  readonly else: Body<T>;
+};
+type Block<T> = OperationNode & { readonly kind: "block"; readonly body: Body<T>; };
 
 export type CoreMethods<T> = {
   literal(type: T, value: number | boolean | string): OperationValue<T, Literal<T>>;
@@ -29,22 +39,34 @@ export type CoreDescriptors<T> = {
   readonly conditional: OperationDescriptor<T, Conditional<T>>;
   readonly block: OperationDescriptor<T, Block<T>>;
 };
-export type CoreFeature<T> = OperationFeature<T, CoreMethods<T>, CoreDescriptors<T>> & { readonly functionId: symbol; readonly refId: symbol };
+export type CoreFeature<T> = OperationFeature<T, CoreMethods<T>, CoreDescriptors<T>> & {
+  readonly functionId: symbol;
+  readonly refId: symbol;
+};
 
 export const coreOperations = <T>(): CoreFeature<T> => {
   const literal = defineOperation<T, Literal<T>>("literal", {
-    children: () => [], scopedBodies: () => [], references: () => [], map: (node) => node,
+    children: () => [],
+    scopedBodies: () => [],
+    references: () => [],
+    map: (node) => node,
   });
   const ref = defineOperation<T, ReferenceNode<T>>("ref", {
-    children: () => [], scopedBodies: () => [], references: (node) => [node.binding],
+    children: () => [],
+    scopedBodies: () => [],
+    references: (node) => [node.binding],
     map: (node, _value, _body, binding) => ({ ...node, binding: binding(node.binding) }),
   });
   const binary = defineOperation<T, Binary<T>>("binary", {
-    children: (node) => [node.left, node.right], scopedBodies: () => [], references: () => [],
+    children: (node) => [node.left, node.right],
+    scopedBodies: () => [],
+    references: () => [],
     map: (node, value) => ({ ...node, left: value(node.left), right: value(node.right) }),
   });
   const call = defineOperation<T, Call<T>>("call", {
-    children: (node) => [node.fn, node.arg], scopedBodies: () => [], references: () => [],
+    children: (node) => [node.fn, node.arg],
+    scopedBodies: () => [],
+    references: () => [],
     map: (node, value) => ({ ...node, fn: value(node.fn), arg: value(node.arg) }),
   });
   const fn = defineOperation<T, FunctionNode<T>>("fn", {
@@ -60,7 +82,9 @@ export const coreOperations = <T>(): CoreFeature<T> => {
     map: (node, value, body) => ({ ...node, cond: value(node.cond), then: body(node.then), else: body(node.else) }),
   });
   const block = defineOperation<T, Block<T>>("block", {
-    children: () => [], scopedBodies: (node) => [{ body: node.body, bindings: [] }], references: () => [],
+    children: () => [],
+    scopedBodies: (node) => [{ body: node.body, bindings: [] }],
+    references: () => [],
     map: (node, _value, body) => ({ ...node, body: body(node.body) }),
   });
   return {

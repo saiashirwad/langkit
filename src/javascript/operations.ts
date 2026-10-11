@@ -1,7 +1,14 @@
 import type { OperationNode } from "../ir.ts";
 import type { JavaScriptContext } from "../javascript.ts";
-import { defineBackend, type BackendHandlers, type CompleteBackendHandlers, type DescriptorRecord, type Dialect, type DialectType } from "../operations/dialect.ts";
 import type { OperationDescriptor, OperationHandler } from "../operations/descriptor.ts";
+import {
+  type BackendHandlers,
+  type CompleteBackendHandlers,
+  defineBackend,
+  type DescriptorRecord,
+  type Dialect,
+  type DialectType,
+} from "../operations/dialect.ts";
 
 export type JavaScriptHandler<T, Node extends OperationNode, Context> = {
   readonly operationId: symbol;
@@ -19,10 +26,14 @@ export const defineJavaScriptHandler = <T, Node extends OperationNode, Context>(
   emit: OperationHandler<Node, Context, string>,
 ): JavaScriptHandler<T, Node, Context> => ({ operationId: operation.id, kind: operation.kind, emit });
 
-export const defineJavaScriptBackend = <const D extends DescriptorRecord, const H extends BackendHandlers<NoInfer<D>, JavaScriptContext<DialectType<D>>, string>>(
+export const defineJavaScriptBackend = <
+  const D extends DescriptorRecord,
+  const H extends BackendHandlers<NoInfer<D>, JavaScriptContext<DialectType<D>>, string>,
+>(
   dialect: Dialect<D>,
   handlers: H & CompleteBackendHandlers<NoInfer<D>, H>,
-): readonly DispatcherHandler<JavaScriptContext<DialectType<D>>>[] => defineBackend<JavaScriptContext<DialectType<D>>>()<D, H>(dialect, handlers);
+): readonly DispatcherHandler<JavaScriptContext<DialectType<D>>>[] =>
+  defineBackend<JavaScriptContext<DialectType<D>>>()<D, H>(dialect, handlers);
 
 export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
   handler: JavaScriptHandler<T, Node, Context>,

@@ -1,17 +1,17 @@
+import { type Check, check, fail } from "../check.ts";
 import { add, assign, pruneLink } from "../inference.ts";
-import { check, fail, type Check } from "../check.ts";
 
 export type Type =
-  | { readonly kind: "number" | "boolean" | "string" }
-  | { readonly kind: "function"; readonly param: Type; readonly result: Type }
-  | { readonly kind: "record"; readonly row: Row }
-  | { readonly kind: "data"; readonly constructor: TypeConstructor; readonly args: readonly Type[] }
-  | { readonly kind: "forall"; readonly variables: readonly Generic[]; readonly body: Type }
-  | { readonly kind: "skolem"; readonly name: string; readonly id: symbol; readonly level: number }
+  | { readonly kind: "number" | "boolean" | "string"; }
+  | { readonly kind: "function"; readonly param: Type; readonly result: Type; }
+  | { readonly kind: "record"; readonly row: Row; }
+  | { readonly kind: "data"; readonly constructor: TypeConstructor; readonly args: readonly Type[]; }
+  | { readonly kind: "forall"; readonly variables: readonly Generic[]; readonly body: Type; }
+  | { readonly kind: "skolem"; readonly name: string; readonly id: symbol; readonly level: number; }
   | Generic
   | Variable;
 
-export type Generic = { readonly kind: "generic"; readonly name: string; readonly id: symbol };
+export type Generic = { readonly kind: "generic"; readonly name: string; readonly id: symbol; };
 
 export type TypeConstructor = {
   readonly id: symbol;
@@ -22,8 +22,9 @@ export type TypeConstructor = {
 export const generic = (name: string): Generic => ({ kind: "generic", name, id: Symbol(name) });
 
 export const data = (constructor: TypeConstructor, args: readonly Type[]): Type => {
-  if (constructor.arity !== args.length)
+  if (constructor.arity !== args.length) {
     throw new Error(`Type ${constructor.name} expects ${constructor.arity} arguments`);
+  }
   return { kind: "data", constructor, args };
 };
 
@@ -33,7 +34,7 @@ export const forall = (variables: readonly Generic[], body: Type): Type => ({
   body,
 });
 
-export type Variable = { readonly kind: "variable"; level: number; instance?: Type };
+export type Variable = { readonly kind: "variable"; level: number; instance?: Type; };
 
 export type RowVariable = {
   readonly kind: "row-variable";
@@ -42,11 +43,11 @@ export type RowVariable = {
   instance?: Row;
 };
 
-export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null };
+export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null; };
 
 export type FreeVariable = Variable | RowVariable;
 
-export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable> };
+export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable>; };
 
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
@@ -62,13 +63,16 @@ export const row = (
 ): Row => ({ fields, tail });
 
 export const fresh = (level = 0): Check<Variable> =>
-  check(function* () { return { kind: "variable" as const, level }; });
+  check(function*() {
+    return { kind: "variable" as const, level };
+  });
 
 export const freshRow = (lacks: Iterable<string> = [], level = 0): Check<RowVariable> =>
-  check(function* () { return { level, kind: "row-variable" as const, lacks: new Set(lacks) }; });
+  check(function*() {
+    return { level, kind: "row-variable" as const, lacks: new Set(lacks) };
+  });
 
-const typeVariable = (value: Type): Variable | null =>
-  value.kind === "variable" ? value : null;
+const typeVariable = (value: Type): Variable | null => value.kind === "variable" ? value : null;
 const typeInstance = (variable: Variable): Type | undefined => variable.instance;
 
 export const prune = (type: Type): Type => pruneLink(type, typeVariable, typeInstance);
@@ -101,12 +105,14 @@ export const show = (type: Type): string => {
     }
     if (type.kind === "generic") return type.name;
     if (type.kind === "skolem") return `^${type.name}`;
-    if (type.kind === "forall")
+    if (type.kind === "forall") {
       return `(forall ${type.variables.map((v) => v.name).join(" ")}. ${visit(type.body)})`;
-    if (type.kind === "data")
+    }
+    if (type.kind === "data") {
       return (
         type.constructor.name + (type.args.length ? `(${type.args.map(visit).join(", ")})` : "")
       );
+    }
     if (type.kind !== "variable") return type.kind;
     if (!names.has(type)) {
       const index = names.size;
@@ -137,13 +143,13 @@ export const free = (type: Type, found = new Set<FreeVariable>()): Set<FreeVaria
     free(type.param, found);
     free(type.result, found);
   } else if (type.kind === "record") freeRow(type.row, found);
-  else if (type.kind === "data") for (const arg of type.args) free(arg, found);
+  else if (type.kind === "data") { for (const arg of type.args) free(arg, found); }
   else if (type.kind === "forall") free(type.body, found);
   return found;
 };
 
 export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
-  check(function* () {
+  check(function*() {
     const { fields, tail } = flatten(input);
     for (const label of labels) {
       if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
@@ -152,7 +158,7 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
   }).atomic();
 
 const constrain = (input: Type): Check<void> =>
-  check(function* () {
+  check(function*() {
     const type = prune(input);
     if (type.kind === "function") {
       yield* constrain(type.param);
@@ -168,7 +174,7 @@ const constrain = (input: Type): Check<void> =>
   });
 
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
-  check(function* () {
+  check(function*() {
     const target = flatten(input);
     if (!target.fields.size && target.tail === variable) return;
     const variables = new Set<FreeVariable>();
@@ -176,12 +182,12 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (variables.has(variable)) return yield* fail("Infinite row");
     yield* lower(record(target), variable.level);
     yield* exclude(target, variable.lacks);
-    if (target.tail) for (const label of target.fields.keys()) yield* add(target.tail.lacks, label);
+    if (target.tail) { for (const label of target.fields.keys()) yield* add(target.tail.lacks, label); }
     yield* assign(variable, "instance", target);
   }).atomic();
 
 const unifyRows = (left: Row, right: Row): Check<void> =>
-  check(function* () {
+  check(function*() {
     let a = flatten(left);
     let b = flatten(right);
     const unified = new Set<string>();
@@ -197,11 +203,13 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
     }
     const onlyA = new Map([...a.fields].filter(([label]) => !b.fields.has(label)));
     const onlyB = new Map([...b.fields].filter(([label]) => !a.fields.has(label)));
-    if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size))
+    if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size)) {
       return yield* fail(`Missing field: ${[...(!a.tail ? onlyB : onlyA).keys()].join(", ")}`);
+    }
     if (a.tail === b.tail) {
-      if (onlyA.size || onlyB.size)
+      if (onlyA.size || onlyB.size) {
         return yield* fail("Infinite row: incompatible fields share a tail");
+      }
       return;
     }
     if (a.tail && b.tail) {
@@ -213,7 +221,7 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
   }).atomic();
 
 export const unify = (left: Type, right: Type): Check<void> =>
-  check(function* () {
+  check(function*() {
     yield* constrain(left);
     yield* constrain(right);
     const a = prune(left);
@@ -221,10 +229,11 @@ export const unify = (left: Type, right: Type): Check<void> =>
     if (a === b) return;
     if (a.kind === "variable") {
       if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-      if (b.kind === "forall")
+      if (b.kind === "forall") {
         return yield* fail(
           "Cannot infer an impredicative type; add an explicit polymorphic annotation",
         );
+      }
       yield* lower(b, a.level);
       yield* assign(a, "instance", b);
     } else if (b.kind === "variable") yield* unify(b, a);
@@ -235,9 +244,9 @@ export const unify = (left: Type, right: Type): Check<void> =>
     else if (a.kind === "data" && b.kind === "data" && a.constructor.id === b.constructor.id) {
       for (let i = 0; i < a.args.length; i++) yield* unify(a.args[i]!, b.args[i]!);
     } else if (
-      a.kind === "forall" &&
-      b.kind === "forall" &&
-      a.variables.length === b.variables.length
+      a.kind === "forall"
+      && b.kind === "forall"
+      && a.variables.length === b.variables.length
     ) {
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
       const witnesses = a.variables.map((v) => skolem(v.name, level));
@@ -247,14 +256,15 @@ export const unify = (left: Type, right: Type): Check<void> =>
       );
     } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
     else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
-    else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind))
+    else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind)) {
       return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
+    }
   }).atomic();
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
 export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> =>
-  check(function* () {
+  check(function*() {
     yield* constrain(type);
     const variables = free(type);
     for (const scheme of environment) {
@@ -266,7 +276,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Sch
   }).atomic();
 
 export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
-  check(function* () {
+  check(function*() {
     const replacements = new Map<Variable, Variable>();
     const rows = new Map<RowVariable, RowVariable>();
     const visitRow = (input: Row): Row => {
@@ -292,7 +302,7 @@ export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
   });
 
 const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set()): Check<void> =>
-  check(function* () {
+  check(function*() {
     type = prune(type);
     switch (type.kind) {
       case "variable":
@@ -344,7 +354,6 @@ const maxLevel = (type: Type): number => {
   }
 };
 
-
 export const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type => {
   type = prune(type);
   switch (type.kind) {
@@ -377,7 +386,7 @@ export const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>)
 };
 
 export const instantiateForall = (input: Type, level = 0): Check<Type> =>
-  check(function* () {
+  check(function*() {
     let type = prune(input);
     while (type.kind === "forall") {
       const replacements = new Map<Generic, Type>();
@@ -395,7 +404,7 @@ const skolem = (name: string, level: number): Type => ({
 });
 
 export const skolemize = (input: Type, level: number): Check<Type> =>
-  check(function* () {
+  check(function*() {
     let type = prune(input);
     while (type.kind === "forall") {
       type = prune(
@@ -408,9 +417,8 @@ export const skolemize = (input: Type, level: number): Check<Type> =>
     return type;
   });
 
-
 export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
-  check(function* () {
+  check(function*() {
     const target = prune(expected);
     if (target.kind === "forall") {
       yield* subsume(yield* instantiateForall(actual, level + 1), yield* skolemize(target, level + 1), level + 1);
@@ -426,8 +434,8 @@ export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
 export const expectFunction = (
   input: Type,
   level = 0,
-): Check<Extract<Type, { kind: "function" }>> =>
-  check(function* () {
+): Check<Extract<Type, { kind: "function"; }>> =>
+  check(function*() {
     const type = prune(yield* instantiateForall(input, level));
     if (type.kind === "function") return type;
     const param = yield* fresh(level);
@@ -441,7 +449,7 @@ export const withRigidScope = <A>(
   level: number,
   body: (rigid: Type, level: number) => Check<A>,
 ): Check<A> =>
-  check(function* () {
+  check(function*() {
     const inner = level + 1;
     return yield* body(yield* skolemize(expected, inner), inner);
   }).atomic();

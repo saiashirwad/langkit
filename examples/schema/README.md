@@ -35,14 +35,14 @@ Helpers are source-defined unary functions of the form `let name = fn(parameter)
 
 [main.schema](./main.schema) is a publishing-platform example with **190 models and 53 enums**, across these areas:
 
-| Area | Models | Enums |
-| --- | ---: | ---: |
-| Publishing | 19 | 7 |
-| Editorial | 43 | 8 |
-| Community | 43 | 13 |
-| Commerce | 43 | 17 |
-| Operations | 42 | 8 |
-| **Total** | **190** | **53** |
+| Area       |  Models |  Enums |
+| ---------- | ------: | -----: |
+| Publishing |      19 |      7 |
+| Editorial  |      43 |      8 |
+| Community  |      43 |     13 |
+| Commerce   |      43 |     17 |
+| Operations |      42 |      8 |
+| **Total**  | **190** | **53** |
 
 The large source comments identify application-level rules, such as requiring related records to belong to the same publication or preventing reply cycles. Those invariants are not silently supplied by the schema compiler.
 

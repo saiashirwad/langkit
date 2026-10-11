@@ -1,12 +1,12 @@
 // Compile-time contracts, checked by pnpm typecheck.
-import { check, get, pure, scoped, within, type Check } from "langkit";
-import { create, type Body, type Declaration, type Reference, type Value } from "langkit/ir";
+import { type Check, check, get, pure, scoped, within } from "langkit";
+import { type Body, create, type Declaration, type Reference, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { records } from "langkit/operations/records";
 
 const number = scoped(0);
 const narrow = scoped<0>(0);
-const computation: Check<string> = check(function* () {
+const computation: Check<string> = check(function*() {
   const value: number = yield* get(number);
   return String(value);
 });
@@ -50,7 +50,7 @@ const pureValue = pureCode.literal("number", 42);
 function* declareAnswer(): Generator<Declaration<"number">, Reference<"number">, unknown> {
   return yield* pureCode.declare("answer", pureValue);
 }
-const pureBody: Body<"number"> = pureCode.body(function* () {
+const pureBody: Body<"number"> = pureCode.body(function*() {
   return yield* declareAnswer();
 });
 void pureBody;
@@ -66,17 +66,19 @@ const typedFeature: Value<"number" | "record"> = codeBuilder.field(
   codeBuilder.record("record", [{ name: "answer", value: codeBuilder.literal("number", 42) }]),
   "answer",
 );
-const rawDeclaration: Generator<Declaration<"number" | "record">, Reference<"number" | "record">, unknown> =
-  codeBuilder.declare("answer", codeBuilder.literal("number", 42));
-const mixedBody: Check<Body<"number" | "record">> = codeBuilder.body(function* () {
+const rawDeclaration: Generator<Declaration<"number" | "record">, Reference<"number" | "record">, unknown> = codeBuilder
+  .declare("answer", codeBuilder.literal("number", 42));
+const mixedBody: Check<Body<"number" | "record">> = codeBuilder.body(function*() {
   const ref = yield* codeBuilder.declare("answer", codeBuilder.literal("number", 42));
-  const loaded = yield* check(function* () { return yield* pure(ref); });
+  const loaded = yield* check(function*() {
+    return yield* pure(ref);
+  });
   return loaded;
 });
-const checkedComputation: Check<Value<"number" | "record">> = codeBuilder.check(function* () {
+const checkedComputation: Check<Value<"number" | "record">> = codeBuilder.check(function*() {
   return typedReference;
 });
-const checkedScope: Check<Value<"number" | "record">> = codeBuilder.scope(function* () {
+const checkedScope: Check<Value<"number" | "record">> = codeBuilder.scope(function*() {
   return typedFeature;
 });
 void rawDeclaration;

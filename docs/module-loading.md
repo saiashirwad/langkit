@@ -7,8 +7,8 @@ import { loadModules } from "langkit/modules";
 import { parseImports } from "langkit/modules/imports";
 
 const graph = loadModules(source, { uri, read }, {
-	extension: "rows",
-	imports: parseImports,
+  extension: "rows",
+  imports: parseImports,
 });
 ```
 
@@ -34,8 +34,8 @@ Modules appear in dependencies-first order. Diamond imports share one module ide
 
 ## Verification
 
-`tests/modules.test.ts` covers the optional prefix grammar, a separate `use("path")` grammar, invalid directive spans, UTF-16 masking, immutable snapshots, local-file policy, cycles, diamonds, and diagnostic routing. Example-module and LSP tests cover imported definitions and unsaved dependency reads.
+`tests/modules.test.ts` covers a separate `use("path")` grammar, invalid directive spans, UTF-16 masking, immutable snapshots, diagnostic routing, and parser exceptions. `tests/example-modules.test.ts` and `tests/strict-modules.test.ts` compile real imported programs and check imported definitions and source origins.
 
 ```sh
-node --test tests/modules.test.ts tests/example-modules.test.ts tests/strict-modules.test.ts tests/lsp.test.ts
+node --test tests/modules.test.ts tests/example-modules.test.ts tests/strict-modules.test.ts
 ```

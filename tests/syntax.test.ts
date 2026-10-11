@@ -8,10 +8,18 @@ function language() {
     number: syntax.node("number", { value: syntax.data<number>() }),
     variable: syntax.node("variable", { name: syntax.data<string>() }),
     fn: syntax.node("fn", { param: syntax.binder(), body: syntax.scopedChild({ binds: ["param"] }) }),
-    let: syntax.node("let", { name: syntax.binder(), value: syntax.child(), body: syntax.scopedChild({ binds: ["name"] }) }),
-    rec: syntax.node("rec", { name: syntax.binder(), value: syntax.scopedChild({ binds: ["name"] }), body: syntax.scopedChild({ binds: ["name"] }) }),
+    let: syntax.node("let", {
+      name: syntax.binder(),
+      value: syntax.child(),
+      body: syntax.scopedChild({ binds: ["name"] }),
+    }),
+    rec: syntax.node("rec", {
+      name: syntax.binder(),
+      value: syntax.scopedChild({ binds: ["name"] }),
+      body: syntax.scopedChild({ binds: ["name"] }),
+    }),
     pair: syntax.node("pair", { left: syntax.child(), right: syntax.child() }),
-    record: syntax.node("record", { fields: syntax.entries(), note: syntax.optionalData<{ tags: string[] }>() }),
+    record: syntax.node("record", { fields: syntax.entries(), note: syntax.optionalData<{ tags: string[]; }>() }),
     call: syntax.node("call", { fn: syntax.child(), args: syntax.children() }),
   });
 }
@@ -29,8 +37,15 @@ test("one declaration builds recursive function, let, record and pair syntax", (
   const visits: [string, string[]][] = [];
   schema.walkScoped(root, (node, { scope }) => visits.push([node.kind, scope.map(binder => binder.name)]));
   assert.deepEqual(visits, [
-    ["let", []], ["fn", []], ["variable", ["x"]], ["pair", ["id"]],
-    ["record", ["id"]], ["call", ["id"]], ["variable", ["id"]], ["number", ["id"]], ["number", ["id"]],
+    ["let", []],
+    ["fn", []],
+    ["variable", ["x"]],
+    ["pair", ["id"]],
+    ["record", ["id"]],
+    ["call", ["id"]],
+    ["variable", ["id"]],
+    ["number", ["id"]],
+    ["number", ["id"]],
   ]);
   assert.notEqual(number.id, make.number({ value: 1 }).id);
   assert(Object.isFrozen(root));
@@ -86,7 +101,10 @@ test("immutable mapping preserves kind, identity, spans, labels, binders and sou
   assert.equal(mapped.body, replacement);
   assert.equal(fn.body, first);
   assert.equal(schema.map(fn, node => node), fn);
-  const record = schema.make.record({ fields: [{ label: "x", child: first }, { label: "x", child: first }], note: { tags: ["same"] } });
+  const record = schema.make.record({
+    fields: [{ label: "x", child: first }, { label: "x", child: first }],
+    note: { tags: ["same"] },
+  });
   const mappedRecord = schema.map(record, () => replacement);
   assert.deepEqual(mappedRecord.fields.map(entry => entry.label), ["x", "x"]);
   assert(mappedRecord.fields.every(entry => entry.child === replacement));
@@ -147,15 +165,39 @@ test("dynamic configuration validates kinds, descriptors, binds and reserved fie
   const dynamic = defineSyntax as (declarations: SyntaxDeclarations) => unknown;
   assert.throws(() => dynamic({ a: { kind: "a", fields: {} }, b: { kind: "a", fields: {} } }), /Duplicate/);
   assert.throws(() => dynamic({ a: { kind: "b", fields: {} } }), /match/);
-  assert.throws(() => dynamic({ a: { kind: "a", fields: { value: syntax.data<number>(), body: syntax.scopedChild({ binds: ["value"] }) } } }), /non-binder/);
-  assert.throws(() => dynamic({ a: { kind: "a", fields: { body: syntax.scopedChild({ binds: ["missing"] }) } } }), /non-binder/);
-  assert.throws(() => dynamic({ a: { kind: "a", fields: { name: syntax.binder(), body: syntax.scopedChild({ binds: ["name", "name"] }) } } }), /Invalid binds/);
+  assert.throws(
+    () =>
+      dynamic({
+        a: { kind: "a", fields: { value: syntax.data<number>(), body: syntax.scopedChild({ binds: ["value"] }) } },
+      }),
+    /non-binder/,
+  );
+  assert.throws(
+    () => dynamic({ a: { kind: "a", fields: { body: syntax.scopedChild({ binds: ["missing"] }) } } }),
+    /non-binder/,
+  );
+  assert.throws(
+    () =>
+      dynamic({
+        a: { kind: "a", fields: { name: syntax.binder(), body: syntax.scopedChild({ binds: ["name", "name"] }) } },
+      }),
+    /Invalid binds/,
+  );
   assert.throws(() => dynamic({ a: { kind: "a", fields: { id: syntax.data<number>() } } }), /Reserved/);
-  assert.throws(() => dynamic(JSON.parse('{"a":{"kind":"a","fields":{"body":{"tag":"unknown"}}}}')), /Invalid syntax field/);
-  assert.throws(() => dynamic(JSON.parse('{"a":{"kind":"a","fields":{"body":{"tag":"child"}}}}')), /Invalid binds/);
-  assert.throws(() => dynamic(JSON.parse('[]')), /declaration record/);
+  assert.throws(
+    () => dynamic(JSON.parse("{\"a\":{\"kind\":\"a\",\"fields\":{\"body\":{\"tag\":\"unknown\"}}}}")),
+    /Invalid syntax field/,
+  );
+  assert.throws(
+    () => dynamic(JSON.parse("{\"a\":{\"kind\":\"a\",\"fields\":{\"body\":{\"tag\":\"child\"}}}}")),
+    /Invalid binds/,
+  );
+  assert.throws(() => dynamic(JSON.parse("[]")), /declaration record/);
   assert.throws(() => dynamic({ [Symbol("kind")]: syntax.node("a", {}) }), /string keys/);
-  assert.throws(() => dynamic({ a: { kind: "a", fields: { [Symbol("field")]: syntax.data<number>() } } }), /string keys/);
+  assert.throws(
+    () => dynamic({ a: { kind: "a", fields: { [Symbol("field")]: syntax.data<number>() } } }),
+    /string keys/,
+  );
 });
 
 test("dynamic construction checks structure, not erased scalar typing semantics", () => {
@@ -171,7 +213,7 @@ test("dynamic construction checks structure, not erased scalar typing semantics"
   const data = defineSyntax({ data: syntax.node("data", { value: syntax.data<unknown>() }) });
   assert.throws(() => data.make.data({ value: new Map() }), /plain immutable/);
   assert.throws(() => data.make.data({ value: () => 1 }), /plain immutable/);
-  const cyclic: { self?: unknown } = {};
+  const cyclic: { self?: unknown; } = {};
   cyclic.self = cyclic;
   assert.throws(() => data.make.data({ value: cyclic }), /Cyclic/);
 });
@@ -179,7 +221,9 @@ test("dynamic construction checks structure, not erased scalar typing semantics"
 test("prototype-like field names are ordinary declared data", () => {
   const schema = defineSyntax({
     object: syntax.node("object", {
-      ["__proto__"]: syntax.data<number>(), constructor: syntax.data<string>(), toString: syntax.child(),
+      ["__proto__"]: syntax.data<number>(),
+      constructor: syntax.data<string>(),
+      toString: syntax.child(),
     }),
     leaf: syntax.node("leaf", {}),
   });
@@ -194,13 +238,20 @@ test("prototype-like field names are ordinary declared data", () => {
 test("scoped lists and labelled entries inherit only annotated binders", () => {
   const schema = defineSyntax({
     group: syntax.node("group", {
-      name: syntax.binder(), unscoped: syntax.child(),
-      children: syntax.scopedChildren({ binds: ["name"] }), entries: syntax.scopedEntries({ binds: ["name"] }),
+      name: syntax.binder(),
+      unscoped: syntax.child(),
+      children: syntax.scopedChildren({ binds: ["name"] }),
+      entries: syntax.scopedEntries({ binds: ["name"] }),
     }),
     leaf: syntax.node("leaf", {}),
   });
   const leaf = schema.make.leaf({});
-  const root = schema.make.group({ name: syntax.binding("g"), unscoped: leaf, children: [leaf], entries: [{ label: "x", child: leaf }] });
+  const root = schema.make.group({
+    name: syntax.binding("g"),
+    unscoped: leaf,
+    children: [leaf],
+    entries: [{ label: "x", child: leaf }],
+  });
   const scopes: string[][] = [];
   schema.walkScoped(root, (_, { scope }) => scopes.push(scope.map(binder => binder.name)));
   assert.deepEqual(scopes, [[], [], ["g"], ["g"]]);

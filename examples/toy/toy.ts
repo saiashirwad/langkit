@@ -1,45 +1,29 @@
+import { bind, type Check, fail, lookup, pure, render, type Result, run, scoped, type Span } from "langkit";
+import { type Analysis, create as createAnalysis, highlight, type TokenRule } from "langkit/analysis";
+import { type Binding, type Body, create, isReference, type Operator, type Program, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
+import { createJavaScriptEmitter } from "langkit/javascript";
+import { coreJavaScript } from "langkit/javascript/core";
 import {
   between,
   choice,
   commit,
   createLexemes,
   notFollowedBy,
+  type Parser,
   parser,
   postfix,
   precedence,
   recursive,
   regex,
-  type Parser,
 } from "langkit/parse";
-import {
-  bind,
-  fail,
-  lookup,
-  pure,
-  render,
-  run,
-  scoped,
-  type Check,
-  type Result,
-  type Span,
-} from "langkit";
-import { create, isReference, type Binding, type Body, type Operator, type Program, type Value } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
-import {
-  create as createAnalysis,
-  highlight,
-  type Analysis,
-  type TokenRule,
-} from "langkit/analysis";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
-import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
+import { runInNewContext } from "node:vm";
 
 export type Type =
-  | { readonly kind: "number" }
-  | { readonly kind: "boolean" }
-  | { readonly kind: "function"; readonly param: Type; readonly result: Type };
+  | { readonly kind: "number"; }
+  | { readonly kind: "boolean"; }
+  | { readonly kind: "function"; readonly param: Type; readonly result: Type; };
 
 const number: Type = { kind: "number" };
 const boolean: Type = { kind: "boolean" };
@@ -55,31 +39,30 @@ const same = (a: Type, b: Type): boolean =>
     : a.kind === b.kind;
 
 type Syntax =
-  | { readonly kind: "number"; readonly value: number }
-  | { readonly kind: "boolean"; readonly value: boolean }
-  | { readonly kind: "name"; readonly name: string }
-  | { readonly kind: "binary"; readonly op: Operator; readonly left: Expr; readonly right: Expr }
+  | { readonly kind: "number"; readonly value: number; }
+  | { readonly kind: "boolean"; readonly value: boolean; }
+  | { readonly kind: "name"; readonly name: string; }
+  | { readonly kind: "binary"; readonly op: Operator; readonly left: Expr; readonly right: Expr; }
   | {
-      readonly kind: "let";
-      readonly name: string;
-      readonly nameSpan: Span;
-      readonly value: Expr;
-      readonly body: Expr;
-    }
+    readonly kind: "let";
+    readonly name: string;
+    readonly nameSpan: Span;
+    readonly value: Expr;
+    readonly body: Expr;
+  }
   | {
-      readonly kind: "fn";
-      readonly param: string;
-      readonly paramSpan: Span;
-      readonly annotation: Type;
-      readonly body: Expr;
-    }
-  | { readonly kind: "call"; readonly fn: Expr; readonly arg: Expr }
-  | { readonly kind: "if"; readonly cond: Expr; readonly then: Expr; readonly else: Expr };
+    readonly kind: "fn";
+    readonly param: string;
+    readonly paramSpan: Span;
+    readonly annotation: Type;
+    readonly body: Expr;
+  }
+  | { readonly kind: "call"; readonly fn: Expr; readonly arg: Expr; }
+  | { readonly kind: "if"; readonly cond: Expr; readonly then: Expr; readonly else: Expr; };
 
-export type Expr = Syntax & { readonly span: Span };
+export type Expr = Syntax & { readonly span: Span; };
 
-const located = (p: Parser<Syntax>): Parser<Expr> =>
-  p.withSpan((node, span) => ({ ...node, span }));
+const located = (p: Parser<Syntax>): Parser<Expr> => p.withSpan((node, span) => ({ ...node, span }));
 
 const words = /[a-zA-Z_]\w*/;
 const digits = /\d+(?:\.\d+)?/;
@@ -114,8 +97,8 @@ const tokens: readonly TokenRule[] = [
       text === "number" || text === "boolean"
         ? "type"
         : reserved.has(text)
-          ? "keyword"
-          : "variable",
+        ? "keyword"
+        : "variable",
   },
   { pattern: digits, kind: "number" },
   { pattern: /==|=>|->|[+\-*/>=]/, kind: "operator" },
@@ -129,12 +112,12 @@ const annotation: Parser<Type> = recursive<Type>((type) =>
       between(symbol("("), symbol(")"), type),
     ),
     [{ associativity: "right", operators: [symbol("->").map(() => fn)] }],
-  ),
+  )
 );
 
 const expression: Parser<Expr> = recursive<Expr>((expr) => {
   const binding = located(
-    parser(function* () {
+    parser(function*() {
       yield* keyword("let");
       yield* commit();
       const id = yield* name;
@@ -146,7 +129,7 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   );
 
   const lambda = located(
-    parser(function* () {
+    parser(function*() {
       yield* keyword("fn");
       yield* commit();
       yield* symbol("(");
@@ -166,7 +149,7 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   );
 
   const conditional = located(
-    parser(function* () {
+    parser(function*() {
       yield* keyword("if");
       yield* commit();
       const cond = yield* expr;
@@ -192,27 +175,25 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   const calls = postfix(
     atom,
     between(symbol("("), symbol(")"), expr).withSpan(
-      (arg, span) =>
-        (callee: Expr): Expr => ({
-          kind: "call",
-          fn: callee,
-          arg,
-          span: { start: callee.span.start, end: span.end },
-        }),
+      (arg, span) => (callee: Expr): Expr => ({
+        kind: "call",
+        fn: callee,
+        arg,
+        span: { start: callee.span.start, end: span.end },
+      }),
     ),
   );
 
   const binary = (op: Operator) => {
     const token = op === "-" ? symbol("-").zipLeft(notFollowedBy(symbol(">"))) : symbol(op);
     return token.map(
-      () =>
-        (left: Expr, right: Expr): Expr => ({
-          kind: "binary",
-          op,
-          left,
-          right,
-          span: { start: left.span.start, end: right.span.end },
-        }),
+      () => (left: Expr, right: Expr): Expr => ({
+        kind: "binary",
+        op,
+        left,
+        right,
+        span: { start: left.span.start, end: right.span.end },
+      }),
     );
   };
 
@@ -238,13 +219,15 @@ const expect = (value: Value<Type>, type: Type): Check<void> =>
     : fail(`Expected ${show(type)}, found ${show(value.type)}`).at(value.span).atomic().recover();
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
-  code.check(function* () {
+  code.check(function*() {
     switch (expr.kind) {
       case "number":
         if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
         return code.literal(number, expr.value);
-      case "boolean": return code.literal(boolean, expr.value);
-      case "name": return code.ref(yield* lookup(env, expr.name));
+      case "boolean":
+        return code.literal(boolean, expr.value);
+      case "name":
+        return code.ref(yield* lookup(env, expr.name));
       case "binary": {
         const left = yield* elaborate(expr.left);
         const right = yield* elaborate(expr.right);
@@ -257,22 +240,27 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         }
         return code.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
       }
-      case "let": return yield* code.scope(function* () {
-        const initial = yield* elaborate(expr.value);
-        const value = yield* code.declare(expr.name, initial);
-        const binding = value.node.binding;
-        yield* facts.define(binding, expr.nameSpan, binding.type.kind === "function" ? "function" : "variable");
-        return yield* bind(env, [[expr.name, binding]], elaborate(expr.body));
-      });
+      case "let":
+        return yield* code.scope(function*() {
+          const initial = yield* elaborate(expr.value);
+          const value = yield* code.declare(expr.name, initial);
+          const binding = value.node.binding;
+          yield* facts.define(binding, expr.nameSpan, binding.type.kind === "function" ? "function" : "variable");
+          return yield* bind(env, [[expr.name, binding]], elaborate(expr.body));
+        });
       case "fn": {
         const param = code.binding(expr.param, expr.annotation);
         yield* facts.define(param, expr.paramSpan, "parameter");
-        const body = yield* code.body(function* () { return yield* bind(env, [[expr.param, param]], elaborate(expr.body)); });
+        const body = yield* code.body(function*() {
+          return yield* bind(env, [[expr.param, param]], elaborate(expr.body));
+        });
         return code.fn(fn(param.type, body.result.type), param, body);
       }
       case "call": {
         const callee = yield* elaborate(expr.fn);
-        if (callee.type.kind !== "function") return yield* fail(`Expected a function, found ${show(callee.type)}`).at(expr.fn.span);
+        if (callee.type.kind !== "function") {
+          return yield* fail(`Expected a function, found ${show(callee.type)}`).at(expr.fn.span);
+        }
         const arg = yield* elaborate(expr.arg);
         yield* expect(arg, callee.type.param);
         return code.call(callee.type.result, callee, arg);
@@ -280,19 +268,27 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       case "if": {
         const cond = yield* elaborate(expr.cond);
         yield* expect(cond, boolean);
-        const then = yield* code.body(function* () { return yield* elaborate(expr.then); });
-        const otherwise = yield* code.body(function* () { return yield* elaborate(expr.else); });
+        const then = yield* code.body(function*() {
+          return yield* elaborate(expr.then);
+        });
+        const otherwise = yield* code.body(function*() {
+          return yield* elaborate(expr.else);
+        });
         yield* expect(otherwise.result, then.result.type);
         return code.conditional(then.result.type, cond, then, otherwise);
       }
     }
-  }).flatMap((value) => code.check(function* () {
-    if (isReference(value, code.coreReferenceId())) yield* facts.reference(value.node.binding, expr.span);
-    yield* facts.typed(value.type, expr.span);
-    return code.at(value, expr.span);
-  })).at(expr.span);
+  }).flatMap((value) =>
+    code.check(function*() {
+      if (isReference(value, code.coreReferenceId())) yield* facts.reference(value.node.binding, expr.span);
+      yield* facts.typed(value.type, expr.span);
+      return code.at(value, expr.span);
+    })
+  ).at(expr.span);
 export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function* () { return yield* elaborate(expr); });
+  code.body(function*() {
+    return yield* elaborate(expr);
+  });
 
 export type Compiled = {
   readonly type: Type;
@@ -305,19 +301,19 @@ const parse = (source: string): Result<Expr> => {
   return parsed.success
     ? parsed
     : {
-        success: false,
-        errors: [{
-          ...parsed.error.diagnostic,
-          message: parsed.error.message,
-          context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-        }],
-      };
+      success: false,
+      errors: [{
+        ...parsed.error.diagnostic,
+        message: parsed.error.message,
+        context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
+      }],
+    };
 };
 
 export const analyze = (source: string): Analysis<Type> => {
   const lexical = highlight(source, tokens);
   const parsed = parse(source);
-  if (!parsed.success)
+  if (!parsed.success) {
     return {
       diagnostics: parsed.errors,
       types: [],
@@ -325,6 +321,7 @@ export const analyze = (source: string): Analysis<Type> => {
       references: [],
       tokens: lexical,
     };
+  }
   return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 

@@ -1,4 +1,4 @@
-import { Check, run, scoped, state, within, type Result, type State } from "./check.ts";
+import { Check, type Result, run, scoped, type State, state, within } from "./check.ts";
 import type { Diagnostic, SourceLocation, Span } from "./diagnostic.ts";
 
 export const tokenKinds = [
@@ -26,9 +26,9 @@ export const tokenKinds = [
 
 export type TokenKind = (typeof tokenKinds)[number];
 
-export type Token = { readonly span: Span; readonly kind: TokenKind };
+export type Token = { readonly span: Span; readonly kind: TokenKind; };
 
-export type Typed<T> = { readonly span: Span; readonly type: T };
+export type Typed<T> = { readonly span: Span; readonly type: T; };
 
 export type Definition<T = unknown> = {
   readonly id: symbol;
@@ -59,7 +59,7 @@ export type DefinitionKind =
   | "constructor"
   | "constant";
 
-export type Reference = { readonly id: symbol; readonly span: Span };
+export type Reference = { readonly id: symbol; readonly span: Span; };
 
 /** Source facts, independent of any IR or editor protocol. Offsets are UTF-16. */
 export type Analysis<T> = {
@@ -86,7 +86,7 @@ export const highlight = (source: string, rules: readonly TokenRule[]): readonly
     pattern: new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y"),
   }));
   const tokens: Token[] = [];
-  for (let offset = 0; offset < source.length; ) {
+  for (let offset = 0; offset < source.length;) {
     let consumed = false;
     for (const rule of scanners) {
       rule.pattern.lastIndex = offset;
@@ -106,7 +106,7 @@ export const highlight = (source: string, rules: readonly TokenRule[]): readonly
 };
 
 type Facts<T> = {
-  types: (Typed<T> & { readonly document: string | undefined })[];
+  types: (Typed<T> & { readonly document: string | undefined; })[];
   definitions: Definition<T>[];
   references: Reference[];
 };
@@ -152,23 +152,25 @@ export const create = <T>() => {
       }),
 
     // Identity comes from the declaration; the use-site type is reported by typed.
-    reference: (binding: { readonly id: symbol }, span: Span): Check<void> =>
+    reference: (binding: { readonly id: symbol; }, span: Span): Check<void> =>
       record((facts) => facts.references.push({ id: binding.id, span })),
 
     collect: <A>(
       body: Check<A>,
       tokens: readonly Token[] = [],
-    ): { result: Result<A>; analysis: Analysis<T> } => {
+    ): { result: Result<A>; analysis: Analysis<T>; } => {
       const facts: Facts<T> = { types: [], definitions: [], references: [] };
       const selected = state(() => facts, checkpoint);
       const result = run(within(collecting, () => selected, body));
-      const types = facts.types.filter((value) => result.success || !result.errors.some((diagnostic) => {
-        const location = diagnostic.location ?? diagnostic.origin;
-        const errorSpan = location?.span ?? diagnostic.span;
-        if (!errorSpan || value.span.start > errorSpan.start || value.span.end < errorSpan.end) return false;
-        if (value.span.start === errorSpan.start && value.span.end === errorSpan.end) return false;
-        return value.document === location?.uri;
-      })).map(({ type, span }) => ({ type, span }));
+      const types = facts.types.filter((value) =>
+        result.success || !result.errors.some((diagnostic) => {
+          const location = diagnostic.location ?? diagnostic.origin;
+          const errorSpan = location?.span ?? diagnostic.span;
+          if (!errorSpan || value.span.start > errorSpan.start || value.span.end < errorSpan.end) return false;
+          if (value.span.start === errorSpan.start && value.span.end === errorSpan.end) return false;
+          return value.document === location?.uri;
+        })
+      ).map(({ type, span }) => ({ type, span }));
       return {
         result,
         analysis: {
@@ -189,8 +191,8 @@ export const typeAt = <T>(analysis: Analysis<T>, offset: number): Typed<T> | und
   let found: Typed<T> | undefined;
   for (const value of analysis.types) {
     if (
-      contains(value.span, offset) &&
-      (!found || value.span.end - value.span.start < found.span.end - found.span.start)
+      contains(value.span, offset)
+      && (!found || value.span.end - value.span.start < found.span.end - found.span.start)
     ) {
       found = value;
     }
@@ -213,8 +215,9 @@ export const semanticTokens = <T>(analysis: Analysis<T>): readonly Token[] => {
   const definitions = new Map(analysis.definitions.map((value) => [value.id, value]));
   const roles = new Map<string, TokenKind>();
   const key = (span: Span) => `${span.start}:${span.end}`;
-  for (const definition of analysis.definitions)
+  for (const definition of analysis.definitions) {
     if (!definition.uri && !definition.location) roles.set(key(definition.span), definition.kind);
+  }
   for (const reference of analysis.references) {
     const definition = definitions.get(reference.id);
     if (definition) roles.set(key(reference.span), definition.kind);

@@ -1,7 +1,7 @@
-import assert from "node:assert/strict";
-import { test } from "node:test";
 import type { Result } from "langkit/check";
 import type { Program, Value } from "langkit/ir";
+import assert from "node:assert/strict";
+import { test } from "node:test";
 import { compile as compileHM } from "../examples/hm/hm.ts";
 import { compile as compileRows } from "../examples/rows/rows.ts";
 
@@ -23,7 +23,7 @@ function initializers<T>(program: Program<T>): readonly Value<T>[] {
   return result;
 }
 
-function checkOrigins<T>(name: string, compile: (source: string) => Result<{ readonly ir: Program<T> }>): void {
+function checkOrigins<T>(name: string, compile: (source: string) => Result<{ readonly ir: Program<T>; }>): void {
   for (const source of ["let x = 1 in x", "let x = (let y = 1 in y) in x"]) {
     test(`${name} retains let-initializer IR origins: ${source}`, () => {
       const compiled = compile(source);

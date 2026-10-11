@@ -16,16 +16,18 @@ This guarantee does not cover arbitrary JavaScript recursion, native generator d
 
 ## Transactions and diagnostics
 
-| Operation | Successful result | Expected failure or exception |
-| --- | --- | --- |
-| `recover(fallback)` | Returns the original successful value | Records an expected diagnostic and executes the fallback. Keeps managed mutations. Does not catch exceptions. |
-| `atomic()` | Commits managed mutations, including successful work with recovered diagnostics | Restores managed state. Does not discard recovered diagnostics. Exceptions propagate. |
-| `attempt(computation)` | Commits only a diagnostically clean success | Restores managed state and discards diagnostics produced inside the attempt. Exceptions propagate. |
-| `choice(...alternatives)` | Commits the first clean successful attempt | Returns the first alternative's failure if every alternative fails. Exceptions abort the choice. |
+| Operation                 | Successful result                                                               | Expected failure or exception                                                                                 |
+| ------------------------- | ------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| `recover(fallback)`       | Returns the original successful value                                           | Records an expected diagnostic and executes the fallback. Keeps managed mutations. Does not catch exceptions. |
+| `atomic()`                | Commits managed mutations, including successful work with recovered diagnostics | Restores managed state. Does not discard recovered diagnostics. Exceptions propagate.                         |
+| `attempt(computation)`    | Commits only a diagnostically clean success                                     | Restores managed state and discards diagnostics produced inside the attempt. Exceptions propagate.            |
+| `choice(...alternatives)` | Commits the first clean successful attempt                                      | Returns the first alternative's failure if every alternative fails. Exceptions abort the choice.              |
 
 An attempt that recovers a diagnostic and later fails reports its earliest recovered diagnostic. Ordered choice is not an overload-resolution or ambiguity-search algorithm.
 
 `run` returns success only when the computation succeeds and no recovered diagnostics remain. A recovered computation can continue collecting facts without becoming eligible for ordinary code generation.
+
+`runDetailed` retains the completed value alongside recovered diagnostics. `diagnostics()` reads the current diagnostic snapshot inside a run. `withDiagnostics` attributes failures throughout a scope, including recovered failures; `mapError` transforms a terminal failure. Scoped transformations are applied once when a custom synchronous primitive returns a failure from an already evaluated child. Mapping provenance remains local to the run.
 
 ## Managed mutation
 
@@ -45,8 +47,8 @@ A `finally` block reached during normal successful execution can yield checks. T
 
 ## Verification
 
-The contracts above are executable in `tests/check.test.ts`, `tests/runtime-depth.test.ts`, `tests/generator-ir.test.ts`, and `tests/core.test.ts`.
+The contracts above are executable in `tests/check.test.ts`, `tests/runtime-depth.test.ts`, `tests/generator-ir.test.ts`, and `tests/diagnostic-mapping.test.ts`.
 
 ```sh
-node --test tests/check.test.ts tests/core.test.ts tests/generator-ir.test.ts tests/runtime-depth.test.ts
+node --test tests/check.test.ts tests/diagnostic-mapping.test.ts tests/generator-ir.test.ts tests/runtime-depth.test.ts
 ```

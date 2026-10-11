@@ -2,26 +2,33 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { run } from "../src/check.ts";
+import { type Body, create, mapBody, type OperationNode, validate, type Value } from "../src/ir.ts";
 import { elaboration } from "../src/ir/check.ts";
-import { create, mapBody, validate, type Body, type OperationNode, type Value } from "../src/ir.ts";
-import { emit, createJavaScriptEmitter, type JavaScriptContext } from "../src/javascript.ts";
+import { createJavaScriptEmitter, emit, type JavaScriptContext } from "../src/javascript.ts";
 import { coreJavaScript } from "../src/javascript/core.ts";
-import { printingJavaScript } from "../src/javascript/printing.ts";
 import { asDispatcherHandler, defineJavaScriptHandler } from "../src/javascript/operations.ts";
+import { printingJavaScript } from "../src/javascript/printing.ts";
 import { defineOperation, traversalOf } from "../src/operations/descriptor.ts";
-import { records } from "../src/operations/records.ts";
 import { printing } from "../src/operations/printing.ts";
+import { records } from "../src/operations/records.ts";
 test("language builders compose explicitly selected feature methods", () => {
   const recordSet = records<string>();
   const language = create<string>().use(recordSet).use(printing<string>());
   const record = language.record("record", [{ name: "n", value: language.literal("number", 1) }]);
   const selected = language.field("number", record, "n");
   assert.equal(selected.operationId, recordSet.operations.find((operation) => operation.kind === "field")?.id);
-  assert.throws(() => create<string>().use({ methods: { program: () => undefined }, descriptors: {}, operations: [] }), /Duplicate language feature method: program/);
+  assert.throws(
+    () => create<string>().use({ methods: { program: () => undefined }, descriptors: {}, operations: [] }),
+    /Duplicate language feature method: program/,
+  );
 });
 
 test("custom operation traversal rejects a binding that escapes its scope", () => {
-  type ScopeNode = OperationNode & { readonly kind: "scope-test"; readonly child: Value<string>; readonly body: Body<string> };
+  type ScopeNode = OperationNode & {
+    readonly kind: "scope-test";
+    readonly child: Value<string>;
+    readonly body: Body<string>;
+  };
   const descriptor = defineOperation<string, ScopeNode>("scope-test", {
     children: (node) => [node.child],
     scopedBodies: (node) => [{ body: node.body, bindings: [] }],
@@ -44,7 +51,7 @@ test("custom operation traversal rejects a binding that escapes its scope", () =
 });
 
 test("custom operation structural validation runs through generic validation", () => {
-  type MetadataNode = OperationNode & { readonly kind: "metadata-test"; readonly entries: readonly string[] };
+  type MetadataNode = OperationNode & { readonly kind: "metadata-test"; readonly entries: readonly string[]; };
   const descriptor = defineOperation<string, MetadataNode>("metadata-test", {
     children: () => [],
     scopedBodies: () => [],
@@ -65,7 +72,7 @@ test("custom operation structural validation runs through generic validation", (
 });
 
 test("custom JavaScript dispatch rejects missing handlers and supports explicit composition", () => {
-  type CustomNode = OperationNode & { readonly kind: "custom-text"; readonly text: string };
+  type CustomNode = OperationNode & { readonly kind: "custom-text"; readonly text: string; };
   const descriptor = defineOperation<string, CustomNode>("custom-text", {
     children: () => [],
     scopedBodies: () => [],
@@ -75,7 +82,11 @@ test("custom JavaScript dispatch rejects missing handlers and supports explicit 
   const value = descriptor.make("string", { kind: "custom-text", text: "custom" });
   const root: Body<string> = { declarations: [], result: value };
   const base = create<string>();
-  const language = base.use({ methods: {}, descriptors: { customText: descriptor }, operations: [traversalOf(descriptor)] });
+  const language = base.use({
+    methods: {},
+    descriptors: { customText: descriptor },
+    operations: [traversalOf(descriptor)],
+  });
   const program = language.program(root);
   assert.throws(() => emit(program), /Missing JavaScript handler for operation: custom-text/);
 
@@ -84,10 +95,14 @@ test("custom JavaScript dispatch rejects missing handlers and supports explicit 
     (node) => JSON.stringify(node.text),
   ));
   assert.throws(() => createJavaScriptEmitter([handler], [handler]), /Duplicate JavaScript handler: custom-text/);
-  const transformed = mapBody(program.body, program.operations, undefined, (original, mapped) =>
-    original.operationId === descriptor.id
-      ? { ...mapped, node: { ...(mapped.node as CustomNode), text: "transformed" } }
-      : mapped,
+  const transformed = mapBody(
+    program.body,
+    program.operations,
+    undefined,
+    (original, mapped) =>
+      original.operationId === descriptor.id
+        ? { ...mapped, node: { ...(mapped.node as CustomNode), text: "transformed" } }
+        : mapped,
   );
   const transformedProgram = { ...program, body: transformed };
   validate(transformedProgram);
@@ -100,10 +115,17 @@ test("composed operations preserve left-to-right evaluation order", () => {
   const num = (value: number) => language.literal("number", value);
   const effect = (label: string, result: Value<string>): Value<string> => {
     const parameter = language.binding("unused", "number");
-    return language.call("number", language.fn("function", parameter, {
-      declarations: [{ binding: language.binding(`printed-${label}`, "unit"), value: language.print("unit", language.literal("string", label)) }],
-      result,
-    }), num(0));
+    return language.call(
+      "number",
+      language.fn("function", parameter, {
+        declarations: [{
+          binding: language.binding(`printed-${label}`, "unit"),
+          value: language.print("unit", language.literal("string", label)),
+        }],
+        result,
+      }),
+      num(0),
+    );
   };
   const root: Body<string> = {
     declarations: [],
@@ -114,7 +136,12 @@ test("composed operations preserve left-to-right evaluation order", () => {
     coreJavaScript(language.coreDescriptors),
     printingJavaScript(printSet.descriptors),
   );
-  assert.equal(runInNewContext(javascript.emit(language.program(root)), { console: { log: (message: string) => log.push(message) } }), 3);
+  assert.equal(
+    runInNewContext(javascript.emit(language.program(root)), {
+      console: { log: (message: string) => log.push(message) },
+    }),
+    3,
+  );
   assert.deepEqual(log, ["left", "right"]);
 });
 
@@ -124,17 +151,28 @@ test("recursive programs carry their core function identity through validation a
   const num = (value: number) => language.literal("number", value);
   const empty = (result: Value<string>): Body<string> => ({ declarations: [], result });
   const code = elaboration(language);
-  const built = run(code.body(function* () {
+  const built = run(code.body(function*() {
     const factorial = language.binding("factorial", "number -> number");
     const n = language.binding("n", "number");
-    const fn = language.fn(factorial.type, n, empty(language.conditional(
-      "number",
-      language.binary("boolean", "==", language.ref(n), num(0)),
-      empty(num(1)),
-      empty(language.binary("number", "*", language.ref(n), language.call(
-        "number", language.ref(factorial), language.binary("number", "-", language.ref(n), num(1)),
-      ))),
-    )));
+    const fn = language.fn(
+      factorial.type,
+      n,
+      empty(language.conditional(
+        "number",
+        language.binary("boolean", "==", language.ref(n), num(0)),
+        empty(num(1)),
+        empty(language.binary(
+          "number",
+          "*",
+          language.ref(n),
+          language.call(
+            "number",
+            language.ref(factorial),
+            language.binary("number", "-", language.ref(n), num(1)),
+          ),
+        )),
+      )),
+    );
     const reference = yield* code.declareRecursive(factorial, fn);
     return language.call("number", reference, num(5));
   }));

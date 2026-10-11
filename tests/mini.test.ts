@@ -1,10 +1,10 @@
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { hm, higherRank } from "../examples/elaboration/mini.ts";
+import { higherRank, hm } from "../examples/elaboration/mini.ts";
+import { program } from "../examples/elaboration/syntax.ts";
 import { definitionAt, typeAt } from "../src/analysis.ts";
 import { traceAt } from "../src/trace.ts";
-import { program } from "../examples/elaboration/syntax.ts";
 
 for (const [name, compiler] of [["HM", hm], ["higher rank", higherRank]] as const) {
   test(`${name} emits prototype-named record fields as ordinary own values`, () => {
@@ -23,7 +23,11 @@ for (const source of ["( 1, true)", "((1), true)"]) {
     assert.deepEqual(parsed.value.span, { start: 0, end: source.length });
     const outcome = hm.elaborate(source);
     assert.equal(outcome.status, "checked");
-    assert(outcome.facts.trace.some(event => event.rule === "record.synth" && event.span?.start === 0 && event.span.end === source.length));
+    assert(
+      outcome.facts.trace.some(event =>
+        event.rule === "record.synth" && event.span?.start === 0 && event.span.end === source.length
+      ),
+    );
     assert.equal(typeAt(outcome.facts.analysis, 0)?.type, "{ _1: number, _2: boolean }");
   });
 }

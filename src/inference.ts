@@ -1,4 +1,4 @@
-import { get, state, type Check } from "./check.ts";
+import { type Check, get, state } from "./check.ts";
 
 /** Resolve inference variables without mutating or compressing their link path. */
 export const pruneLink = <T, V extends object>(
@@ -39,7 +39,9 @@ export const assign = <T extends object, K extends keyof T>(target: T, key: K, v
 export const add = <T>(target: Set<T>, value: T): Check<void> =>
   get(undoJournal).map((journal) => {
     if (target.has(value)) return;
-    journal.push(() => { target.delete(value); });
+    journal.push(() => {
+      target.delete(value);
+    });
     target.add(value);
   });
 
@@ -58,6 +60,8 @@ export const put = <K, V>(target: Map<K, V>, key: K, value: V): Check<void> =>
 export const append = <T>(target: T[], value: T): Check<void> =>
   get(undoJournal).map((journal) => {
     const length = target.length;
-    journal.push(() => { target.length = length; });
+    journal.push(() => {
+      target.length = length;
+    });
     target.push(value);
   });

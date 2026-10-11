@@ -1,4 +1,4 @@
-import { validate, type Binding, type Body, type OperationNode, type Program, type Value } from "./ir.ts";
+import { type Binding, type Body, type OperationNode, type Program, validate, type Value } from "./ir.ts";
 import { createJavaScriptDispatcher, type DispatcherHandler } from "./javascript/operations.ts";
 
 export type JavaScriptContext<T> = {

@@ -16,12 +16,12 @@ An `OperationDescriptor` supplies four structural contracts:
 `defineDialect(record)` retains each literal key and descriptor type. `composeDialects(left, right)` rejects duplicate keys and identities. Backend tables derive callback node types and required handler keys from that record:
 
 ```ts
-import { defineDialect } from "langkit/operations/dialect";
 import { defineJavaScriptBackend } from "langkit/javascript/operations";
+import { defineDialect } from "langkit/operations/dialect";
 
 const dialect = defineDialect({ twice });
 const handlers = defineJavaScriptBackend(dialect, {
-	twice: (node, context) => `(${context.expr(node.value, context.depth)} * 2)`,
+  twice: (node, context) => `(${context.expr(node.value, context.depth)} * 2)`,
 });
 ```
 
@@ -55,7 +55,7 @@ Core is installed by `create<T>()`; it includes primitive expression operations 
 For example, ordinary declarations can be composed in the body generator:
 
 ```ts
-const programBody = language.body(function* () {
+const programBody = language.body(function*() {
   const saved = yield* language.declare("saved", expression);
   return saved;
 });
@@ -80,15 +80,15 @@ Raw `declare(name, initial)` and `declareRecursive(binding, functionValue)` rema
 
 Fresh inference allocation, instantiation, and generalization are checks composed with `yield*`, `map`, or `flatMap` inside the caller's run; inference helpers do not invoke nested runs. Journaled `assign`, `add`, `put`, and `append` undo object-property, set, map, and array writes during rollback without deep snapshots on each solver step. `pruneLink(value, variable, instance)` traverses links read-only and never compresses them. This compositional transactional checker/inference model is informed by typerator state/recovery and ts-macros-inspired generator IR, but does not import their JavaScript/TypeScript syntax assumptions or impose any source-language type ontology.
 
-| Operation | Children, left to right | Scoped bodies and structural role |
-| --- | --- | --- |
-| `literal` | none | No bindings or references. |
-| `ref` | none | `references` reports its target binding. |
-| `binary` | left, right | The order is the language's operand evaluation order. |
-| `call` | function, argument | The callee is visited before the argument. |
-| `fn` | none | Its body is scoped by its parameter binding. Creating a function does not evaluate that body at target function-creation time. |
-| `if` | condition | Then body followed by else body, both structurally traversed; at runtime only the selected branch executes. |
-| `block` | none | Its body is a nested scope. |
+| Operation | Children, left to right | Scoped bodies and structural role                                                                                              |
+| --------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `literal` | none                    | No bindings or references.                                                                                                     |
+| `ref`     | none                    | `references` reports its target binding.                                                                                       |
+| `binary`  | left, right             | The order is the language's operand evaluation order.                                                                          |
+| `call`    | function, argument      | The callee is visited before the argument.                                                                                     |
+| `fn`      | none                    | Its body is scoped by its parameter binding. Creating a function does not evaluate that body at target function-creation time. |
+| `if`      | condition               | Then body followed by else body, both structurally traversed; at runtime only the selected branch executes.                    |
+| `block`   | none                    | Its body is a nested scope.                                                                                                    |
 
 ## Records and merge
 

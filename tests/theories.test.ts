@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { check, choice, fail, pure, run, type Check } from "../src/check.ts";
+import { type Check, check, choice, fail, pure, run } from "../src/check.ts";
+import * as rank from "../src/types/higher-rank.ts";
 import * as hm from "../src/types/hm.ts";
 import * as rows from "../src/types/rows.ts";
-import * as rank from "../src/types/higher-rank.ts";
 
 const value = <A>(operation: Check<A>): A => {
   const result = run(operation);
@@ -26,7 +26,7 @@ type Theory<T, V extends T, S> = {
 
 const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
   test(`${name}: reused fresh and instantiation allocate within each execution`, () => {
-    value(check(function* () {
+    value(check(function*() {
       const fresh = theory.fresh();
       const a = yield* fresh;
       const b = yield* fresh;
@@ -46,7 +46,7 @@ const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
   });
 
   test(`${name}: solved environment schemes prevent over-generalization`, () => {
-    value(check(function* () {
+    value(check(function*() {
       const outer = yield* theory.fresh();
       const inner = yield* theory.fresh();
       const environment = [theory.mono(outer)];
@@ -57,7 +57,7 @@ const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
   });
 
   test(`${name}: failed compound unification restores links`, () => {
-    const result = run(check(function* () {
+    const result = run(check(function*() {
       const variable = yield* theory.fresh();
       yield* theory.unify(theory.fn(variable, theory.number), theory.fn(theory.boolean, theory.boolean)).recover();
       assert.equal(theory.prune(variable), variable);
@@ -66,15 +66,18 @@ const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
   });
 
   test(`${name}: pruning a speculative linked chain is read-only`, () => {
-    value(check(function* () {
+    value(check(function*() {
       const first = yield* theory.fresh();
       const second = yield* theory.fresh();
       yield* theory.unify(first, second);
-      yield* choice(check(function* () {
-        yield* theory.unify(second, theory.number);
-        assert.equal(theory.prune(first), theory.number);
-        return yield* fail("abandon speculative solution");
-      }), pure(undefined));
+      yield* choice(
+        check(function*() {
+          yield* theory.unify(second, theory.number);
+          assert.equal(theory.prune(first), theory.number);
+          return yield* fail("abandon speculative solution");
+        }),
+        pure(undefined),
+      );
       assert.equal(theory.prune(first), second);
       assert.equal(theory.prune(second), second);
     }));
@@ -86,7 +89,7 @@ common<rows.Type, rows.Variable, rows.Scheme>("Rows", rows);
 common<rank.Type, rank.Variable, rank.Scheme>("Higher rank", rank);
 
 test("Rows: ordinary and row freshening share within one instance and copy lacks", () => {
-  value(check(function* () {
+  value(check(function*() {
     const a = yield* rows.fresh();
     const tail = yield* rows.freshRow(["x"]);
     const original = rows.record(rows.row(new Map([["x", a]]), tail));
@@ -100,8 +103,9 @@ test("Rows: ordinary and row freshening share within one instance and copy lacks
     assert.equal(first.param.kind, "record");
     assert.equal(first.result.kind, "record");
     assert.equal(second.param.kind, "record");
-    if (first.param.kind !== "record" || first.result.kind !== "record" || second.param.kind !== "record")
+    if (first.param.kind !== "record" || first.result.kind !== "record" || second.param.kind !== "record") {
       throw new Error("Expected record");
+    }
     assert.equal(first.param.row.tail, first.result.row.tail);
     assert.equal(first.param.row.fields.get("x"), first.result.row.fields.get("x"));
     assert.notEqual(first.param.row.tail, second.param.row.tail);
@@ -114,7 +118,7 @@ test("Rows: ordinary and row freshening share within one instance and copy lacks
 });
 
 test("Rows: compound failure restores links and propagated absence constraints", () => {
-  const result = run(check(function* () {
+  const result = run(check(function*() {
     const left = yield* rows.freshRow(["x"]);
     const right = yield* rows.freshRow();
     const a = rows.record(rows.row(new Map(), left));
@@ -130,16 +134,22 @@ test("Rows: compound failure restores links and propagated absence constraints",
 
 for (const expected of [rows.number, rows.boolean]) {
   test(`Rows: reflatten newly exposed common fields (${rows.show(expected)})`, () => {
-    const result = run(check(function* () {
+    const result = run(check(function*() {
       const r = yield* rows.freshRow();
       const s = yield* rows.freshRow(["x", "y"]);
-      const left = rows.record(rows.row(new Map([
-        ["x", rows.record(rows.row(new Map(), r))],
-        ["y", expected],
-      ]), s));
-      const right = rows.record(rows.row(new Map([
-        ["x", rows.record(rows.row(new Map([["y", rows.boolean]]), s))],
-      ]), r));
+      const left = rows.record(rows.row(
+        new Map([
+          ["x", rows.record(rows.row(new Map(), r))],
+          ["y", expected],
+        ]),
+        s,
+      ));
+      const right = rows.record(rows.row(
+        new Map([
+          ["x", rows.record(rows.row(new Map([["y", rows.boolean]]), s))],
+        ]),
+        r,
+      ));
       yield* rows.unify(left, right);
     }));
     assert.equal(result.success, expected === rows.boolean);
@@ -156,12 +166,15 @@ test("Rows: occurs checks cross record fields and tails", () => {
 });
 
 test("Rows: pure row construction acquires unique-label constraints when solved or generalized", () => {
-  value(check(function* () {
+  value(check(function*() {
     const tail = yield* rows.freshRow();
     const record = rows.record(rows.row(new Map([["x", rows.number]]), tail));
     yield* rows.unify(yield* rows.fresh(), record);
     assert.deepEqual(tail.lacks, new Set(["x"]));
-    assert.equal(run(rows.unifyRows(rows.row(new Map(), tail), rows.row(new Map([["x", rows.number]])))).success, false);
+    assert.equal(
+      run(rows.unifyRows(rows.row(new Map(), tail), rows.row(new Map([["x", rows.number]])))).success,
+      false,
+    );
     const other = yield* rows.freshRow();
     yield* rows.generalize(rows.record(rows.row(new Map([["y", rows.number]]), other)), []);
     assert.deepEqual(other.lacks, new Set(["y"]));
@@ -169,17 +182,21 @@ test("Rows: pure row construction acquires unique-label constraints when solved 
 });
 
 test("Higher rank: pure row construction acquires journaled unique-label constraints", () => {
-  value(check(function* () {
+  value(check(function*() {
     const tail = yield* rank.freshRow();
     const record = rank.record(rank.row(new Map([["x", rank.number]]), tail));
     yield* rank.unify(yield* rank.fresh(), record);
     assert.deepEqual(tail.lacks, new Set(["x"]));
-    assert.equal(run(rank.unify(rank.record(rank.row(new Map(), tail)), rank.record(rank.row(new Map([["x", rank.number]]))))).success, false);
+    assert.equal(
+      run(rank.unify(rank.record(rank.row(new Map(), tail)), rank.record(rank.row(new Map([["x", rank.number]])))))
+        .success,
+      false,
+    );
   }));
 });
 
 test("Higher rank: failed compound unification restores levels, links and lacks", () => {
-  const result = run(check(function* () {
+  const result = run(check(function*() {
     const outer = yield* rank.fresh(0);
     const inner = yield* rank.fresh(3);
     const tail = yield* rank.freshRow(["x"], 3);
@@ -194,7 +211,7 @@ test("Higher rank: failed compound unification restores levels, links and lacks"
 });
 
 test("Higher rank: reused row freshening and instantiation retain copied absence constraints", () => {
-  value(check(function* () {
+  value(check(function*() {
     const fresh = rank.freshRow(["x"], 2);
     const firstTail = yield* fresh;
     const secondTail = yield* fresh;
@@ -206,8 +223,10 @@ test("Higher rank: reused row freshening and instantiation retain copied absence
     const instantiate = rank.instantiate(scheme, 1);
     const first = yield* instantiate;
     const second = yield* instantiate;
-    if (first.kind !== "function" || second.kind !== "function" || first.param.kind !== "record" ||
-      first.result.kind !== "record" || second.param.kind !== "record") throw new Error("Expected record functions");
+    if (
+      first.kind !== "function" || second.kind !== "function" || first.param.kind !== "record"
+      || first.result.kind !== "record" || second.param.kind !== "record"
+    ) throw new Error("Expected record functions");
     const tail = first.param.row.tail!;
     assert.equal(tail, first.result.row.tail);
     assert.equal(tail.level, 1);
@@ -222,7 +241,7 @@ test("Higher rank: reused row freshening and instantiation retain copied absence
 });
 
 test("Higher rank: reused subsumption, forall instantiation and rigid scopes execute independently", () => {
-  value(check(function* () {
+  value(check(function*() {
     const a = rank.generic("a");
     const identity = rank.forall([a], rank.fn(a, a));
     const subsume = rank.subsume(identity, identity);
@@ -243,7 +262,7 @@ test("Higher rank: reused subsumption, forall instantiation and rigid scopes exe
 test("Higher rank: expectFunction instantiates polymorphism and rolls invalid expectations back", () => {
   const a = rank.generic("a");
   const operation = rank.expectFunction(rank.forall([a], rank.fn(a, a)));
-  value(check(function* () {
+  value(check(function*() {
     const first = yield* operation;
     const second = yield* operation;
     assert.equal(first.param, first.result);
@@ -252,13 +271,15 @@ test("Higher rank: expectFunction instantiates polymorphism and rolls invalid ex
   assert.equal(run(rank.expectFunction(rank.number)).success, false);
 });
 
-for (const [name, wrap] of [
-  ["arrow", (type: rank.Type) => rank.fn(type, rank.number)],
-  ["record", (type: rank.Type) => rank.record(rank.row(new Map([["value", type]])))],
-  ["data", (type: rank.Type) => rank.data({ id: Symbol("Box"), name: "Box", arity: 1 }, [type])],
-] as const) {
+for (
+  const [name, wrap] of [
+    ["arrow", (type: rank.Type) => rank.fn(type, rank.number)],
+    ["record", (type: rank.Type) => rank.record(rank.row(new Map([["value", type]])))],
+    ["data", (type: rank.Type) => rank.data({ id: Symbol("Box"), name: "Box", arity: 1 }, [type])],
+  ] as const
+) {
   test(`Higher rank: outer links lower reachable ${name} metas before later rigid solving`, () => {
-    value(check(function* () {
+    value(check(function*() {
       const outer = yield* rank.fresh();
       const inner = yield* rank.fresh(2);
       yield* rank.unify(outer, wrap(inner));

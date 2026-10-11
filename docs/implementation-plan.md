@@ -39,24 +39,24 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [x] Make staged construction, lowering, and execution self-contained. The user clarified that TS Macros is not an npm dependency.
 - [x] Add compile-time, editor, mutation-control, and compiler-cost checks.
 - [x] Replace the injected external target with local constructors, witnesses, and emission; delete the old entrypoints.
-- [ ] Inspect the scoped diff with `no-comments`; retain only comments for external constraints and compiler test directives.
+- [x] Inspect the scoped diff with `no-comments`; retain only comments for external constraints and compiler test directives. The audit removed 57 blocks without changing application code; the corrected report has no remaining workaround flags.
 - [ ] Review the complete artifacts and decision trail with an independent read-only reviewer. Foundation review reproduced two descriptor defects; both now have passing regressions.
 - [ ] Run the full completion gates on this branch and record exact outcomes.
-- [ ] Prune duplicate legacy tests and retain representative source-to-compilation programs, as the user requested.
-- [ ] Format all code with pinned dprint, then rerun the completion gates.
+- [x] Prune duplicate legacy tests and retain representative source-to-compilation programs, as the user requested. The integrated suite has 240 tests, including eight language programs and five source-level regressions.
+- [x] Format all code with pinned dprint, then rerun runtime, compiler, editor, mutation-control, and staging gates. Formatting required moving four compiler directives to their diagnostic lines; no tests were disabled.
 - [ ] Commit and push this branch, as the user explicitly requested during integration.
 - [x] Opening a PR: skipped because the user requested a push, not a PR.
 
 ## Phase ownership and checks
 
-| Phase | Owned files | Dependencies | Smallest unit and check | Stop condition |
-| --- | --- | --- | --- | --- |
-| Runtime | `src/check.ts`, `src/ir/check.ts`, runtime regression tests | Baseline and execution sketch | Regression tests, then machine. `node --test tests/check.test.ts tests/generator-ir.test.ts tests/composition.test.ts` and `npm run typecheck` | A transaction, exception, or cleanup contract regresses |
-| Descriptors | `src/operations`, backend handler modules, dialect tests | Descriptor sketch | Typed records, then backend migration. Descriptor tests, cross-target tests, and TypeScript | Exact runtime identities or static handler coverage are lost |
-| Solvers | `src/types`, solver tests, migrated example solver code | Solver grammar and mutation contract | Extract each implementation and verify its existing conformance tests | An old success fails or an old rejection becomes accepted |
-| Judgments | `src/judgments.ts`, judgment tests, representative language rules | Rule sketch, then extracted solvers for migration | Registry and binder coordination, then migration. TypeScript and source-to-execution tests | Rules need hidden language-specific state in the framework |
-| Tooling | Finalization, trace/evidence, module parser boundary, `tools`, editor corpus, adapter | Stable judgment and dialect contracts | One observable capability per test, then editor checks | Recovered artifacts become emit-ready or checks miss their negative controls |
-| Integration | Exports, scripts, guides, decision trail | Verified workstream commits | `npm test`, `npm run typecheck`, editor checks, controls, and showcase execution | Any gate fails or cannot observe the promised behavior |
+| Phase       | Owned files                                                                           | Dependencies                                      | Smallest unit and check                                                                                                                        | Stop condition                                                               |
+| ----------- | ------------------------------------------------------------------------------------- | ------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------- |
+| Runtime     | `src/check.ts`, `src/ir/check.ts`, runtime regression tests                           | Baseline and execution sketch                     | Regression tests, then machine. `node --test tests/check.test.ts tests/generator-ir.test.ts tests/composition.test.ts` and `npm run typecheck` | A transaction, exception, or cleanup contract regresses                      |
+| Descriptors | `src/operations`, backend handler modules, dialect tests                              | Descriptor sketch                                 | Typed records, then backend migration. Descriptor tests, cross-target tests, and TypeScript                                                    | Exact runtime identities or static handler coverage are lost                 |
+| Solvers     | `src/types`, solver tests, migrated example solver code                               | Solver grammar and mutation contract              | Extract each implementation and verify its existing conformance tests                                                                          | An old success fails or an old rejection becomes accepted                    |
+| Judgments   | `src/judgments.ts`, judgment tests, representative language rules                     | Rule sketch, then extracted solvers for migration | Registry and binder coordination, then migration. TypeScript and source-to-execution tests                                                     | Rules need hidden language-specific state in the framework                   |
+| Tooling     | Finalization, trace/evidence, module parser boundary, `tools`, editor corpus, adapter | Stable judgment and dialect contracts             | One observable capability per test, then editor checks                                                                                         | Recovered artifacts become emit-ready or checks miss their negative controls |
+| Integration | Exports, scripts, guides, decision trail                                              | Verified workstream commits                       | `npm test`, `npm run typecheck`, editor checks, controls, and showcase execution                                                               | Any gate fails or cannot observe the promised behavior                       |
 
 The user authorized committing and pushing `feat/composable-language-tools` to its existing origin. No PR, merge, or deployment is requested. Langkit remains the owner of the checking runtime in this repository. Typerator is a semantic reference, not a second implementation to update here.
 

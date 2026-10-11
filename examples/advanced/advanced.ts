@@ -1,76 +1,69 @@
 import {
   bind,
+  type Check,
   check,
+  type Diagnostic,
   fail,
   get,
   lookup,
   render,
+  type Result,
   run,
   scoped,
-  within,
-  type Check,
-  type Diagnostic,
-  type Result,
   type Span,
+  within,
 } from "langkit";
-import { create, type Binding, type Body, type Program, type Value } from "langkit/ir";
+import { type Analysis, create as createAnalysis, highlight } from "langkit/analysis";
+import { type Binding, type Body, create, type Program, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
-import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
-import { records } from "langkit/operations/records";
-import { variants } from "langkit/operations/variants";
-import { printing } from "langkit/operations/printing";
+import { printingJavaScript } from "langkit/javascript/printing";
 import { recordsJavaScript } from "langkit/javascript/records";
 import { variantsJavaScript } from "langkit/javascript/variants";
-import { printingJavaScript } from "langkit/javascript/printing";
-import { readFileSync } from "node:fs";
-import { pathToFileURL } from "node:url";
-import { resolve as resolvePath } from "node:path";
-import { loadModules, type ModuleOptions, type ModuleGraph } from "langkit/modules";
+import { loadModules, type ModuleGraph, type ModuleOptions } from "langkit/modules";
 import { parseImports } from "langkit/modules/imports";
-import { runInNewContext } from "node:vm";
+import { printing } from "langkit/operations/printing";
+import { records } from "langkit/operations/records";
+import { variants } from "langkit/operations/variants";
 import {
-  program,
-  tokens,
-  type DataDecl,
-  type Expr,
-  type Module,
-  type TypeExpr,
-} from "./advanced-syntax.ts";
-import {
-  number,
   boolean,
-  string,
+  data,
+  exclude,
+  expectFunction,
+  flatten,
   fn,
-  record,
-  row,
+  forall,
   fresh,
   freshRow,
-  prune,
-  flatten,
-  exclude,
-  unify,
-  mono,
   generalize,
+  generic,
   instantiate,
   instantiateForall,
-  expectFunction,
+  mono,
+  number,
+  prune,
+  record,
+  row,
+  type Scheme,
   skolemize,
-  generic,
-  forall,
-  data,
+  string,
   subsume,
   type Type,
-  type Scheme,
   type TypeConstructor,
+  unify,
 } from "langkit/types/higher-rank";
+import { readFileSync } from "node:fs";
+import { resolve as resolvePath } from "node:path";
+import { pathToFileURL } from "node:url";
+import { runInNewContext } from "node:vm";
+import { type DataDecl, type Expr, type Module, program, tokens, type TypeExpr } from "./advanced-syntax.ts";
 
-export { program } from "./advanced-syntax.ts";
 export { show, type Type } from "langkit/types/higher-rank";
+export { program } from "./advanced-syntax.ts";
 export type { Expr } from "./advanced-syntax.ts";
 
-type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
+type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme; };
 
 type Constructor = {
   readonly binding: Binding<Type>;
@@ -80,7 +73,7 @@ type Constructor = {
   readonly owner: TypeConstructor;
 };
 
-type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[] };
+type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[]; };
 
 const recordFeature = records<Type>();
 const variantFeature = variants<Type>();
@@ -104,33 +97,34 @@ const resolve = (
   syntax: TypeExpr,
   parameters: ReadonlyMap<string, Type> = new Map(),
 ): Check<Type> =>
-  check(function* () {
+  check(function*() {
     switch (syntax.kind) {
       case "name": {
         const parameter = parameters.get(syntax.name);
-        const primitive =
-          syntax.name === "number"
-            ? number
-            : syntax.name === "boolean"
-              ? boolean
-              : syntax.name === "string"
-                ? string
-                : undefined;
+        const primitive = syntax.name === "number"
+          ? number
+          : syntax.name === "boolean"
+          ? boolean
+          : syntax.name === "string"
+          ? string
+          : undefined;
         if (parameter || primitive) {
           if (syntax.args.length) return yield* fail(`Type ${syntax.name} takes no arguments`);
           return (parameter ?? primitive)!;
         }
         const definition = (yield* get(definitions)).get(syntax.name);
         if (!definition) return yield* fail(`Unknown type: ${syntax.name}`);
-        if (syntax.args.length !== definition.type.arity)
+        if (syntax.args.length !== definition.type.arity) {
           return yield* fail(
             `Type ${syntax.name} expects ${definition.type.arity} arguments, found ${syntax.args.length}`,
           );
+        }
         const args: Type[] = [];
         for (const arg of syntax.args) {
           const type = yield* resolve(arg, parameters);
-          if (prune(type).kind === "forall")
+          if (prune(type).kind === "forall") {
             return yield* fail("Polymorphic data arguments are not supported");
+          }
           args.push(type);
         }
         return data(definition.type, args);
@@ -145,15 +139,17 @@ const resolve = (
         for (const field of syntax.fields) {
           if (fields.has(field.name)) return yield* fail(`Duplicate field: ${field.name}`);
           const type = yield* resolve(field.type, parameters);
-          if (prune(type).kind === "forall")
+          if (prune(type).kind === "forall") {
             return yield* fail("Polymorphic record fields are not supported");
+          }
           fields.set(field.name, type);
         }
         return record(row(fields));
       }
       case "forall": {
-        if (new Set(syntax.parameters).size !== syntax.parameters.length)
+        if (new Set(syntax.parameters).size !== syntax.parameters.length) {
           return yield* fail("Duplicate forall parameter");
+        }
         const variables = syntax.parameters.map(generic);
         const nested = new Map(parameters);
         for (const variable of variables) nested.set(variable.name, variable);
@@ -165,17 +161,17 @@ const resolve = (
 const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> =>
   computation
     .flatMap((value) =>
-      check(function* () {
+      check(function*() {
         if (yield* get(observe)) yield* facts.typed(value.type, expr.span);
         return code.at(value, expr.span);
-      }),
+      })
     )
     .at(expr.span);
 
 const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
   typed(
     expr,
-    check(function* () {
+    check(function*() {
       const target = prune(expected);
       const current = yield* get(level);
       if (target.kind === "forall") {
@@ -191,7 +187,7 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
         if (expr.annotation) yield* subsume(target.param, parameter, current);
         const binding = code.binding(expr.param, parameter);
         if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
-        const body = yield* code.body(function* () {
+        const body = yield* code.body(function*() {
           return yield* bind(
             env,
             [[expr.param, { binding, scheme: mono(parameter) }]],
@@ -202,8 +198,12 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
       }
       if (expr.kind === "if") {
         const cond = yield* checkExpr(expr.cond, boolean);
-        const then = yield* code.body(function* () { return yield* checkExpr(expr.then, expected); });
-        const otherwise = yield* code.body(function* () { return yield* checkExpr(expr.else, expected); });
+        const then = yield* code.body(function*() {
+          return yield* checkExpr(expr.then, expected);
+        });
+        const otherwise = yield* code.body(function*() {
+          return yield* checkExpr(expr.else, expected);
+        });
         return code.conditional(expected, cond, then, otherwise);
       }
       if (expr.kind === "let") return yield* elaborateLet(expr, expected);
@@ -214,73 +214,83 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
     }),
   );
 
-const elaborateLet = (expr: Extract<Expr, { kind: "let" }>, expected?: Type): Check<Value<Type>> =>
-  code.scope(function* () {
-      const environment = yield* get(env);
-      const annotation = expr.annotation ? yield* resolve(expr.annotation) : undefined;
-      let binding: Binding<Type>;
-      let scheme: Scheme;
-      if (expr.recursive) {
-        if (expr.value.kind !== "fn")
-          return yield* fail("Recursive bindings require a function initializer");
-        const type = annotation ?? (yield* fresh(yield* get(level)));
-        binding = code.binding(expr.name, type);
-        const initial = yield* bind(
-          env,
-          [[expr.name, { binding, scheme: mono(type) }]],
-          checkExpr(expr.value, type),
-        );
-        yield* code.declareRecursive(binding, initial);
-        scheme = annotation
-          ? mono(annotation)
-          : yield* generalize(type, [...environment.values()].map((entry) => entry.scheme));
-      } else {
-        const initial = annotation
-          ? yield* checkExpr(expr.value, annotation)
-          : yield* elaborate(expr.value);
-        const value = yield* code.declare(expr.name, initial);
-        binding = value.node.binding;
-        scheme = annotation
-          ? mono(annotation)
-          : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
+const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): Check<Value<Type>> =>
+  code.scope(function*() {
+    const environment = yield* get(env);
+    const annotation = expr.annotation ? yield* resolve(expr.annotation) : undefined;
+    let binding: Binding<Type>;
+    let scheme: Scheme;
+    if (expr.recursive) {
+      if (expr.value.kind !== "fn") {
+        return yield* fail("Recursive bindings require a function initializer");
       }
-      if (yield* get(observe))
-        yield* facts.define(
-          binding,
-          expr.nameSpan,
-          ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable",
-        );
-      return yield* bind(
+      const type = annotation ?? (yield* fresh(yield* get(level)));
+      binding = code.binding(expr.name, type);
+      const initial = yield* bind(
         env,
-        [[expr.name, { binding, scheme }]],
-        expected ? checkExpr(expr.body, expected) : elaborate(expr.body),
+        [[expr.name, { binding, scheme: mono(type) }]],
+        checkExpr(expr.value, type),
       );
+      yield* code.declareRecursive(binding, initial);
+      scheme = annotation
+        ? mono(annotation)
+        : yield* generalize(type, [...environment.values()].map((entry) => entry.scheme));
+    } else {
+      const initial = annotation
+        ? yield* checkExpr(expr.value, annotation)
+        : yield* elaborate(expr.value);
+      const value = yield* code.declare(expr.name, initial);
+      binding = value.node.binding;
+      scheme = annotation
+        ? mono(annotation)
+        : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
+    }
+    if (yield* get(observe)) {
+      yield* facts.define(
+        binding,
+        expr.nameSpan,
+        ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable",
+      );
+    }
+    return yield* bind(
+      env,
+      [[expr.name, { binding, scheme }]],
+      expected ? checkExpr(expr.body, expected) : elaborate(expr.body),
+    );
   });
 
 const elaborateMatch = (
-  expr: Extract<Expr, { kind: "match" }>,
+  expr: Extract<Expr, { kind: "match"; }>,
   expected?: Type,
 ): Check<Value<Type>> =>
-  check(function* () {
+  check(function*() {
     const value = yield* elaborate(expr.value);
     const current = yield* get(level);
     const result = expected ?? (yield* fresh(current));
     const known = yield* get(constructors);
     const seen = new Set<string>();
-    const cases: { tag: string; bindings: Binding<Type>[]; body: Body<Type> }[] = [];
-    let fallback: { binding?: Binding<Type>; body: Body<Type> } | undefined;
+    const cases: { tag: string; bindings: Binding<Type>[]; body: Body<Type>; }[] = [];
+    let fallback: { binding?: Binding<Type>; body: Body<Type>; } | undefined;
     if (!expr.cases.length) return yield* fail("Match requires at least one case");
     for (const branch of expr.cases) {
       if (fallback) return yield* fail("Unreachable case after catch-all").at(branch.span);
       const pattern = branch.pattern;
       if (pattern.kind === "binding") {
-        if (pattern.name === "_")
-          fallback = { body: yield* code.body(function* () { return yield* checkExpr(branch.body, result); }) };
-        else {
+        if (pattern.name === "_") {
+          fallback = {
+            body: yield* code.body(function*() {
+              return yield* checkExpr(branch.body, result);
+            }),
+          };
+        } else {
           const binding = code.binding(pattern.name, value.type);
           if (yield* get(observe)) yield* facts.define(binding, pattern.span);
-          const body = yield* code.body(function* () {
-            return yield* bind(env, [[pattern.name, { binding, scheme: mono(value.type) }]], checkExpr(branch.body, result));
+          const body = yield* code.body(function*() {
+            return yield* bind(
+              env,
+              [[pattern.name, { binding, scheme: mono(value.type) }]],
+              checkExpr(branch.body, result),
+            );
           });
           fallback = { binding, body };
         }
@@ -288,18 +298,21 @@ const elaborateMatch = (
       }
       const constructor = known.get(pattern.name);
       if (!constructor) return yield* fail(`Unknown constructor: ${pattern.name}`).at(pattern.span);
-      if (seen.has(constructor.tag))
+      if (seen.has(constructor.tag)) {
         return yield* fail(`Unreachable duplicate case: ${pattern.name}`).at(pattern.span);
+      }
       seen.add(constructor.tag);
-      if (pattern.fields.length !== constructor.arity)
+      if (pattern.fields.length !== constructor.arity) {
         return yield* fail(
           `Constructor ${pattern.name} expects ${constructor.arity} fields, found ${pattern.fields.length}`,
         ).at(pattern.span);
-      if (yield* get(observe))
+      }
+      if (yield* get(observe)) {
         yield* facts.reference(constructor.binding, {
           start: pattern.span.start,
           end: pattern.span.start + pattern.name.length,
         });
+      }
       let type = yield* instantiateForall(constructor.type, current);
       const bindings: Binding<Type>[] = [];
       const entries = new Map<string, Entry>();
@@ -309,15 +322,18 @@ const elaborateMatch = (
         const binding = code.binding(field.name, arrow.param);
         bindings.push(binding);
         if (field.name !== "_") {
-          if (entries.has(field.name))
+          if (entries.has(field.name)) {
             return yield* fail(`Duplicate pattern binding: ${field.name}`).at(field.span);
+          }
           entries.set(field.name, { binding, scheme: mono(arrow.param) });
           if (yield* get(observe)) yield* facts.define(binding, field.span);
         }
         type = arrow.result;
       }
       yield* unify(value.type, type).at(pattern.span);
-      const body = yield* code.body(function* () { return yield* bind(env, entries, checkExpr(branch.body, result)); });
+      const body = yield* code.body(function*() {
+        return yield* bind(env, entries, checkExpr(branch.body, result));
+      });
       cases.push({ tag: constructor.tag, bindings, body });
     }
     if (!fallback) {
@@ -327,8 +343,9 @@ const elaborateMatch = (
         (def) => def.type.id === type.constructor.id,
       )!;
       const missing = definition.constructors.filter((name) => !seen.has(known.get(name)!.tag));
-      if (missing.length)
+      if (missing.length) {
         return yield* fail(`Non-exhaustive match; missing: ${missing.join(", ")}`);
+      }
     }
     return code.match(result, value, cases, fallback);
   }).at(expr.span);
@@ -336,7 +353,7 @@ const elaborateMatch = (
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
   typed(
     expr,
-    check(function* () {
+    check(function*() {
       const current = yield* get(level);
       switch (expr.kind) {
         case "number":
@@ -352,13 +369,14 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           return code.ref(binding, yield* instantiateForall(yield* instantiate(scheme, current), current));
         }
         case "record": {
-          const fields: { name: string; value: Value<Type> }[] = [];
+          const fields: { name: string; value: Value<Type>; }[] = [];
           const types = new Map<string, Type>();
           for (const field of expr.fields) {
             if (types.has(field.name)) return yield* fail(`Duplicate field: ${field.name}`);
             const value = yield* elaborate(field.value);
-            if (prune(value.type).kind === "forall")
+            if (prune(value.type).kind === "forall") {
               return yield* fail("Polymorphic record fields are not supported");
+            }
             fields.push({ name: field.name, value });
             types.set(field.name, value.type);
           }
@@ -396,7 +414,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           const type = expr.annotation ? yield* resolve(expr.annotation) : yield* fresh(current);
           const binding = code.binding(expr.param, type);
           if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
-          const body = yield* code.body(function* () {
+          const body = yield* code.body(function*() {
             return yield* bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body));
           });
           return code.fn(fn(type, body.result.type), binding, body);
@@ -409,8 +427,12 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         }
         case "if": {
           const cond = yield* checkExpr(expr.cond, boolean);
-          const then = yield* code.body(function* () { return yield* elaborate(expr.then); });
-          const otherwise = yield* code.body(function* () { return yield* checkExpr(expr.else, then.result.type); });
+          const then = yield* code.body(function*() {
+            return yield* elaborate(expr.then);
+          });
+          const otherwise = yield* code.body(function*() {
+            return yield* checkExpr(expr.else, then.result.type);
+          });
           return code.conditional(then.result.type, cond, then, otherwise);
         }
         case "annotated":
@@ -421,22 +443,27 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
     }),
   );
 export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function* () { return yield* elaborate(expr); });
+  code.body(function*() {
+    return yield* elaborate(expr);
+  });
 const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> =>
-  code.check(function* () {
+  code.check(function*() {
     const existing = yield* get(definitions);
     const added = new Map<string, Definition>();
     for (const declaration of declarations) {
       if (
-        existing.has(declaration.name) ||
-        added.has(declaration.name) ||
-        ["number", "boolean", "string"].includes(declaration.name)
-      )
+        existing.has(declaration.name)
+        || added.has(declaration.name)
+        || ["number", "boolean", "string"].includes(declaration.name)
+      ) {
         return yield* fail(`Duplicate type: ${declaration.name}`).at(declaration.nameSpan);
-      if (new Set(declaration.parameters).size !== declaration.parameters.length)
+      }
+      if (new Set(declaration.parameters).size !== declaration.parameters.length) {
         return yield* fail(`Duplicate type parameter in ${declaration.name}`).at(declaration.span);
-      if (!declaration.constructors.length)
+      }
+      if (!declaration.constructors.length) {
         return yield* fail("Data type requires a constructor").at(declaration.span);
+      }
       added.set(declaration.name, {
         type: {
           id: Symbol(declaration.name),
@@ -449,7 +476,7 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
     return yield* bind(
       definitions,
       added,
-      code.check(function* () {
+      code.check(function*() {
         const known = yield* get(constructors);
         const addedConstructors = new Map<string, Constructor>();
         const entries = new Map<string, Entry>();
@@ -461,19 +488,22 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
           );
           const result = data(owner, variables);
           for (const syntax of declaration.constructors) {
-            if (!/^[A-Z]/.test(syntax.name))
+            if (!/^[A-Z]/.test(syntax.name)) {
               return yield* fail("Constructor names must start with an uppercase letter").at(
                 syntax.nameSpan,
               );
-            if (known.has(syntax.name) || addedConstructors.has(syntax.name))
+            }
+            if (known.has(syntax.name) || addedConstructors.has(syntax.name)) {
               return yield* fail(`Duplicate constructor: ${syntax.name}`).at(syntax.nameSpan);
+            }
             const fields: Binding<Type>[] = [];
             for (const field of syntax.fields) {
               const type = yield* resolve(field, parameters);
-              if (prune(type).kind === "forall")
+              if (prune(type).kind === "forall") {
                 return yield* fail("Polymorphic constructor fields are not supported").at(
                   field.span,
                 );
+              }
               fields.push(code.binding("field", type));
             }
             const tag = `${owner.name}.${syntax.name}`;
@@ -483,17 +513,24 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
               fields.map((field) => code.ref(field)),
             );
             for (const field of fields.toReversed()) {
-              initial = code.fn(fn(field.type, initial.type), field, pureCode.body(function* () { return initial; }));
+              initial = code.fn(
+                fn(field.type, initial.type),
+                field,
+                pureCode.body(function*() {
+                  return initial;
+                }),
+              );
             }
             const type = variables.length ? forall(variables, initial.type) : initial.type;
             const value = yield* code.declare(syntax.name, { ...initial, type });
             const binding = value.node.binding;
-            if (yield* get(observe))
+            if (yield* get(observe)) {
               yield* facts.define(
                 binding,
                 syntax.nameSpan,
                 fields.length ? "function" : "variable",
               );
+            }
             addedConstructors.set(syntax.name, { binding, type, arity: fields.length, tag, owner });
             entries.set(syntax.name, { binding, scheme: mono(type) });
           }
@@ -514,18 +551,18 @@ const parse = (source: string): Result<Module> => {
   return result.success
     ? result
     : {
-        success: false,
-        errors: [{
-          message: result.error.message,
-          span: result.error.diagnostic.span,
-          context: ["parsing", ...(result.error.diagnostic.context ?? [])],
-        }],
-      };
+      success: false,
+      errors: [{
+        message: result.error.message,
+        span: result.error.diagnostic.span,
+        context: ["parsing", ...(result.error.diagnostic.context ?? [])],
+      }],
+    };
 };
 
-type Origin = { readonly uri: string; readonly span: Span; readonly name: string };
+type Origin = { readonly uri: string; readonly span: Span; readonly name: string; };
 
-type Export = Entry & { readonly identity: symbol; readonly origin: Origin };
+type Export = Entry & { readonly identity: symbol; readonly origin: Origin; };
 
 type ModuleExports = {
   readonly values: ReadonlyMap<string, Export>;
@@ -540,11 +577,12 @@ const exportOrigins = (expr: Expr): Map<string, Span> => {
     expr = expr.body;
   }
   const result = new Map<string, Span>();
-  if (expr.kind === "record")
+  if (expr.kind === "record") {
     for (const field of expr.fields) {
       const local = field.value.kind === "name" ? locals.get(field.value.name) : undefined;
       result.set(field.name, local ?? field.nameSpan);
     }
+  }
   return result;
 };
 
@@ -552,150 +590,163 @@ const buildModules = (
   graph: ModuleGraph,
   external: Map<symbol, Export>,
 ): Check<Body<Type>> =>
-  code.body(function* () {
-      const param = code.binding("value", yield* fresh());
-      const unit = record(row());
-      const printed = yield* code.declare(
-        "print",
-        code.fn(fn(param.type, unit), param, pureCode.body(function* () {
+  code.body(function*() {
+    const param = code.binding("value", yield* fresh());
+    const unit = record(row());
+    const printed = yield* code.declare(
+      "print",
+      code.fn(
+        fn(param.type, unit),
+        param,
+        pureCode.body(function*() {
           return code.print(unit, code.ref(param));
-        })),
-      );
-      const primitive: Entry = {
-        binding: printed.node.binding,
-        scheme: yield* generalize(printed.type, []),
-      };
-      const completed = new Map<string, ModuleExports>();
-      for (const module of graph.modules) {
-        const imported = new Map<string, Export>();
-        const importedDefinitions = new Map<string, Definition>();
-        const importedConstructors = new Map<string, Constructor>();
-        for (const dependency of module.imports) {
-          const exports = completed.get(dependency.uri)!;
-          for (const [name, entry] of exports.values) {
-            const previous = imported.get(name);
-            if (previous && previous.identity !== entry.identity)
-              return yield* fail(`Conflicting imported name: ${name}`)
-                .at(dependency.span)
-                .inDocument(module.uri);
-            imported.set(name, entry);
+        }),
+      ),
+    );
+    const primitive: Entry = {
+      binding: printed.node.binding,
+      scheme: yield* generalize(printed.type, []),
+    };
+    const completed = new Map<string, ModuleExports>();
+    for (const module of graph.modules) {
+      const imported = new Map<string, Export>();
+      const importedDefinitions = new Map<string, Definition>();
+      const importedConstructors = new Map<string, Constructor>();
+      for (const dependency of module.imports) {
+        const exports = completed.get(dependency.uri)!;
+        for (const [name, entry] of exports.values) {
+          const previous = imported.get(name);
+          if (previous && previous.identity !== entry.identity) {
+            return yield* fail(`Conflicting imported name: ${name}`)
+              .at(dependency.span)
+              .inDocument(module.uri);
           }
-          for (const [name, definition] of exports.definitions) {
-            const previous = importedDefinitions.get(name);
-            if (previous && previous.type.id !== definition.type.id)
-              return yield* fail(`Conflicting imported type: ${name}`)
-                .at(dependency.span)
-                .inDocument(module.uri);
-            importedDefinitions.set(name, definition);
-          }
-          for (const [name, constructor] of exports.constructors)
-            importedConstructors.set(name, constructor);
+          imported.set(name, entry);
         }
-        const environment = new Map<string, Entry>([["print", primitive], ...imported]);
-        const parsed = parse(module.source);
-        if (!parsed.success)
-          return yield* fail(parsed.errors[0].message).at(parsed.errors[0].span).inDocument(module.uri);
-        const inEnvironment = <A>(body: Check<A>): Check<A> =>
+        for (const [name, definition] of exports.definitions) {
+          const previous = importedDefinitions.get(name);
+          if (previous && previous.type.id !== definition.type.id) {
+            return yield* fail(`Conflicting imported type: ${name}`)
+              .at(dependency.span)
+              .inDocument(module.uri);
+          }
+          importedDefinitions.set(name, definition);
+        }
+        for (const [name, constructor] of exports.constructors) {
+          importedConstructors.set(name, constructor);
+        }
+      }
+      const environment = new Map<string, Entry>([["print", primitive], ...imported]);
+      const parsed = parse(module.source);
+      if (!parsed.success) {
+        return yield* fail(parsed.errors[0].message).at(parsed.errors[0].span).inDocument(module.uri);
+      }
+      const inEnvironment = <A>(body: Check<A>): Check<A> =>
+        within(
+          env,
+          () => environment,
           within(
-            env,
-            () => environment,
-            within(
-              definitions,
-              () => importedDefinitions,
-              within(constructors, () => importedConstructors, body),
-            ),
-          );
-        if (module.uri === graph.root) {
-          for (const entry of imported.values()) external.set(entry.binding.id, entry);
-          return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body))).inDocument(module.uri);
-        }
-        let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
-        let moduleConstructors: ReadonlyMap<string, Constructor> = new Map();
-        const ownConstructors = new Map(
-          parsed.value.types.flatMap((type) =>
-            type.constructors.map(
-              (constructor) => [constructor.name, constructor.nameSpan] as const,
-            ),
+            definitions,
+            () => importedDefinitions,
+            within(constructors, () => importedConstructors, body),
           ),
         );
-        const bundled = yield* within(
-          observe,
-          () => false,
-          inEnvironment(
-            code.scope(function* () {
-              const initial = yield* withTypes(
-                parsed.value.types,
-                code.check(function* () {
-                  const value = yield* elaborate(parsed.value.body);
-                  moduleDefinitions = yield* get(definitions);
-                  moduleConstructors = yield* get(constructors);
-                  return value;
-                }),
-              );
-              if (prune(initial.type).kind !== "record")
-                return yield* fail(`Imported module must return a record: ${module.uri}`).at(parsed.value.body.span);
-              const result = yield* code.declare("exports", initial);
-              const fields = [{ name: "@values", value: result as Value<Type> }];
-              for (const name of ownConstructors.keys())
-                fields.push({ name: `@${name}`, value: code.ref(moduleConstructors.get(name)!.binding) });
-              return code.record(
-                record(row(new Map(fields.map((field) => [field.name, field.value.type])))),
-                fields,
-              );
-            }),
-          ),
-        ).inDocument(module.uri);
-        const bundle = yield* code.declare("module", bundled);
-        const bundledType = prune(bundle.type);
-        if (bundledType.kind !== "record") throw new Error("Expected module bundle");
-        const resultType = flatten(bundledType.row).fields.get("@values")!;
-        const type = prune(resultType);
-        if (type.kind !== "record") throw new Error("Expected record exports");
-        const result = code.field(resultType, bundle, "@values");
-        const entries = new Map(imported);
-        const constructorEntries = new Map(importedConstructors);
-        for (const [name, span] of ownConstructors) {
-          if (entries.has(name))
-            return yield* fail(`Conflicting exported name: ${name}`).at(span).inDocument(module.uri);
-          const original = moduleConstructors.get(name)!;
-          const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
-          const binding = value.node.binding;
-          entries.set(name, {
-            binding,
-            scheme: mono(original.type),
-            identity: original.binding.id,
-            origin: { uri: module.uri, name, span },
-          });
-          constructorEntries.set(name, { ...original, binding });
+      if (module.uri === graph.root) {
+        for (const entry of imported.values()) external.set(entry.binding.id, entry);
+        return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body))).inDocument(module.uri);
+      }
+      let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
+      let moduleConstructors: ReadonlyMap<string, Constructor> = new Map();
+      const ownConstructors = new Map(
+        parsed.value.types.flatMap((type) =>
+          type.constructors.map(
+            (constructor) => [constructor.name, constructor.nameSpan] as const,
+          )
+        ),
+      );
+      const bundled = yield* within(
+        observe,
+        () => false,
+        inEnvironment(
+          code.scope(function*() {
+            const initial = yield* withTypes(
+              parsed.value.types,
+              code.check(function*() {
+                const value = yield* elaborate(parsed.value.body);
+                moduleDefinitions = yield* get(definitions);
+                moduleConstructors = yield* get(constructors);
+                return value;
+              }),
+            );
+            if (prune(initial.type).kind !== "record") {
+              return yield* fail(`Imported module must return a record: ${module.uri}`).at(parsed.value.body.span);
+            }
+            const result = yield* code.declare("exports", initial);
+            const fields = [{ name: "@values", value: result as Value<Type> }];
+            for (const name of ownConstructors.keys()) {
+              fields.push({ name: `@${name}`, value: code.ref(moduleConstructors.get(name)!.binding) });
+            }
+            return code.record(
+              record(row(new Map(fields.map((field) => [field.name, field.value.type])))),
+              fields,
+            );
+          }),
+        ),
+      ).inDocument(module.uri);
+      const bundle = yield* code.declare("module", bundled);
+      const bundledType = prune(bundle.type);
+      if (bundledType.kind !== "record") throw new Error("Expected module bundle");
+      const resultType = flatten(bundledType.row).fields.get("@values")!;
+      const type = prune(resultType);
+      if (type.kind !== "record") throw new Error("Expected record exports");
+      const result = code.field(resultType, bundle, "@values");
+      const entries = new Map(imported);
+      const constructorEntries = new Map(importedConstructors);
+      for (const [name, span] of ownConstructors) {
+        if (entries.has(name)) {
+          return yield* fail(`Conflicting exported name: ${name}`).at(span).inDocument(module.uri);
         }
-        const origins = exportOrigins(parsed.value.body);
-        for (const [name, fieldType] of flatten(type.row).fields) {
-          if (entries.has(name))
-            return yield* fail(`Conflicting exported name: ${name}`)
-              .at(origins.get(name) ?? parsed.value.body.span)
-              .inDocument(module.uri);
-          const reference = yield* code.declare(name, code.field(fieldType, result, name));
-          entries.set(name, {
-            binding: reference.node.binding,
-            scheme: yield* generalize(fieldType, [...environment.values()].map((entry) => entry.scheme)),
-            identity: Symbol(name),
-            origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
-          });
+        const original = moduleConstructors.get(name)!;
+        const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
+        const binding = value.node.binding;
+        entries.set(name, {
+          binding,
+          scheme: mono(original.type),
+          identity: original.binding.id,
+          origin: { uri: module.uri, name, span },
+        });
+        constructorEntries.set(name, { ...original, binding });
+      }
+      const origins = exportOrigins(parsed.value.body);
+      for (const [name, fieldType] of flatten(type.row).fields) {
+        if (entries.has(name)) {
+          return yield* fail(`Conflicting exported name: ${name}`)
+            .at(origins.get(name) ?? parsed.value.body.span)
+            .inDocument(module.uri);
         }
-        completed.set(module.uri, {
-          values: entries,
-          definitions: moduleDefinitions,
-          constructors: constructorEntries,
+        const reference = yield* code.declare(name, code.field(fieldType, result, name));
+        entries.set(name, {
+          binding: reference.node.binding,
+          scheme: yield* generalize(fieldType, [...environment.values()].map((entry) => entry.scheme)),
+          identity: Symbol(name),
+          origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
         });
       }
-      throw new Error("Module graph has no root");
+      completed.set(module.uri, {
+        values: entries,
+        definitions: moduleDefinitions,
+        constructors: constructorEntries,
+      });
+    }
+    throw new Error("Module graph has no root");
   });
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   const lexical = highlight(source, tokens);
-  if (!graph.success)
+  if (!graph.success) {
     return { diagnostics: graph.errors, types: [], definitions: [], references: [], tokens: lexical };
+  }
   const external = new Map<symbol, Export>();
   const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
   return {
@@ -706,9 +757,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
     definitions: [
       ...analysis.definitions,
       ...[...external.values()]
-        .filter((entry) =>
-          analysis.references.some((reference) => reference.id === entry.binding.id),
-        )
+        .filter((entry) => analysis.references.some((reference) => reference.id === entry.binding.id))
         .map((entry) => ({
           ...entry.binding,
           span: entry.origin.span,
@@ -727,8 +776,9 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
   const built = run(buildModules(graph.value, new Map()));
   if (!built.success) {
     const errors: [Diagnostic, ...Diagnostic[]] = [graph.value.routeDiagnostic(built.errors[0])];
-    for (let i = 1; i < built.errors.length; i++)
+    for (let i = 1; i < built.errors.length; i++) {
       errors.push(graph.value.routeDiagnostic(built.errors[i]!));
+    }
     return { success: false, errors };
   }
   const ir = code.program(built.value);

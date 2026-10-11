@@ -1,49 +1,69 @@
 import type { Span } from "./diagnostic.ts";
-import { coreOperations, type CoreDescriptors } from "./operations/core.ts";
+import { type CoreDescriptors, coreOperations } from "./operations/core.ts";
 import { defineDialect, type DescriptorRecord, type Dialect } from "./operations/dialect.ts";
 export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
 
-export type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T };
-export type OperationNode = { readonly kind: string };
-export type Value<T> = { readonly type: T; readonly node: OperationNode; readonly operationId: symbol; readonly span?: Span };
-export type OperationValue<T, Node extends OperationNode> = Value<T> & { readonly node: Node };
-export type Reference<T> = OperationValue<T, { readonly kind: "ref"; readonly binding: Binding<T> }>;
-export type Declaration<T> = { readonly recursive?: true; readonly binding: Binding<T>; readonly value: Value<T> };
-export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readonly result: Value<T> };
+export type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T; };
+export type OperationNode = { readonly kind: string; };
+export type Value<T> = {
+  readonly type: T;
+  readonly node: OperationNode;
+  readonly operationId: symbol;
+  readonly span?: Span;
+};
+export type OperationValue<T, Node extends OperationNode> = Value<T> & { readonly node: Node; };
+export type Reference<T> = OperationValue<T, { readonly kind: "ref"; readonly binding: Binding<T>; }>;
+export type Declaration<T> = { readonly recursive?: true; readonly binding: Binding<T>; readonly value: Value<T>; };
+export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readonly result: Value<T>; };
 export type BodySource<T> = Body<T> | (() => Generator<Declaration<T>, Value<T>, unknown>);
 export type Program<T> = {
   readonly body: Body<T>;
   readonly operations: readonly OperationTraversal<T>[];
   readonly coreFunctionId?: symbol;
 };
-export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T> };
-export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T> };
+export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T>; };
+export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T>; };
 
 export type OperationTraversal<T> = {
   readonly id: symbol;
   readonly kind: string;
   readonly children: (node: OperationNode) => readonly Value<T>[];
-  readonly scopedBodies: (node: OperationNode) => readonly { readonly body: Body<T>; readonly bindings: readonly Binding<T>[] }[];
+  readonly scopedBodies: (
+    node: OperationNode,
+  ) => readonly { readonly body: Body<T>; readonly bindings: readonly Binding<T>[]; }[];
   readonly references: (node: OperationNode) => readonly Binding<T>[];
-  readonly map: (node: OperationNode, value: (child: Value<T>) => Value<T>, body: (child: Body<T>) => Body<T>, binding: (binding: Binding<T>) => Binding<T>) => OperationNode;
+  readonly map: (
+    node: OperationNode,
+    value: (child: Value<T>) => Value<T>,
+    body: (child: Body<T>) => Body<T>,
+    binding: (binding: Binding<T>) => Binding<T>,
+  ) => OperationNode;
   readonly validate?: (node: OperationNode) => void;
 };
-export type OperationFeature<T, Methods extends object, Descriptors extends DescriptorRecord = DescriptorRecord> = { readonly methods: Methods; readonly descriptors: Descriptors; readonly operations: readonly OperationTraversal<T>[] };
-export type LanguageBuilder<T, Methods extends object, Descriptors extends DescriptorRecord = DescriptorRecord> = Methods & {
-  use<More extends object, Added extends DescriptorRecord>(feature: OperationFeature<T, More, Added>): LanguageBuilder<T, Methods & More, Descriptors & Added>;
+export type OperationFeature<T, Methods extends object, Descriptors extends DescriptorRecord = DescriptorRecord> = {
+  readonly methods: Methods;
   readonly descriptors: Descriptors;
-  readonly coreDescriptors: CoreDescriptors<T>;
-  dialect(): Dialect<Descriptors, T>;
-  operationTraversals(): readonly OperationTraversal<T>[];
-  coreReferenceId(): symbol;
-  coreFunctionId(): symbol;
-  body(factory: BodySource<T>): Body<T>;
-  declare(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
-  declareRecursive(target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
-  block(type: T, source: BodySource<T>): Value<T>;
-  program(body: Body<T>): Program<T>;
-  validate(root: Body<T>): void;
+  readonly operations: readonly OperationTraversal<T>[];
 };
+export type LanguageBuilder<T, Methods extends object, Descriptors extends DescriptorRecord = DescriptorRecord> =
+  & Methods
+  & {
+    use<More extends object, Added extends DescriptorRecord>(
+      feature: OperationFeature<T, More, Added>,
+    ): LanguageBuilder<T, Methods & More, Descriptors & Added>;
+    readonly descriptors: Descriptors;
+    readonly coreDescriptors: CoreDescriptors<T>;
+    dialect(): Dialect<Descriptors, T>;
+    operationTraversals(): readonly OperationTraversal<T>[];
+    coreReferenceId(): symbol;
+    coreFunctionId(): symbol;
+    body(factory: BodySource<T>): Body<T>;
+    declare(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
+    declareRecursive(target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
+    block(type: T, source: BodySource<T>): Value<T>;
+    program(body: Body<T>): Program<T>;
+    validate(root: Body<T>): void;
+  };
 export const isReference = <T>(value: Value<T>, referenceOperationId: symbol): value is Reference<T> =>
   value.operationId === referenceOperationId && value.node.kind === "ref";
 
@@ -72,18 +92,27 @@ export const create = <T>() => {
       }
     }
   };
-  const declare = function* (name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown> {
+  const declare = function*(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown> {
     const target = binding(name, initial.type);
     yield { binding: target, value: initial };
     return ref(target);
   };
-  const declareRecursive = function* (target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown> {
-    if (initial.operationId !== coreFeature.functionId) throw new Error("Recursive declarations require a function initializer");
+  const declareRecursive = function*(
+    target: Binding<T>,
+    initial: Value<T>,
+  ): Generator<Declaration<T>, Reference<T>, unknown> {
+    if (initial.operationId !== coreFeature.functionId) {
+      throw new Error("Recursive declarations require a function initializer");
+    }
     yield { binding: target, value: initial, recursive: true };
     return ref(target);
   };
   const core = {
-    binding, ref, body, declare, declareRecursive,
+    binding,
+    ref,
+    body,
+    declare,
+    declareRecursive,
     literal: coreFeature.methods.literal,
     binary: coreFeature.methods.binary,
     call: coreFeature.methods.call,
@@ -91,21 +120,42 @@ export const create = <T>() => {
     conditional: (type: T, cond: Value<T>, thenSource: BodySource<T>, elseSource: BodySource<T>) =>
       coreFeature.methods.conditional(type, cond, body(thenSource), body(elseSource)),
     block: (type: T, source: BodySource<T>) => coreFeature.methods.block(type, body(source)),
-    scope: (source: BodySource<T>) => { const built = body(source); return coreFeature.methods.block(built.result.type, built); },
+    scope: (source: BodySource<T>) => {
+      const built = body(source);
+      return coreFeature.methods.block(built.result.type, built);
+    },
     at: (value: Value<T>, span: Span): Value<T> => ({ ...value, span }),
   };
   const methodNames = new Set(Object.keys(core));
-  const use = <Methods extends object, Added extends DescriptorRecord>(feature: OperationFeature<T, Methods, Added>) => {
+  const use = <Methods extends object, Added extends DescriptorRecord>(
+    feature: OperationFeature<T, Methods, Added>,
+  ) => {
     for (const method of Object.keys(feature.methods)) {
-      if (methodNames.has(method) || ["use", "program", "validate", "operationTraversals", "coreReferenceId", "coreFunctionId", "descriptors", "coreDescriptors", "dialect"].includes(method))
+      if (
+        methodNames.has(method)
+        || [
+          "use",
+          "program",
+          "validate",
+          "operationTraversals",
+          "coreReferenceId",
+          "coreFunctionId",
+          "descriptors",
+          "coreDescriptors",
+          "dialect",
+        ].includes(method)
+      ) {
         throw new Error(`Duplicate language feature method: ${method}`);
+      }
     }
     const selected = defineDialect(feature.descriptors);
     for (const key of Object.keys(feature.descriptors)) {
       if (Object.hasOwn(descriptors, key)) throw new Error(`Duplicate dialect key: ${key}`);
     }
     for (const operation of selected.operations) {
-      if (operations.some((existing) => existing.id === operation.id)) throw new Error(`Duplicate language operation descriptor: ${operation.kind}`);
+      if (operations.some((existing) => existing.id === operation.id)) {
+        throw new Error(`Duplicate language operation descriptor: ${operation.kind}`);
+      }
     }
     for (const method of Object.keys(feature.methods)) methodNames.add(method);
     operations.push(...selected.operations as unknown as OperationTraversal<T>[]);
@@ -131,7 +181,11 @@ export const create = <T>() => {
 export const validate = <T>(program: Program<T>): void =>
   validateBody(program.body, program.operations, program.coreFunctionId);
 
-const validateBody = <T>(root: Body<T>, operations: readonly OperationTraversal<T>[], coreFunctionId?: symbol): void => {
+const validateBody = <T>(
+  root: Body<T>,
+  operations: readonly OperationTraversal<T>[],
+  coreFunctionId?: symbol,
+): void => {
   const byId = new Map<symbol, OperationTraversal<T>>();
   for (const operation of operations) {
     if (byId.has(operation.id)) throw new Error(`Duplicate operation descriptor: ${operation.kind}`);
@@ -150,8 +204,9 @@ const validateBody = <T>(root: Body<T>, operations: readonly OperationTraversal<
       const descriptor = byId.get(declaration.value.operationId);
       if (!descriptor) throw new Error(`Missing operation traversal for IR operation: ${declaration.value.node.kind}`);
       if (declaration.recursive) {
-        if (!coreFunctionId || declaration.value.operationId !== coreFunctionId)
+        if (!coreFunctionId || declaration.value.operationId !== coreFunctionId) {
           throw new Error("Recursive declarations require a function initializer");
+        }
         introduce(declaration.binding, visible);
       }
       visitValue(declaration.value, visible);
@@ -186,7 +241,11 @@ export const mapBody = <T>(
     return transformValue(original, mapped);
   };
   const mapBuiltBody = (built: Body<T>): Body<T> => ({
-    declarations: built.declarations.map((declaration) => ({ ...declaration, binding: mapBinding(declaration.binding), value: mapValue(declaration.value) })),
+    declarations: built.declarations.map((declaration) => ({
+      ...declaration,
+      binding: mapBinding(declaration.binding),
+      value: mapValue(declaration.value),
+    })),
     result: mapValue(built.result),
   });
   return mapBuiltBody(root);

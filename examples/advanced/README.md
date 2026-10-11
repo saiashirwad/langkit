@@ -56,16 +56,16 @@ Nothing is loaded implicitly. Add `import "./stdlib.advanced";` to use the stand
 
 The library also defines these ordinary source-language helpers:
 
-| Helper | Calling convention |
-| --- | --- |
-| `mapOption`, `mapResult` | `mapOption(f)(option)`, `mapResult(f)(result)` |
-| `withDefault` | `withDefault(fallback)(option)` |
-| `andThen` | `andThen(f)(result)`; `f` returns a `Result` |
-| `mapList` | `mapList(f)(list)` |
-| `foldList` | `foldList(step)(initial)(list)`; `step(accumulator)(element)`, left to right |
-| `head` | `head(list)` returns an `Option` |
-| `length`, `append` | `length(list)`, `append(left)(right)` |
-| `range` | `range(start)(end)`, inclusive and increments by one |
+| Helper                   | Calling convention                                                           |
+| ------------------------ | ---------------------------------------------------------------------------- |
+| `mapOption`, `mapResult` | `mapOption(f)(option)`, `mapResult(f)(result)`                               |
+| `withDefault`            | `withDefault(fallback)(option)`                                              |
+| `andThen`                | `andThen(f)(result)`; `f` returns a `Result`                                 |
+| `mapList`                | `mapList(f)(list)`                                                           |
+| `foldList`               | `foldList(step)(initial)(list)`; `step(accumulator)(element)`, left to right |
+| `head`                   | `head(list)` returns an `Option`                                             |
+| `length`, `append`       | `length(list)`, `append(left)(right)`                                        |
+| `range`                  | `range(start)(end)`, inclusive and increments by one                         |
 
 `print` is the only intrinsic. It prints a value and returns `{}`; bind its result with `let` to sequence it. The command-line runner also prints the final result. The language adds `//` comments and multiple call arguments; all Rows record operations remain available.
 

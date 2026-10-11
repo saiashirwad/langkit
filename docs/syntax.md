@@ -3,20 +3,20 @@
 `langkit/syntax` provides an optional recursive expression schema. Ordinary user-defined ASTs remain usable without it. The schema derives constructors, node types, immediate-child mapping, and explicit binder-aware traversal. Parsing and typing are separate.
 
 ```ts
-import { defineSyntax, syntax, type NodeOf } from "langkit/syntax";
+import { defineSyntax, type NodeOf, syntax } from "langkit/syntax";
 
 const expressions = defineSyntax({
-	number: syntax.node("number", { value: syntax.data<number>() }),
-	fn: syntax.node("fn", {
-		parameter: syntax.binder(),
-		body: syntax.scopedChild({ binds: ["parameter"] }),
-	}),
+  number: syntax.node("number", { value: syntax.data<number>() }),
+  fn: syntax.node("fn", {
+    parameter: syntax.binder(),
+    body: syntax.scopedChild({ binds: ["parameter"] }),
+  }),
 });
 type Expr = NodeOf<typeof expressions>;
 
 const expression: Expr = expressions.make.fn({
-	parameter: syntax.binding("x"),
-	body: expressions.make.number({ value: 42 }),
+  parameter: syntax.binding("x"),
+  body: expressions.make.number({ value: 42 }),
 }, { span: { start: 0, end: 12 } });
 ```
 
