@@ -30,8 +30,8 @@ import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
 import { readFileSync } from "node:fs";
-import { createJudgments, type RuleTable } from "../../src/judgments.ts";
-import { createBindings } from "../../src/bindings.ts";
+import { createJudgments, type RuleTable } from "langkit/judgments";
+import { createBindings } from "langkit/bindings";
 
 import {
   number,

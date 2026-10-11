@@ -1,12 +1,12 @@
-import { check, diagnostics, fail, get, pure, scoped, state, within, type Check } from "../../src/check.ts";
-import type { Analysis, Definition, Reference } from "../../src/analysis.ts";
-import type { Span } from "../../src/diagnostic.ts";
-import { createBindings } from "../../src/bindings.ts";
-import { createJudgments, type RuleTable, type Synthesized } from "../../src/judgments.ts";
-import { createCompiler } from "../../src/language.ts";
-import { createTrace, type TraceEvent } from "../../src/trace.ts";
-import * as rows from "../../src/types/rows.ts";
-import * as rank from "../../src/types/higher-rank.ts";
+import { check, diagnostics, fail, get, pure, scoped, state, within, type Check } from "langkit/check";
+import type { Analysis, Definition, Reference } from "langkit/analysis";
+import type { Span } from "langkit/diagnostic";
+import { createBindings } from "langkit/bindings";
+import { createJudgments, type RuleTable, type Synthesized } from "langkit/judgments";
+import { createCompiler } from "langkit/language";
+import { createTrace, type TraceEvent } from "langkit/trace";
+import * as rows from "langkit/types/rows";
+import * as rank from "langkit/types/higher-rank";
 import { program, type Annotation, type Expr } from "./syntax.ts";
 
 export interface MiniFacts {

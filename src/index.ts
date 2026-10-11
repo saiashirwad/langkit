@@ -1,5 +1,15 @@
-export { Check, check, pure, fail, run, state, scoped, get, within, bind, lookup, sequence, attempt, choice } from "./check.ts";
-export type { Result, State, Scoped } from "./check.ts";
+export { Check, check, pure, fail, run, runDetailed, diagnostics, state, scoped, get, within, bind, lookup, sequence, attempt, choice } from "./check.ts";
+export type { Result, DetailedResult, State, Scoped } from "./check.ts";
+export { createJudgments } from "./judgments.ts";
+export type { Synthesized, Judgments, CheckingModes, RuleBody, Rule, RuleTable, JudgmentOptions } from "./judgments.ts";
+export { createBindings } from "./bindings.ts";
+export type { BindingEntry, BindingIdentity, BindingPolicy, Bindings } from "./bindings.ts";
+export { createTrace, traceAt } from "./trace.ts";
+export type { Trace, TraceEvent, TraceRecorder } from "./trace.ts";
+export { elaborate, isChecked } from "./elaboration.ts";
+export type { CheckedArtifact, CheckedModule, ElaborationPolicy, Outcome } from "./elaboration.ts";
+export { createCompiler } from "./language.ts";
+export type { CompilerRecipe, Compiler } from "./language.ts";
 export { pruneLink, assign, add, put, append } from "./inference.ts";
 export { render } from "./diagnostic.ts";
 export type { Diagnostic, Span } from "./diagnostic.ts";

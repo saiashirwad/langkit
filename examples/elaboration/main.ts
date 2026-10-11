@@ -1,5 +1,5 @@
 import { runInNewContext } from "node:vm";
-import { render } from "../../src/diagnostic.ts";
+import { render } from "langkit/diagnostic";
 import { hm, higherRank } from "./mini.ts";
 
 const compiler = process.argv[2] === "higher-rank" ? higherRank : hm;

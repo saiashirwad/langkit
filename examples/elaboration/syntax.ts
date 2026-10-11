@@ -1,5 +1,5 @@
-import { between, choice, commit, createLexemes, parser, postfix, recursive, regex, optional, many1, type Parser } from "../../src/parse.ts";
-import type { Span } from "../../src/diagnostic.ts";
+import { between, choice, commit, createLexemes, parser, postfix, recursive, regex, optional, many1, type Parser } from "langkit/parse";
+import type { Span } from "langkit/diagnostic";
 
 export type Annotation =
   | { readonly kind: "name"; readonly name: string }
