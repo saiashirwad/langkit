@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { version } from "typescript";
 import { editorFile, observe, position, probes, record, validate, validateResponse } from "./editor-contracts.ts";
-import { compiler, root } from "./type-contracts.ts";
+import { compiler, fragment, root } from "./type-contracts.ts";
 
 const args = process.argv.slice(2);
 assert.ok(args.every((arg) => ["--update", "--inspect"].includes(arg)), "usage: editor-check.ts [--update] [--inspect]");
@@ -118,17 +118,26 @@ try {
     validate(probe, observation);
     observations[probe.id] = observation;
   }
-  const control = probes.find((probe) => probe.id === "yield-literal")!;
+  const controls = [
+    { id: "yield-literal", original: 'pure("ready" as const)', replacement: (type: string) => type === "any" ? 'pure<any>("ready")' : "pure<never>(undefined as never)" },
+    { id: "judgment-synth-yield", original: 'judgments.synth({ kind: "number", value: 42 })', replacement: (type: string) => `pure<${type}>(undefined as ${type})` },
+    { id: "staged-output", original: 'staged.prop(stagedProgram.result, "total")', replacement: (type: string) => `undefined as ${type}` },
+  ];
+  let documentVersion = 1;
+  for (const mutation of controls) {
+  const control = probes.find((probe) => probe.id === mutation.id)!;
+  const seed = fragment(source, mutation.original);
   for (const type of ["any", "never"]) {
-    const mutated = source.replace('pure("ready" as const)', type === "any" ? 'pure<any>("ready")' : "pure<never>(undefined as never)");
-    send({ method: "textDocument/didChange", params: { textDocument: { uri, version: type === "any" ? 2 : 3 }, contentChanges: [{ text: mutated }] } });
+    const mutated = source.slice(0, seed.index) + mutation.replacement(type) + source.slice(seed.index + seed.text.length);
+    send({ method: "textDocument/didChange", params: { textDocument: { uri, version: ++documentVersion }, contentChanges: [{ text: mutated }] } });
     const observation = observe(control, await request("textDocument/hover", { textDocument: { uri }, position: position(mutated, control) }));
     assert.match(observation.text, new RegExp(`\\b${type}\\b`), `real LSP must observe ${type} mutation`);
     assert.throws(() => validate(control, observation), /missing|degraded/, "mutant hover must fail gate");
-    console.log(`Real LSP ${type} control rejected: ${observation.text.replaceAll("\n", " ")}`);
+    console.log(`Real LSP ${control.id} ${type} control rejected: ${observation.text.replaceAll("\n", " ")}`);
   }
-  send({ method: "textDocument/didChange", params: { textDocument: { uri, version: 4 }, contentChanges: [{ text: source }] } });
+  send({ method: "textDocument/didChange", params: { textDocument: { uri, version: ++documentVersion }, contentChanges: [{ text: source }] } });
   assert.deepEqual(observe(control, await request("textDocument/hover", { textDocument: { uri }, position: position(source, control) })), observations[control.id], "restored hover must recover");
+  }
   const snapshot = { compilerVersion: version, observations };
   if (args.includes("--update")) writeFileSync(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`);
   else assert.deepEqual(snapshot, JSON.parse(readFileSync(snapshotFile, "utf8")), "editor output changed: inspect before --update");

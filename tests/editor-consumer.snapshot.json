@@ -69,12 +69,36 @@
       ]
     },
     "backend-signature": {
-      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, handlers: BackendHandlers<NoInfer<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, JavaScriptContext<...>, string>): readonly DispatcherHandler<JavaScriptContext<rows.Type>>[]",
+      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, handlers: { readonly literal: (literalNode: Literal<rows.Type>) => string; readonly record: (recordNode: RecordNode<rows.Type>, recordContext: JavaScriptContext<rows.Type>) => string; }): readonly DispatcherHandler<JavaScriptContext<rows.Type>>[]",
       "activeParameter": 1
     },
     "literal-signature": {
       "text": "literal(type: rows.Type, value: number | boolean | string): OperationValue<rows.Type, Literal<rows.Type>>",
       "activeParameter": 1
+    },
+    "judgment-rule-node": {
+      "text": "```typescript\n(parameter) numberRuleNode: {\n    readonly kind: \"number\";\n    readonly value: number;\n}\n```"
+    },
+    "judgment-synth-yield": {
+      "text": "```typescript\nconst synthesized: Synthesized<AuthorType, AuthorTerm>\n```"
+    },
+    "staged-arrow-parameter": {
+      "text": "```typescript\n(parameter) amount: staged.Ref<number>\n```"
+    },
+    "staged-arrow-result": {
+      "text": "```typescript\nconst stagedArrow: staged.Expr<(args_0: number, args_1: string) => {\n    total: number;\n    label: string;\n}>\n```"
+    },
+    "staged-record": {
+      "text": "```typescript\nconst stagedRecord: staged.Expr<{\n    total: number;\n    label: string;\n}>\n```"
+    },
+    "staged-output": {
+      "text": "```typescript\nconst stagedOutput: staged.Expr<number>\n```"
+    },
+    "program-result-handle": {
+      "text": "```typescript\nconst resultHandle: staged.Ref<{\n    total: number;\n    label: string;\n}>\n```"
+    },
+    "staged-program": {
+      "text": "```typescript\nconst stagedProgram: staged.Program<{\n    total: number;\n    label: string;\n}>\n```"
     }
   }
 }

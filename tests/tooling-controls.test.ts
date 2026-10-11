@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { observe, position, validate, validateResponse, type Probe } from "../tools/editor-contracts.ts";
 import { parseMetrics, scalingConsumer } from "../tools/type-profile.ts";
+import { fragment } from "../tools/type-contracts.ts";
 
 const hover: Probe = { id: "control", method: "hover", anchor: "probe", offset: 1, require: ['"ready"'], maxLength: 100 };
 
@@ -10,6 +11,8 @@ test("editor probe anchors reject missing, ambiguous and out-of-range locations"
   assert.throws(() => position("nothing", hover), /anchor missing/);
   assert.throws(() => position("probe probe", hover), /anchor ambiguous/);
   assert.throws(() => position("probe", { ...hover, offset: 6 }), /invalid offset/);
+  assert.deepEqual(position("call(\n  value\n)", { ...hover, anchor: "call(value)", offset: 6 }), { line: 1, character: 3 });
+  assert.deepEqual(fragment("prove<\n Equal<A, B>\n>();", "prove<Equal<A, B>>();"), { index: 0, text: "prove<\n Equal<A, B>\n>();" });
 });
 
 test("protocol-invalid responses cannot masquerade as valid observations", () => {
@@ -34,4 +37,9 @@ test("type profile requires actual metrics and generates distinct typed descript
   assert.equal([...source.matchAll(/defineOperation<Type,/g)].length, 10);
   assert.match(source, /prove<Equal<typeof node, case9Node>>/);
   assert.match(source, /yield\* sequence/);
+  assert.match(source, /createJudgments<Source, ResultType, Term>/);
+  assert.match(source, /staged.Ref<number>/);
+  assert.match(source, /staged.Ref<string>/);
+  assert.match(source, /staged.Ref<boolean>/);
+  assert.match(source, /tag: "case9"/);
 });

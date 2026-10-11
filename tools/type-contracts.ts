@@ -6,6 +6,12 @@ import { fileURLToPath } from "node:url";
 
 export const root = fileURLToPath(new URL("../", import.meta.url));
 export const compiler = resolve(root, "node_modules/typescript/bin/tsc");
+export function fragment(source: string, text: string): { index: number; text: string } {
+  const pattern = [...text.replace(/\s/g, "")].map((character) => character.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("\\s*");
+  const matches = [...source.matchAll(new RegExp(pattern, "g"))];
+  assert.equal(matches.length, 1, `fragment must match once: ${text}`);
+  return { index: matches[0]!.index, text: matches[0]![0] };
+}
 export function compile(config: string, extra: string[] = []) {
   const result = spawnSync(process.execPath, [compiler, "-p", config, "--pretty", "false", "--incremental", "false", ...extra], { cwd: root, encoding: "utf8", timeout: 120_000 });
   if (result.error) throw result.error;
@@ -37,24 +43,31 @@ export function runContracts(): void {
     const baseline = compile(project.config);
     assert.equal(baseline.status, 0, `baseline failed\n${baseline.output}`);
     console.log("Compiler corpus: clean isolated baseline (package self-reference and pnpm dependencies resolved)");
-    const original = 'pure("ready" as const)';
-    assert.equal(fixture.split(original).length, 2, "mutation seed must match once");
+    const controls = [
+      { name: "yielded", original: 'pure("ready" as const)', replacement: (type: string) => type === "any" ? 'pure<any>("ready")' : "pure<never>(undefined as never)", proof: 'prove<Equal<typeof yielded, "ready">>();' },
+      { name: "synthesized", original: 'judgments.synth({ kind: "number", value: 42 })', replacement: (type: string) => `pure<${type}>(undefined as ${type})`, proof: "prove<Equal<typeof synthesized, Synthesized<AuthorType, AuthorTerm>>>();" },
+      { name: "stagedOutput", original: 'staged.prop(stagedProgram.result, "total")', replacement: (type: string) => `undefined as ${type}`, proof: "prove<Equal<typeof stagedOutput, staged.Expr<number>>>();" },
+    ];
+    for (const control of controls) {
+    const seed = fragment(fixture, control.original);
     for (const type of ["any", "never"] as const) {
-      const source = fixture.replace(original, type === "any" ? 'pure<any>("ready")' : "pure<never>(undefined as never)");
+      const source = fixture.slice(0, seed.index) + control.replacement(type) + fixture.slice(seed.index + seed.text.length);
       writeFileSync(file, source);
       const result = compile(project.config);
       assert.equal(result.status, 1, `${type} control must fail\n${result.output}`);
       const locations = [
-        'prove<Equal<typeof yielded, "ready">>();',
-        `prove<Equal<${type === "any" ? "IsAny" : "IsNever"}<typeof yielded>, false>>();`,
+        control.proof,
+        `prove<Equal<${type === "any" ? "IsAny" : "IsNever"}<typeof ${control.name}>, false>>();`,
       ];
       const expected = locations.map((location) => {
-        assert.equal(source.split(location).length, 2, "proof anchor must match once");
-        return `${file}:${source.slice(0, source.indexOf(location)).split("\n").length}:TS2344`;
+        const proof = fragment(source, location);
+        const argument = source.indexOf("Equal", proof.index);
+        return `${file}:${source.slice(0, argument).split("\n").length}:TS2344`;
       }).sort();
       const actual = [...result.output.matchAll(/^(?:(.+)\((\d+),\d+\): )?error TS(\d+):/gm)].map((match) => `${match[1] ? resolve(root, match[1]) : "<global>"}:${match[2] ?? 0}:TS${match[3]}`).sort();
       assert.deepEqual(actual, expected, `${type} control failed for unintended reasons\n${result.output}`);
-      console.log(`Compiler ${type} mutant rejected: ${expected.map((item) => item.replace(`${project.directory}/`, "")).join(", ")}`);
+      console.log(`Compiler ${control.name} ${type} mutant rejected: ${expected.map((item) => item.replace(`${project.directory}/`, "")).join(", ")}`);
+    }
     }
   } finally {
     project.dispose();
