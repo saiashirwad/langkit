@@ -1,5 +1,6 @@
 import type { Span } from "./diagnostic.ts";
-import { coreOperations } from "./operations/core.ts";
+import { coreOperations, type CoreDescriptors } from "./operations/core.ts";
+import { defineDialect, type DescriptorRecord, type Dialect } from "./operations/dialect.ts";
 export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
 
 export type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T };
@@ -31,9 +32,12 @@ export type OperationTraversal<T> = {
   readonly map: (node: OperationNode, value: (child: Value<T>) => Value<T>, body: (child: Body<T>) => Body<T>, binding: (binding: Binding<T>) => Binding<T>) => OperationNode;
   readonly validate?: (node: OperationNode) => void;
 };
-export type OperationFeature<T, Methods extends object> = { readonly methods: Methods; readonly operations: readonly OperationTraversal<T>[] };
-export type LanguageBuilder<T, Methods extends object> = Methods & {
-  use<More extends object>(feature: OperationFeature<T, More>): LanguageBuilder<T, Methods & More>;
+export type OperationFeature<T, Methods extends object, Descriptors extends DescriptorRecord = DescriptorRecord> = { readonly methods: Methods; readonly descriptors: Descriptors; readonly operations: readonly OperationTraversal<T>[] };
+export type LanguageBuilder<T, Methods extends object, Descriptors extends DescriptorRecord = DescriptorRecord> = Methods & {
+  use<More extends object, Added extends DescriptorRecord>(feature: OperationFeature<T, More, Added>): LanguageBuilder<T, Methods & More, Descriptors & Added>;
+  readonly descriptors: Descriptors;
+  readonly coreDescriptors: CoreDescriptors<T>;
+  dialect(): Dialect<Descriptors, T>;
   operationTraversals(): readonly OperationTraversal<T>[];
   coreOperationTraversals(): readonly OperationTraversal<T>[];
   coreReferenceId(): symbol;
@@ -53,6 +57,7 @@ export const isReference = <T>(value: Value<T>, referenceOperationId: symbol): v
 export const create = <T>() => {
   const coreFeature = coreOperations<T>();
   const operations = [...coreFeature.operations];
+  const descriptors: Record<string, DescriptorRecord[string]> = { ...coreFeature.descriptors };
   const binding = (name: string, type: T): Binding<T> => ({ id: Symbol(name), name, type });
   const ref = (target: Binding<T>, type: T = target.type): Reference<T> => coreFeature.methods.ref(type, target);
   const body = (source: BodySource<T>): Body<T> => {
@@ -97,31 +102,39 @@ export const create = <T>() => {
     at: (value: Value<T>, span: Span): Value<T> => ({ ...value, span }),
   };
   const methodNames = new Set(Object.keys(core));
-  const use = <Methods extends object>(feature: OperationFeature<T, Methods>) => {
+  const use = <Methods extends object, Added extends DescriptorRecord>(feature: OperationFeature<T, Methods, Added>) => {
     for (const method of Object.keys(feature.methods)) {
-      if (methodNames.has(method) || method === "use" || method === "program" || method === "validate" || method === "operationTraversals" || method === "coreOperationTraversals" || method === "coreReferenceId" || method === "coreFunctionId")
+      if (methodNames.has(method) || ["use", "program", "validate", "operationTraversals", "coreOperationTraversals", "coreReferenceId", "coreFunctionId", "descriptors", "coreDescriptors", "dialect"].includes(method))
         throw new Error(`Duplicate language feature method: ${method}`);
     }
-    for (const operation of feature.operations) {
+    const selected = defineDialect(feature.descriptors);
+    for (const key of Object.keys(feature.descriptors)) {
+      if (Object.hasOwn(descriptors, key)) throw new Error(`Duplicate dialect key: ${key}`);
+    }
+    for (const operation of selected.operations) {
       if (operations.some((existing) => existing.id === operation.id)) throw new Error(`Duplicate language operation descriptor: ${operation.kind}`);
     }
     for (const method of Object.keys(feature.methods)) methodNames.add(method);
-    operations.push(...feature.operations);
+    operations.push(...selected.operations as unknown as OperationTraversal<T>[]);
+    Object.assign(descriptors, feature.descriptors);
     Object.assign(core, feature.methods);
     return core as unknown as LanguageBuilder<T, typeof core & Methods>;
   };
   return Object.assign(core, {
     use,
-    operationTraversals: (): readonly OperationTraversal<T>[] => operations,
+    descriptors,
+    coreDescriptors: coreFeature.descriptors,
+    dialect: () => defineDialect(descriptors),
+    operationTraversals: (): readonly OperationTraversal<T>[] => [...operations],
     coreOperationTraversals: (): readonly OperationTraversal<T>[] => coreFeature.operations,
     coreReferenceId: (): symbol => coreFeature.refId,
     coreFunctionId: (): symbol => coreFeature.functionId,
     validate: (root: Body<T>): void => validateBody(root, operations, coreFeature.functionId),
     program: (root: Body<T>): Program<T> => {
       validateBody(root, operations, coreFeature.functionId);
-      return { body: root, operations, coreFunctionId: coreFeature.functionId };
+      return { body: root, operations: [...operations], coreFunctionId: coreFeature.functionId };
     },
-  });
+  }) as unknown as LanguageBuilder<T, typeof core, CoreDescriptors<T>>;
 };
 /** Scope validation is descriptor-driven; recursive declarations require this core function id. */
 export const validate = <T>(program: Program<T>): void =>

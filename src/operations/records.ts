@@ -1,5 +1,6 @@
 import type { OperationFeature, OperationNode, Value } from "../ir.ts";
-import { defineOperation, traversalOf } from "./descriptor.ts";
+import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
+import { defineDialect } from "./dialect.ts";
 
 type RecordField<T> = { readonly name: string; readonly value: Value<T> };
 type RecordNode<T> = OperationNode & { readonly kind: "record"; readonly fields: readonly RecordField<T>[]; readonly base?: Value<T> };
@@ -12,7 +13,8 @@ export type RecordMethods<T> = {
 };
 
 /** Record evaluation is source-ordered fields followed by the optional base. */
-export const records = <T>(): OperationFeature<T, RecordMethods<T>> => {
+export type RecordDescriptors<T> = { readonly record: OperationDescriptor<T, RecordNode<T>>; readonly merge: OperationDescriptor<T, MergeNode<T>>; readonly field: OperationDescriptor<T, FieldNode<T>> };
+export const records = <T>(): OperationFeature<T, RecordMethods<T>, RecordDescriptors<T>> => {
   const record = defineOperation<T, RecordNode<T>>("record", {
     children: (node) => [...node.fields.map(({ value }) => value), ...(node.base ? [node.base] : [])],
     scopedBodies: () => [], references: () => [],
@@ -27,7 +29,7 @@ export const records = <T>(): OperationFeature<T, RecordMethods<T>> => {
     map: (node, mapValue) => ({ ...node, record: mapValue(node.record) }),
   });
   return {
-    operations: [traversalOf(record), traversalOf(merge), traversalOf(field)],
+    ...defineDialect({ record, merge, field }),
     methods: {
       record: (type, fields, base) => record.make(type, base ? { kind: "record", fields, base } : { kind: "record", fields }),
       merge: (type, left, right) => merge.make(type, { kind: "merge", left, right }),

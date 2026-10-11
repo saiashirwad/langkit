@@ -1,5 +1,6 @@
 import type { Binding, Body, OperationFeature, OperationNode, OperationValue, Operator, Value } from "../ir.ts";
-import { defineOperation, traversalOf } from "./descriptor.ts";
+import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
+import { defineDialect } from "./dialect.ts";
 
 type Literal<T> = OperationNode & { readonly kind: "literal"; readonly value: number | boolean | string };
 type ReferenceNode<T> = OperationNode & { readonly kind: "ref"; readonly binding: Binding<T> };
@@ -19,7 +20,16 @@ export type CoreMethods<T> = {
   block(type: T, body: Body<T>): OperationValue<T, Block<T>>;
 };
 
-export type CoreFeature<T> = OperationFeature<T, CoreMethods<T>> & { readonly functionId: symbol; readonly refId: symbol };
+export type CoreDescriptors<T> = {
+  readonly literal: OperationDescriptor<T, Literal<T>>;
+  readonly ref: OperationDescriptor<T, ReferenceNode<T>>;
+  readonly binary: OperationDescriptor<T, Binary<T>>;
+  readonly call: OperationDescriptor<T, Call<T>>;
+  readonly fn: OperationDescriptor<T, FunctionNode<T>>;
+  readonly conditional: OperationDescriptor<T, Conditional<T>>;
+  readonly block: OperationDescriptor<T, Block<T>>;
+};
+export type CoreFeature<T> = OperationFeature<T, CoreMethods<T>, CoreDescriptors<T>> & { readonly functionId: symbol; readonly refId: symbol };
 
 /** Small primitive operation set: binding identity is data and all traversal is descriptor-owned. */
 export const coreOperations = <T>(): CoreFeature<T> => {
@@ -55,9 +65,9 @@ export const coreOperations = <T>(): CoreFeature<T> => {
     map: (node, _value, body) => ({ ...node, body: body(node.body) }),
   });
   return {
+    ...defineDialect({ literal, ref, binary, call, fn, conditional, block }),
     functionId: fn.id,
     refId: ref.id,
-    operations: [traversalOf(literal), traversalOf(ref), traversalOf(binary), traversalOf(call), traversalOf(fn), traversalOf(conditional), traversalOf(block)],
     methods: {
       literal: (type, value) => literal.make(type, { kind: "literal", value }),
       ref: (type, binding) => ref.make(type, { kind: "ref", binding }),

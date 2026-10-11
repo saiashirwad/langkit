@@ -1,5 +1,6 @@
 import type { MatchCase, MatchFallback, OperationFeature, OperationNode, Value } from "../ir.ts";
-import { defineOperation, traversalOf } from "./descriptor.ts";
+import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
+import { defineDialect } from "./dialect.ts";
 
 type VariantNode<T> = OperationNode & { readonly kind: "variant"; readonly tag: string; readonly fields: readonly Value<T>[] };
 type MatchNode<T> = OperationNode & { readonly kind: "match"; readonly value: Value<T>; readonly cases: readonly MatchCase<T>[]; readonly fallback?: MatchFallback<T> };
@@ -9,7 +10,8 @@ export type VariantMethods<T> = {
 };
 
 /** Branch descriptors make pattern bindings visible only in their branch bodies. */
-export const variants = <T>(): OperationFeature<T, VariantMethods<T>> => {
+export type VariantDescriptors<T> = { readonly variant: OperationDescriptor<T, VariantNode<T>>; readonly match: OperationDescriptor<T, MatchNode<T>> };
+export const variants = <T>(): OperationFeature<T, VariantMethods<T>, VariantDescriptors<T>> => {
   const variant = defineOperation<T, VariantNode<T>>("variant", {
     children: (node) => node.fields, scopedBodies: () => [], references: () => [],
     map: (node, mapValue) => ({ ...node, fields: node.fields.map(mapValue) }),
@@ -36,7 +38,7 @@ export const variants = <T>(): OperationFeature<T, VariantMethods<T>> => {
     },
   });
   return {
-    operations: [traversalOf(variant), traversalOf(match)],
+    ...defineDialect({ variant, match }),
     methods: {
       variant: (type, tag, fields) => variant.make(type, { kind: "variant", tag, fields }),
       match: (type, matched, cases, fallback) => match.make(type, fallback ? { kind: "match", value: matched, cases, fallback } : { kind: "match", value: matched, cases }),
