@@ -7,7 +7,7 @@ import { analyze, compile, show } from "../examples/shapes/shapes.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map(error => error.message).join("\n"));
   return result.value;
 };
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
@@ -76,7 +76,7 @@ for (const [source, message] of [
 ] as const) test(`shapes macro rejects: ${source}`, () => {
   const result = compile(source);
   assert.equal(result.success, false);
-  if (!result.success) assert.match(result.error.message, message);
+  if (!result.success) assert.ok(result.errors.some(error => message.test(error.message)));
 });
 
 test("macro expansion preserves evaluation semantics", () => {
@@ -98,10 +98,41 @@ test("macro errors point to the outer call, not the template", () => {
   const result = compile(source);
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.span?.start, source.indexOf('(outer "bad")'));
-    assert.match(result.error.context.join(" "), /expanding macro outer.*expanding macro add/);
+    assert.equal(result.errors[0]?.span?.start, source.indexOf('(outer "bad")'));
+    assert.match(result.errors[0]?.context.join(" ") ?? "", /expanding macro outer.*expanding macro add/);
   }
-  assert.deepEqual(analyze(source).diagnostics, result.success ? [] : [result.error]);
+  assert.deepEqual(analyze(source).diagnostics, result.success ? [] : result.errors);
+});
+
+test("recovered macro diagnostics retain each invocation origin and expansion context", () => {
+  const source = '(macro add [x] (+ x 1)) (macro outer [x] (add x)) {first (outer "bad") second (outer false)}';
+  const result = compile(source);
+  assert.equal(result.success, false);
+  if (!result.success) {
+    const invocations = [
+      '(outer "bad")',
+      '(outer false)',
+    ].map(text => ({ text, start: source.indexOf(text) }));
+    assert.equal(result.errors.length, invocations.length);
+    const matched: number[] = [];
+    for (const error of result.errors) {
+      const invocation = invocations.find(({ start }) => error.span?.start === start);
+      assert.ok(invocation, 'every recovered error must point to one source invocation');
+      matched.push(invocation.start);
+      assert.equal(source.slice(error.span!.start, error.span!.end).trim(), invocation.text);
+      assert.match(error.context.join(" "), /expanding macro outer.*expanding macro add/);
+      assert.equal(error.origin, undefined, 'without a document URI, do not fabricate a source origin');
+      assert.equal(error.location, undefined, 'without a document URI, do not fabricate a presentation location');
+      for (const related of error.related ?? []) {
+        assert.ok(related.location.span.start >= 0);
+        assert.ok(related.location.span.end <= source.length);
+        assert.ok(related.location.span.start < related.location.span.end);
+        assert.ok(source.slice(related.location.span.start, related.location.span.end).length > 0);
+      }
+    }
+    assert.deepEqual(matched.sort((a, b) => a - b), invocations.map(({ start }) => start).sort((a, b) => a - b));
+    assert.deepEqual(analyze(source).diagnostics, result.errors);
+  }
 });
 
 test("macro caller references retain their definition and type facts", () => {
@@ -135,14 +166,15 @@ test("macro expansion has deterministic depth and work bounds", () => {
   const deep = Array.from({ length: 40 }, (_, i) => `(macro m${i} [x] ${i ? `(m${i - 1} x)` : "x"})`).join(" ");
   const result = compile(`${deep} (m39 1)`);
   assert.equal(result.success, false);
-  if (!result.success) assert.match(result.error.message, /depth limit/);
+  if (!result.success) assert.ok(result.errors.some(error => /depth limit/.test(error.message)));
   const wide = Array.from({ length: 15 }, (_, i) => `(macro m${i} [x] ${i ? `(+ (m${i - 1} x) (m${i - 1} x))` : "x"})`).join(" ");
   const work = compile(`${wide} (m14 1)`);
   assert.equal(work.success, false);
-  if (!work.success) assert.match(work.error.message, /resource limit/);
+  if (!work.success) assert.ok(work.errors.some(error => /resource limit/.test(error.message)));
   assert.equal(evaluate("(macro m [x] x) (m 42)"), 42);
   assert.equal(compile("(m 42)").success, false);
 });
+
 
 test("macro sample compiles and runs", () => {
   const source = readFileSync(new URL("../examples/shapes/macros.shapes", import.meta.url), "utf8");

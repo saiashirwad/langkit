@@ -46,7 +46,7 @@ main = do {
 
 Constructing `print 42` does not print. Runtime actions are functions taking an empty record; only explicit effects are delayed, while ordinary expressions still evaluate strictly. Pure arithmetic cannot consume an action, a record cannot impersonate `Effect`, and source code cannot call an action as a function or run it inside pure code. There are no effect rows.
 
-The compiler produces the source result; it does not itself execute an effect action. The CLI executes an effect entry once under a VM timeout and does not print its returned value again. A pure entry is evaluated and displayed. Analysis never evaluates source or executes actions.
+The compiler produces the source result; it does not itself execute an effect action. The CLI executes an effect entry once under a VM timeout and does not print its returned value again. A pure entry is evaluated and displayed. Analysis never evaluates source or executes actions. Failed compilation reports diagnostics and does not produce an executable program.
 
 ## Deliberate limits
 

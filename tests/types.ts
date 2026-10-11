@@ -1,6 +1,7 @@
 // Compile-time contracts, checked by pnpm typecheck.
 import { check, get, pure, scoped, within, type Check } from "langkit";
-import { create, type Value } from "langkit/ir";
+import { create, type Body, type Declaration, type Reference, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
 import { records } from "langkit/operations/records";
 
 const number = scoped(0);
@@ -30,7 +31,6 @@ code.ref(binding, "string");
 const other: Value<"text"> = value;
 void other;
 
-
 const coreOnly = create<"number" | "boolean">();
 // @ts-expect-error Records are an opt-in operation feature, not part of the core builder.
 coreOnly.record("record", []);
@@ -44,3 +44,50 @@ recordLanguage.record("text", []);
 // @ts-expect-error Custom feature values retain the language's payload universe.
 const otherRecord: Value<"text"> = recordValue;
 void otherRecord;
+
+const pureCode = create<"number">();
+const pureValue = pureCode.literal("number", 42);
+function* declareAnswer(): Generator<Declaration<"number">, Reference<"number">, unknown> {
+  return yield* pureCode.declare("answer", pureValue);
+}
+const pureBody: Body<"number"> = pureCode.body(function* () {
+  return yield* declareAnswer();
+});
+void pureBody;
+// @ts-expect-error The standalone generator body accepts Values, not Check computations.
+pureCode.body(pure(pureValue));
+
+const featureLanguage = create<"number" | "record">().use(records<"number" | "record">());
+const codeBuilder = elaboration(featureLanguage);
+const typedBinding = codeBuilder.binding("x", "number");
+const typedReference: Value<"number" | "record"> = codeBuilder.ref(typedBinding);
+const typedFeature: Value<"number" | "record"> = codeBuilder.field(
+  "number",
+  codeBuilder.record("record", [{ name: "answer", value: codeBuilder.literal("number", 42) }]),
+  "answer",
+);
+const rawDeclaration: Generator<Declaration<"number" | "record">, Reference<"number" | "record">, unknown> =
+  codeBuilder.declare("answer", codeBuilder.literal("number", 42));
+const mixedBody: Check<Body<"number" | "record">> = codeBuilder.body(function* () {
+  const ref = yield* codeBuilder.declare("answer", codeBuilder.literal("number", 42));
+  const loaded = yield* check(function* () { return yield* pure(ref); });
+  return loaded;
+});
+const checkedComputation: Check<Value<"number" | "record">> = codeBuilder.check(function* () {
+  return typedReference;
+});
+const checkedScope: Check<Value<"number" | "record">> = codeBuilder.scope(function* () {
+  return typedFeature;
+});
+void rawDeclaration;
+void mixedBody;
+void checkedComputation;
+void checkedScope;
+// @ts-expect-error Feature composition happens before elaboration; use is not exposed.
+codeBuilder.use(records<"number" | "record">());
+// @ts-expect-error Body accepts a factory, never a Check argument.
+codeBuilder.body(pure(typedReference));
+// @ts-expect-error Scope accepts a factory, never a Check argument.
+codeBuilder.scope(pure(typedFeature));
+// @ts-expect-error Adapter declarations yield raw IR, not Check computations.
+codeBuilder.declare("wrong", pure(typedReference));

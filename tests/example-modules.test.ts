@@ -35,7 +35,7 @@ for (const [extension, language] of [
     log: (value: unknown) => void = () => {},
   ) => {
     const result = language.compile(source, options(files));
-    assert.ok(result.success, result.success ? "" : result.error.message);
+    assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
     return runInNewContext(result.value.javascript, { console: { log } }, { timeout: 1000 });
   };
 
@@ -45,6 +45,18 @@ for (const [extension, language] of [
     assert.equal(language.compile("print(42)").success, true);
     if (extension === "advanced") assert.equal(language.compile("Some(42)").success, false);
   });
+  if (extension === "rows")
+    test("rows routes every dependency type diagnostic through the module graph", () => {
+      const dependency = "file:///modules/bad.rows";
+      const source = 'import "./bad.rows"; 1';
+      const files = { [dependency]: '{ left = true + "x" }' };
+      const analysis = language.analyze(source, options(files));
+      assert.equal(analysis.diagnostics.length, 2);
+      assert.ok(analysis.diagnostics.every((diagnostic) => diagnostic.origin?.uri === dependency));
+      const result = language.compile(source, options(files));
+      assert.equal(result.success, false);
+      if (!result.success) assert.equal(result.errors.length, 2);
+    });
 
   test(`${extension} stdlib is a normal standalone editor document`, () => {
     const file = new URL(`../examples/${extension}/stdlib.${extension}`, import.meta.url);
@@ -57,7 +69,7 @@ for (const [extension, language] of [
     const result = language.compile(`import "./stdlib.${extension}"; id(42)`, {
       uri: new URL(`../examples/${extension}/main.${extension}`, import.meta.url).href,
     });
-    assert.ok(result.success, result.success ? "" : result.error.message);
+    assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
     assert.equal(runInNewContext(result.value.javascript, {}, { timeout: 1000 }), 42);
   });
 
@@ -205,7 +217,7 @@ test("advanced imports nominal datatype constructors and definitions", () => {
     "type Box(a) = Box(a) let unbox = fn(box) => match box { Box(x) => x } in { unbox = unbox }";
   const options = { uri: "file:///modules/main.advanced", read: () => dependency };
   const result = advanced.compile(source, options);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
   assert.equal(runInNewContext(result.value.javascript, {}, { timeout: 1000 }), 42);
   const analysis = advanced.analyze(source, options);
   assert.deepEqual(analysis.diagnostics, []);

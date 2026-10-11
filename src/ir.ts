@@ -1,4 +1,3 @@
-import { check, get, scoped, within, type Check } from "./check.ts";
 import type { Span } from "./diagnostic.ts";
 import { coreOperations } from "./operations/core.ts";
 export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
@@ -10,6 +9,7 @@ export type OperationValue<T, Node extends OperationNode> = Value<T> & { readonl
 export type Reference<T> = OperationValue<T, { readonly kind: "ref"; readonly binding: Binding<T> }>;
 export type Declaration<T> = { readonly recursive?: true; readonly binding: Binding<T>; readonly value: Value<T> };
 export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readonly result: Value<T> };
+export type BodySource<T> = Body<T> | (() => Generator<Declaration<T>, Value<T>, unknown>);
 export type Program<T> = {
   readonly body: Body<T>;
   readonly operations: readonly OperationTraversal<T>[];
@@ -38,6 +38,10 @@ export type LanguageBuilder<T, Methods extends object> = Methods & {
   coreOperationTraversals(): readonly OperationTraversal<T>[];
   coreReferenceId(): symbol;
   coreFunctionId(): symbol;
+  body(factory: BodySource<T>): Body<T>;
+  declare(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
+  declareRecursive(target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
+  block(type: T, source: BodySource<T>): Value<T>;
   program(body: Body<T>): Program<T>;
   validate(root: Body<T>): void;
 };
@@ -47,40 +51,50 @@ export const isReference = <T>(value: Value<T>, referenceOperationId: symbol): v
 
 /** Core convenience builder includes only primitives; all richer operations are opt-in sets. */
 export const create = <T>() => {
-  const output = scoped<Declaration<T>[] | undefined>(undefined);
   const coreFeature = coreOperations<T>();
   const operations = [...coreFeature.operations];
   const binding = (name: string, type: T): Binding<T> => ({ id: Symbol(name), name, type });
   const ref = (target: Binding<T>, type: T = target.type): Reference<T> => coreFeature.methods.ref(type, target);
-  const body = (result: Check<Value<T>>): Check<Body<T>> => check(function* () {
+  const body = (source: BodySource<T>): Body<T> => {
+    if (typeof source !== "function") return source;
     const declarations: Declaration<T>[] = [];
-    const returned = yield* within(output, declarations, result);
-    return { declarations: [...declarations], result: returned };
-  });
-  const declare = (name: string, initial: Value<T>): Check<Reference<T>> => check(function* () {
-    const declarations = yield* get(output);
-    if (!declarations) throw new Error("IR declarations need an enclosing body");
+    const iterator = source();
+    let done = false;
+    try {
+      let step = iterator.next();
+      while (!step.done) {
+        declarations.push(step.value);
+        step = iterator.next();
+      }
+      done = true;
+      return { declarations, result: step.value };
+    } finally {
+      if (!done && !iterator.return(undefined as never).done) {
+        throw new TypeError("IR body cleanup cannot yield declarations");
+      }
+    }
+  };
+  const declare = function* (name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown> {
     const target = binding(name, initial.type);
-    declarations.push({ binding: target, value: initial });
+    yield { binding: target, value: initial };
     return ref(target);
-  });
+  };
+  const declareRecursive = function* (target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown> {
+    if (initial.operationId !== coreFeature.functionId) throw new Error("Recursive declarations require a function initializer");
+    yield { binding: target, value: initial, recursive: true };
+    return ref(target);
+  };
   const core = {
-    binding, ref, body, declare,
+    binding, ref, body, declare, declareRecursive,
     literal: coreFeature.methods.literal,
     binary: coreFeature.methods.binary,
     call: coreFeature.methods.call,
-    fn: coreFeature.methods.fn,
-    conditional: coreFeature.methods.conditional,
-    block: coreFeature.methods.block,
-    scope: (result: Check<Value<T>>): Check<Value<T>> => body(result).map((built) => coreFeature.methods.block(built.result.type, built)),
+    fn: (type: T, param: Binding<T>, source: BodySource<T>) => coreFeature.methods.fn(type, param, body(source)),
+    conditional: (type: T, cond: Value<T>, thenSource: BodySource<T>, elseSource: BodySource<T>) =>
+      coreFeature.methods.conditional(type, cond, body(thenSource), body(elseSource)),
+    block: (type: T, source: BodySource<T>) => coreFeature.methods.block(type, body(source)),
+    scope: (source: BodySource<T>) => { const built = body(source); return coreFeature.methods.block(built.result.type, built); },
     at: (value: Value<T>, span: Span): Value<T> => ({ ...value, span }),
-    declareRecursive: (target: Binding<T>, initial: Value<T>): Check<Reference<T>> => check(function* () {
-      if (initial.operationId !== coreFeature.functionId) throw new Error("Recursive declarations require a function initializer");
-      const declarations = yield* get(output);
-      if (!declarations) throw new Error("IR declarations need an enclosing body");
-      declarations.push({ binding: target, value: initial, recursive: true });
-      return ref(target);
-    }),
   };
   const methodNames = new Set(Object.keys(core));
   const use = <Methods extends object>(feature: OperationFeature<T, Methods>) => {
@@ -102,8 +116,11 @@ export const create = <T>() => {
     coreOperationTraversals: (): readonly OperationTraversal<T>[] => coreFeature.operations,
     coreReferenceId: (): symbol => coreFeature.refId,
     coreFunctionId: (): symbol => coreFeature.functionId,
-    program: (root: Body<T>): Program<T> => ({ body: root, operations, coreFunctionId: coreFeature.functionId }),
     validate: (root: Body<T>): void => validateBody(root, operations, coreFeature.functionId),
+    program: (root: Body<T>): Program<T> => {
+      validateBody(root, operations, coreFeature.functionId);
+      return { body: root, operations, coreFunctionId: coreFeature.functionId };
+    },
   });
 };
 /** Scope validation is descriptor-driven; recursive declarations require this core function id. */

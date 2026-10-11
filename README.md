@@ -15,59 +15,155 @@ pnpm test
 
 The IR is extensible and descriptor-driven. `create<T>()` supplies the small core; optional operation sets add methods and descriptors explicitly. A value carries the language's own type descriptor and the exact identity of its operation descriptor. The framework does not define the language's type system.
 
-This executable example selects core and records, then adds a typed custom operation with its own traversal and JavaScript handler:
+The standalone IR API is a generator-authored DSL. Pass a body generator to `body`, function, branch, or block builders. A body generator **yields declarations** through the generator's yield channel and **returns its final value** through its return channel. `declare` and `declareRecursive` are generators: use `yield*` to collect a declaration in the current body and receive its reference as the delegated generator's return value. Helper generators compose naturally with `yield*`; nested function and body callbacks can themselves be generators. Pure expressions remain ordinary direct builder calls.
+
+This runnable TypeScript example builds one `Program` and emits it for both JavaScript and Python. Both generated programs compute and assert the same answer. The JavaScript example uses Node's VM for trusted demonstration code; the Python example executes generated source with `python3`.
 
 ```ts
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { runInNewContext } from "node:vm";
-import { create, validate, type Body, type OperationNode, type Value } from "langkit/ir";
-import { defineOperation, traversalOf } from "langkit/operations/descriptor";
+import { create } from "langkit/ir";
 import { records } from "langkit/operations/records";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
 import { recordsJavaScript } from "langkit/javascript/records";
-import { asDispatcherHandler, defineJavaScriptHandler } from "langkit/javascript/operations";
-import type { JavaScriptContext } from "langkit/javascript";
+import { createPythonEmitter } from "langkit/python";
+import { corePython } from "langkit/python/core";
+import { recordsPython } from "langkit/python/records";
 
-type Type = "number" | "object";
-type Twice = OperationNode & { readonly kind: "twice"; readonly value: Value<Type> };
-const twice = defineOperation<Type, Twice>("twice", {
-  children: (node) => [node.value], scopedBodies: () => [], references: () => [],
-  map: (node, mapValue) => ({ ...node, value: mapValue(node.value) }),
-});
+type Type = "number" | "function";
 const recordFeature = records<Type>();
-const code = create<Type>().use(recordFeature).use({
-  operations: [traversalOf(twice)],
-  methods: { twice: (type: Type, value: Value<Type>) => twice.make(type, { kind: "twice", value }) },
-});
-const handlers = createJavaScriptEmitter(
+const code = create<Type>().use(recordFeature);
+const jsEmitter = createJavaScriptEmitter(
   coreJavaScript(code.coreOperationTraversals()),
   recordsJavaScript(recordFeature.operations),
-  [asDispatcherHandler(defineJavaScriptHandler<Type, Twice, JavaScriptContext<Type>>(
-    twice, (node, context) => `(${context.expr(node.value, context.depth)} * 2)`,
-  ))],
 );
-const result = code.field("number", code.record("object", [
-  { name: "answer", value: code.twice("number", code.literal("number", 21)) },
-]), "answer");
-const body: Body<Type> = { declarations: [], result };
-const program = code.program(body);
-validate(program);
-const js = handlers.emit(program);
-console.log(runInNewContext(js)); // 42 (trusted demonstration only)
+const pythonEmitter = createPythonEmitter(
+  corePython(code.coreOperationTraversals()),
+  recordsPython(recordFeature.operations),
+);
+const number = (n: number) => code.literal("number", n);
+
+function* additions() {
+  const left = yield* code.declare("left", number(19));
+  const right = yield* code.declare("right", number(23));
+  return code.binary("number", "+", left, right);
+}
+
+const argument = code.binding("argument", "number");
+const increment = code.fn("function", argument, function* () {
+  return code.binary("number", "+", code.ref(argument), number(1));
+});
+const program = code.program(code.body(function* () {
+  const sum = yield* additions();
+  const addOne = yield* code.declare("addOne", increment);
+  return code.call("number", addOne, sum);
+}));
+
+const jsAnswer = runInNewContext(jsEmitter.emit(program));
+const pySource = pythonEmitter.emit(program);
+const pyRun = spawnSync("python3", ["-c", "import sys; ns = {}; exec(compile(sys.stdin.read(), '<langkit-program>', 'exec'), ns); print(ns['result'])"], {
+  input: pySource,
+  encoding: "utf8",
+});
+if (pyRun.error) throw pyRun.error;
+assert.equal(pyRun.status, 0, pyRun.stderr);
+const pyAnswer = Number(pyRun.stdout.trim());
+assert.equal(jsAnswer, 43);
+assert.equal(pyAnswer, jsAnswer);
+console.log(jsAnswer, pyAnswer); // 43 43
 ```
 
-Each selected descriptor owns child evaluation order, scoped bodies and bindings, references, and immutable reconstruction. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the portable `Program<T>` and throws if a selected operation has no handler. A `Body<T>` is a scoped fragment; a `Program<T>` supplies the body together with the builder's selected readonly operation registry and core function identity needed by standalone validation and backends. `validate(program)` checks structural scope and declaration invariants; it does not prove language-level typing. [Operation contracts and runtime representations](docs/operations.md) cover the complete API, recursion option, mapper contract, and built-in features.
+`conditional(type, condition, thenBody, elseBody)`, `block(type, body)`, and `scope(body)` likewise accept a `Body` or a generator callback. Function, branch, and block callbacks can capture their surrounding lexical bindings. A `Body<T>` is declarations plus a result value; declarations execute in order before the result. `declare` creates a fresh binding each time its generator runs. `declareRecursive(binding, functionValue)` keeps the supplied binding identity, yields a recursive declaration, and returns its reference; it accepts only a core function value.
+
+For language authors adding an operation, keep the descriptor responsible for child order, scoped bodies and bindings, references, and immutable reconstruction. Here is the essential custom descriptor pattern; once the descriptor is installed on the builder, author expressions and bodies with the same generator DSL rather than assembling declaration arrays by hand:
+
+```ts
+import { create, type OperationNode, type Value } from "langkit/ir";
+import { defineOperation, traversalOf } from "langkit/operations/descriptor";
+
+type Type = "number";
+type Twice = OperationNode & { readonly kind: "twice"; readonly value: Value<Type> };
+const twice = defineOperation<Type, Twice>("twice", {
+  children: (node) => [node.value],
+  scopedBodies: () => [],
+  references: () => [],
+  map: (node, mapValue) => ({ ...node, value: mapValue(node.value) }),
+});
+const code = create<Type>().use({
+  operations: [traversalOf(twice)],
+  methods: {
+    twice: (type: Type, value: Value<Type>) => twice.make(type, { kind: "twice", value }),
+  },
+});
+const program = code.program(code.body(function* () {
+  const input = yield* code.declare("input", code.literal("number", 21));
+  return code.twice("number", input);
+}));
+```
+
+Each selected descriptor owns child evaluation order, scoped bodies and bindings, references, and immutable reconstruction. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the portable `Program<T>` and throws if a selected operation has no handler. A `Program<T>` supplies its body together with the builder's selected readonly operation registry and core function identity needed by standalone validation and backends. `validate(program)` checks structural scope and declaration invariants; it does not prove language-level typing. [Operation contracts and runtime representations](docs/operations.md) cover the complete API, mapper contract, and runtime representations.
+
+### Integrating checking
+
+The core IR DSL remains pure and does not require `Check`. Configure selected operation features on that builder first, then pass it to `elaboration(builder)` from `langkit/ir/check`. The adapter adds generator-factory entrypoints: `code.check(factory)` composes yielded `Check` computations and raw `Declaration` yields, `code.body(factory)` collects declarations into a checked body, and `code.scope(factory)` builds a checked block value. Factories have the mixed yield channel `Check<unknown> | Declaration<T>` and return their ordinary result. Use these factories—not Check-argument overloads—to bridge diagnostics into IR. Raw `declare` and `declareRecursive` remain pure generators that yield one declaration and return its reference; declaration yields require an enclosing `code.body` (or another body factory using the same adapter). Pure builder methods such as `fn`, `conditional`, `block`, and `scope` remain Check-free and accept a `Body` or pure body factory. `program(body)` validates immediately. Values retain their exact selected operation-descriptor identities, and lexical binding/reference relationships are preserved.
+
+```ts
+import { fail, run } from "langkit";
+import { assign } from "langkit/inference";
+import { create } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
+
+type Type = "number";
+const code = elaboration(create<Type>());
+const bodyResult = run(code.body(function* () {
+  const result = yield* code.check(function* () {
+    yield* fail("independent constraint failed").map(() => undefined).recover();
+    return code.literal("number", 42);
+  });
+  const answer = yield* code.declare("answer", result);
+  return answer;
+}));
+
+if (bodyResult.success) {
+  const program = code.program(bodyResult.value); // validates now
+  // Emit only this success branch; recovered diagnostics make run() fail.
+  void program;
+} else {
+  console.error(bodyResult.errors); // nonempty structured diagnostics
+}
+
+const cell = { value: 0 };
+const transaction = assign(cell, "value", 1).flatMap(() => fail("constraint conflict")).atomic();
+const rolledBack = run(transaction);
+if (rolledBack.success || cell.value !== 0) throw new Error("atomic rollback failed");
+```
+
+`Check` failures are diagnostics; unexpected implementation exceptions propagate. `recover()` is for independent void checks: it records a diagnostic and continues, but `run` still returns failure when any recovered diagnostic exists. `Result<A>` is either `{ success: true, value: A }` or `{ success: false, errors: readonly [Diagnostic, ...Diagnostic[]] }`. Never emit a target program from a recovered-error result. `atomic()` restores run-local state on terminal failure or throw. `attempt(check)` also isolates and rolls back diagnostics recovered inside the attempt; `choice(...checks)` tries isolated alternatives and returns the first success, or the first failure if all fail. `sequence(tuple)` evaluates checks in order and returns the corresponding tuple of values. Each `run` has fresh state storage.
+
+The state API separates mutable, checkpointable run-local values from immutable scoped environments: `state(init, checkpoint)` creates a `State` whose checkpoint callback returns a restore function; `scoped(initial)` creates a readonly `Scoped` binding. `get` reads either key. `within(key, update, body)` scopes an updated value only for the body, with `update` as the sole updater callback; `bind` extends a readonly map binding environment.
+
+Inference computations allocate fresh variables, instantiate, and generalize inside the current run and are composed with `yield*` (or `map/flatMap`); do not nest `run` inside inference. `assign`, `add`, `put`, and `append` provide journaled writes to object properties, sets, maps, and arrays. Atomic rollback uses the journal, not deep snapshots at every solver step. `pruneLink(value, variable, instance)` is a three-argument, read-only link traversal; it does not compress or mutate links. The reusable checker/inference composition draws inspiration from typerator's transactional state and recovery model and ts-macros-style generator IR, without imposing TypeScript-specific syntax or type ontology on a language implementation.
+
+
+### JavaScript and Python backends
+
+Consumers choose an emitter for the same portable `Program<T>` by composing the matching core and selected feature handler sets. `langkit/javascript` and `langkit/python` are Node package modules; Python source is generated by TypeScript code and does not make Python a prerequisite for installing or using the Node library. A consumer that executes emitted Python needs Python 3 on its PATH. Cross-target tests also execute generated Python and therefore require `python3`. The existing example-language CLIs remain their own tools; this does not add Python flags or imply a Python backend in those CLIs.
+
+Python's printing operation uses native Python representation rather than JavaScript console formatting. The cross-target contract covers type-correct arithmetic and field access, not general language type safety; typing remains the language author's responsibility. JavaScript execution is likewise the consumer's responsibility: a VM timeout is not a security sandbox for untrusted code.
 
 ## Optional tools
 
 - **Parsing:** `langkit/parse` re-exports parserator parsers, generators, precedence, cuts, and source locations.
-- **Checking and diagnostics:** `langkit` provides composable synchronous `Check` computations, scoped state/name lookup, and structured diagnostics. Expected source failures use `fail`; implementation exceptions propagate; checks stop at the first error. `Check.inDocument(uri)` optionally attaches a document identity to failures for module routing while preserving nested source origins; human-readable `context` labels are not machine source locations.
+- **Checking and diagnostics:** `langkit` provides synchronous `Check` computations, checkpointable run-local `State`, readonly scoped environments, atomic/attempt/choice rollback, recoverable independent diagnostics, and structured nonempty `Result.errors`. `Check.inDocument(uri)` optionally attaches a document identity to failures for module routing while preserving nested source origins; human-readable `context` labels are not machine source locations.
 - **Inference:** `langkit/inference` contains reusable inference primitives, but selecting or integrating an inference strategy is the language author's choice. Several examples implement their own inference.
 - **Modules:** `langkit/modules` provides a local-file module graph/loader for languages that want imports; it is optional. Analyses can include transitive dependency URIs and source snapshots.
 - **Analysis and editor support:** `langkit/analysis` optionally collects UTF-16 source ranges for types, definitions, references, lexical tokens, and diagnostics. `langkit/lsp` serves language-provided analysis over LSP, including dependency-aware re-analysis when imported documents change. Diagnostics retain structured source locations and related information for imported-source errors.
 - **JavaScript:** `langkit/javascript` validates and emits an expression using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder. Emission is not a source-map generator.
+- **Python:** `langkit/python` emits executable Python source using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder.
 
-The core IR's scope validation and the language's type checker have different responsibilities. Constructors trust the language's typing rules, and a custom operation handler defines backend behavior; neither runtime validation nor TypeScript provides a general type proof. Executing emitted JavaScript is the consumer's responsibility; a VM timeout is not a security sandbox for untrusted code.
+The core IR's scope validation and the language's type checker have different responsibilities. Constructors trust the language's typing rules; neither runtime validation nor TypeScript provides a general type proof.
 
 ## Example languages and capabilities
 

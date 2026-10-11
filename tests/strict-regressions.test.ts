@@ -8,7 +8,7 @@ const compile = (source: string) =>
 
 const build = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors[0].message);
   return result.value;
 };
 

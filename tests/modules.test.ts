@@ -91,6 +91,7 @@ for (const source of [
   test("module loader rejects " + JSON.stringify(source), () => {
     const result = loadModules(source, { uri: root, read: () => "" }, "strict");
     assert.equal(result.success, false);
+    if (!result.success) assert.ok(result.errors.length > 0);
   });
 }
 
@@ -108,9 +109,11 @@ test("module loader locates a cycle at the root import and preserves origin", ()
   );
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.span?.start, source.indexOf("import"));
-    assert.equal(result.error.origin?.uri, "file:///workspace/a.strict");
-    assert.equal(result.error.location?.uri, root);
+    assert.ok(result.errors.length > 0);
+    const error = result.errors[0]!;
+    assert.equal(error.span?.start, source.indexOf("import"));
+    assert.equal(error.origin?.uri, "file:///workspace/a.strict");
+    assert.equal(error.location?.uri, root);
   }
 });
 
@@ -129,13 +132,15 @@ test("module loader routes transitive failures to the root import while preservi
   }, "strict");
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.origin?.uri, "file:///workspace/child.strict");
-    assert.ok(result.error.origin);
-    assert.equal(child.slice(result.error.origin.span.start, result.error.origin.span.end).trim(), 'import "./missing.strict";');
-    assert.equal(result.error.location?.uri, root);
-    assert.deepEqual(result.error.location?.span, rootImport);
+    assert.ok(result.errors.length > 0);
+    const error = result.errors[0]!;
+    assert.equal(error.origin?.uri, "file:///workspace/child.strict");
+    assert.ok(error.origin);
+    assert.equal(child.slice(error.origin.span.start, error.origin.span.end).trim(), 'import "./missing.strict";');
+    assert.equal(error.location?.uri, root);
+    assert.deepEqual(error.location?.span, rootImport);
     assert.equal(source.slice(rootImport.start, rootImport.end).trim(), 'import "./a.strict";');
-    assert.ok(result.error.related?.some((entry) => entry.location.uri === "file:///workspace/child.strict"));
+    assert.ok(error.related?.some((entry) => entry.location.uri === "file:///workspace/child.strict"));
   }
 });
 
@@ -155,13 +160,15 @@ test("module loader chooses a deterministic importer through a diamond and prese
   const failed = loadModules(source, { uri: root, read }, "strict");
   assert.equal(failed.success, false);
   if (!failed.success) {
-    assert.equal(failed.error.origin?.uri, "file:///workspace/shared.strict");
-    assert.ok(failed.error.origin);
-    assert.equal(shared.slice(failed.error.origin.span.start, failed.error.origin.span.end).trim(), 'import "./missing.strict";');
-    assert.deepEqual(failed.error.location?.span, leftImport);
-    assert.equal(failed.error.location?.uri, root);
+    assert.ok(failed.errors.length > 0);
+    const error = failed.errors[0]!;
+    assert.equal(error.origin?.uri, "file:///workspace/shared.strict");
+    assert.ok(error.origin);
+    assert.equal(shared.slice(error.origin.span.start, error.origin.span.end).trim(), 'import "./missing.strict";');
+    assert.deepEqual(error.location?.span, leftImport);
+    assert.equal(error.location?.uri, root);
     assert.equal(source.slice(leftImport.start, leftImport.end).trim(), 'import "./left.strict";');
-    assert.ok(failed.error.related?.some((entry) => entry.location.uri === "file:///workspace/shared.strict"));
+    assert.ok(error.related?.some((entry) => entry.location.uri === "file:///workspace/shared.strict"));
   }
 
   const loaded = loadModules(source, {
@@ -184,10 +191,43 @@ test("module loader locates an invalid import after importing a malformed child"
   const result = loadModules(source, { uri: root, read: sources({ "file:///workspace/broken.strict": broken }) }, "strict");
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.origin?.uri, "file:///workspace/broken.strict");
-    assert.equal(result.error.location?.uri, root);
-    assert.deepEqual(result.error.location?.span, { start: 0, end: source.length });
-    assert.ok(result.error.origin!.span.start > 0);
+    assert.ok(result.errors.length > 0);
+    const error = result.errors[0]!;
+    assert.equal(error.origin?.uri, "file:///workspace/broken.strict");
+    assert.equal(error.location?.uri, root);
+    assert.deepEqual(error.location?.span, { start: 0, end: source.length });
+    assert.ok(error.origin!.span.start > 0);
+  }
+});
+
+test("module loader retains every independently routed dependency failure", () => {
+  const source = 'import "./a.strict"; import "./b.strict";';
+  const result = loadModules(source, {
+    uri: root,
+    read: sources({
+      "file:///workspace/a.strict": 'import "./missing-a.strict";',
+      "file:///workspace/b.strict": 'import "./missing-b.strict";',
+    }),
+  }, "strict");
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.errors.length, 2);
+    assert.deepEqual(result.errors.map((error) => error.origin?.uri), [
+      "file:///workspace/a.strict",
+      "file:///workspace/b.strict",
+    ]);
+    for (const error of result.errors) {
+      assert.equal(error.location?.uri, root);
+      assert.ok(error.origin);
+      assert.ok(error.related?.some((entry) => entry.location.uri === error.origin!.uri));
+    }
+    assert.deepEqual(result.errors.map((error) => {
+      const span = error.location!.span;
+      return source.slice(span.start, span.end).trim();
+    }), [
+      'import "./a.strict";',
+      'import "./b.strict";',
+    ]);
   }
 });
 

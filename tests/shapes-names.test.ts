@@ -6,7 +6,7 @@ import { analyze, compile, show } from "../examples/shapes/shapes.ts";
 const customer = '(shape Customer {name string email string}) ';
 const display = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map(error => error.message).join("\n"));
   return show(result.value.type);
 };
 
@@ -104,9 +104,36 @@ test("unused templates do not start typechecking because their annotations are o
   assert.equal(display('(macro bad [] (fn [(x Unknown)] x)) 1'), 'number');
 });
 
+
+test("failed compilation retains independent diagnostics and emits no JavaScript", () => {
+  const source = '{first (+ true 1) second (+ false 2)}';
+  const result = compile(source);
+  assert.equal(result.success, false);
+  if (!result.success) {
+    const expressions = ['(+ true 1)', '(+ false 2)'];
+    assert.equal(result.errors.length, expressions.length);
+    const matched: number[] = [];
+    for (const error of result.errors) {
+      assert.ok(error.span, 'each independent error must point to its source expression');
+      const expression = expressions.find(text => source.indexOf(text) === error.span!.start);
+      assert.ok(expression, 'each independent error must have its precise source start');
+      matched.push(error.span!.start);
+      assert.equal(source.slice(error.span!.start, error.span!.end).trim(), expression);
+    }
+    assert.deepEqual(matched.sort((a, b) => a - b), expressions.map(text => source.indexOf(text)));
+    assert.match(result.errors[0]!.message, /Cannot unify/);
+    assert.match(result.errors[1]!.message, /Cannot unify/);
+    assert.equal("javascript" in result, false);
+  }
+});
+
 test("names preserve extra absence constraints without exposing implied ones", async () => {
+  const { run } = await import("../src/check.ts");
   const { freshRow, named, number, record, row, show: showType } = await import('../examples/shapes/shapes-types.ts');
-  const tail = freshRow(['age', 'active']);
+  const result = run(freshRow(['age', 'active']));
+  assert.equal(result.success, true);
+  if (!result.success) return;
+  const tail = result.value;
   const value = named(record(row(new Map([['age', number]]), tail)), 'Person');
   assert.equal(showType(value), 'Person & { ..r } where r lacks active');
   assert.deepEqual([...tail.lacks], ['age', 'active']);

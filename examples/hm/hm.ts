@@ -23,7 +23,9 @@ import {
   type Result,
   type Span,
 } from "langkit";
-import { create, type Binding, type Operator, type Program, type Value } from "langkit/ir";
+import { create, type Binding, type Body, type Operator, type Program, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
+import { assign, pruneLink } from "langkit/inference";
 import {
   create as createAnalysis,
   highlight,
@@ -53,13 +55,10 @@ const boolean: Type = { kind: "boolean" };
 
 const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
 
-// Called only while a check is running, never while constructing a reusable Check.
-const fresh = (): Variable => ({ kind: "variable" });
-
-const prune = (type: Type): Type => {
-  if (type.kind !== "variable" || !type.instance) return type;
-  return (type.instance = prune(type.instance));
-};
+const fresh = (): Check<Variable> =>
+  check(function* () { return { kind: "variable" } as Variable; });
+const prune = (type: Type): Type =>
+  pruneLink(type, (value) => value.kind === "variable" ? value : null, (variable) => variable.instance);
 
 export const show = (type: Type): string => {
   const names = new Map<Variable, string>();
@@ -87,7 +86,6 @@ const free = (type: Type, found = new Set<Variable>()): Set<Variable> => {
   }
   return found;
 };
-
 const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
     const a = prune(left);
@@ -95,7 +93,7 @@ const unify = (left: Type, right: Type): Check<void> =>
     if (a === b) return;
     if (a.kind === "variable") {
       if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-      a.instance = b;
+      yield* assign(a, "instance", b);
     } else if (b.kind === "variable") {
       yield* unify(b, a);
     } else if (a.kind === "function" && b.kind === "function") {
@@ -104,35 +102,41 @@ const unify = (left: Type, right: Type): Check<void> =>
     } else if (a.kind !== b.kind) {
       return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
     }
-  });
+  }).atomic();
 
 const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
-const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme => {
-  const variables = free(type);
-  for (const { scheme } of environment.values()) {
-    // Follow solved variables in the environment too: constraints may have
-    // connected an outer parameter to variables introduced in this let value.
-    for (const variable of free(scheme.type)) {
-      if (!scheme.variables.has(variable)) variables.delete(variable);
+const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Check<Scheme> =>
+  check(function* () {
+    const variables = free(type);
+    for (const { scheme } of environment.values()) {
+      // Follow solved variables in the environment too: constraints may have
+      // connected an outer parameter to variables introduced in this let value.
+      for (const variable of free(scheme.type)) {
+        if (!scheme.variables.has(variable)) variables.delete(variable);
+      }
     }
-  }
-  return { type, variables };
-};
+    return { type, variables };
+  });
 
-const instantiate = (scheme: Scheme): Type => {
+const instantiate = (scheme: Scheme): Check<Type> => {
   const replacements = new Map<Variable, Variable>();
-  const visit = (type: Type): Type => {
-    type = prune(type);
-    if (type.kind === "function") return fn(visit(type.param), visit(type.result));
-    if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
-    let replacement = replacements.get(type);
-    if (!replacement) {
-      replacement = fresh();
-      replacements.set(type, replacement);
-    }
-    return replacement;
-  };
+  const visit = (type: Type): Check<Type> =>
+    check(function* () {
+      type = prune(type);
+      if (type.kind === "function") {
+        const param = yield* visit(type.param);
+        const result = yield* visit(type.result);
+        return fn(param, result);
+      }
+      if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
+      let replacement = replacements.get(type);
+      if (!replacement) {
+        replacement = yield* fresh();
+        replacements.set(type, replacement);
+      }
+      return replacement;
+    });
   return visit(scheme.type);
 };
 
@@ -280,13 +284,13 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 export const program = lex.complete(expression);
 
 // HM selects only the core IR and JavaScript operations.
-const code = create<Type>();
+const code = elaboration(create<Type>());
 const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreOperationTraversals()));
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 
-export const elaborate = (expr: Expr): Check<Value<Type>> =>
-  check(function* () {
+const elaborate = (expr: Expr): Check<Value<Type>> =>
+  code.check(function* () {
     switch (expr.kind) {
       case "number":
         if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
@@ -296,14 +300,14 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       case "name": {
         const { binding, scheme } = yield* lookup(env, expr.name);
         yield* facts.reference(binding, expr.span);
-        return code.ref(binding, instantiate(scheme));
+        return code.ref(binding, yield* instantiate(scheme));
       }
       case "binary": {
         const left = yield* elaborate(expr.left);
         const right = yield* elaborate(expr.right);
         // Equality is numeric here, avoiding type-class/qualified-type machinery.
-        yield* unify(left.type, number).at(expr.left.span);
-        yield* unify(right.type, number).at(expr.right.span);
+        yield* unify(left.type, number).at(expr.left.span).recover();
+        yield* unify(right.type, number).at(expr.right.span).recover();
         return code.binary(
           expr.op === ">" || expr.op === "==" ? boolean : number,
           expr.op,
@@ -312,47 +316,51 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         );
       }
       case "let":
-        return yield* code.scope(
-          check(function* () {
-            const initial = yield* elaborate(expr.value);
-            const environment = yield* get(env);
-            const scheme = generalize(initial.type, environment);
-            const value = yield* code.declare(expr.name, initial);
-            const binding = value.node.binding;
-            yield* facts.define(
-              binding,
-              expr.nameSpan,
-              prune(binding.type).kind === "function" ? "function" : "variable",
-            );
-            return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
-          }),
-        );
+        return yield* code.scope(function* () {
+          const initial = yield* elaborate(expr.value);
+          const environment = yield* get(env);
+          const scheme = yield* generalize(initial.type, environment);
+          const value = yield* code.declare(expr.name, initial);
+          const binding = value.node.binding;
+          yield* facts.define(
+            binding,
+            expr.nameSpan,
+            prune(binding.type).kind === "function" ? "function" : "variable",
+          );
+          return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
+        });
       case "fn": {
-        const param = code.binding(expr.param, fresh());
+        const param = code.binding(expr.param, yield* fresh());
         yield* facts.define(param, expr.paramSpan, "parameter");
         const entry = { binding: param, scheme: mono(param.type) };
-        const body = yield* code.body(bind(env, [[expr.param, entry]], elaborate(expr.body)));
+        const body = yield* code.body(function* () {
+          return yield* bind(env, [[expr.param, entry]], elaborate(expr.body));
+        });
         return code.fn(fn(param.type, body.result.type), param, body);
       }
       case "call": {
         const callee = yield* elaborate(expr.fn);
         const arg = yield* elaborate(expr.arg);
-        const result = fresh();
-        yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span);
+        const result = yield* fresh();
+        yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span).recover();
         return code.call(result, callee, arg);
       }
       case "if": {
         const cond = yield* elaborate(expr.cond);
-        yield* unify(cond.type, boolean).at(expr.cond.span);
-        const then = yield* code.body(elaborate(expr.then));
-        const otherwise = yield* code.body(elaborate(expr.else));
-        yield* unify(then.result.type, otherwise.result.type).at(expr.else.span);
+        yield* unify(cond.type, boolean).at(expr.cond.span).recover();
+        const then = yield* code.body(function* () { return yield* elaborate(expr.then); });
+        const otherwise = yield* code.body(function* () { return yield* elaborate(expr.else); });
+        yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
         return code.conditional(then.result.type, cond, then, otherwise);
       }
     }
   })
     .flatMap((value) => facts.typed(value.type, expr.span).map(() => code.at(value, expr.span)))
     .at(expr.span);
+
+/** Reusable HM body factory; every run allocates fresh inference variables. */
+export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
+  code.body(function* () { return yield* elaborate(expr); });
 
 export type Compiled = {
   readonly type: Type;
@@ -366,11 +374,11 @@ const parse = (source: string): Result<Expr> => {
     ? parsed
     : {
         success: false,
-        error: {
+        errors: [{
+          ...parsed.error.diagnostic,
           message: parsed.error.message,
-          span: parsed.error.diagnostic.span,
           context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-        },
+        }],
       };
 };
 
@@ -379,19 +387,19 @@ export const analyze = (source: string): Analysis<Type> => {
   const parsed = parse(source);
   if (!parsed.success)
     return {
-      diagnostics: [parsed.error],
+      diagnostics: parsed.errors,
       types: [],
       definitions: [],
       references: [],
       tokens: lexical,
     };
-  return facts.collect(code.body(elaborate(parsed.value)), lexical).analysis;
+  return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 
 export const compile = (source: string): Result<Compiled> => {
   const parsed = parse(source);
   if (!parsed.success) return parsed;
-  const built = run(code.body(elaborate(parsed.value)));
+  const built = run(elaborateBody(parsed.value));
   if (!built.success) return built;
   const ir = code.program(built.value);
   return {
@@ -409,7 +417,7 @@ if (import.meta.main) {
   const source = readFileSync(file, "utf8");
   const result = compile(source);
   if (!result.success) {
-    console.error(render(result.error, source));
+    for (const error of result.errors) console.error(render(error, source));
     process.exitCode = 1;
   } else {
     console.log(runInNewContext(result.value.javascript, {}, { timeout: 1000 }));

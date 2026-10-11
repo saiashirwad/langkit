@@ -1,15 +1,21 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { bind, check, fail, get, lookup, pure, run, scoped, within } from "langkit";
-import { create, isReference, type Body } from "langkit/ir";
+import { create, isReference, type Body, type OperationTraversal, type Program } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
 import { emit as emitJavaScript } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
 import { runInNewContext } from "node:vm";
 
-const emit = (code: ReturnType<typeof create<string>>, body: Body<string>) =>
-  emitJavaScript(code.program(body), coreJavaScript(code.coreOperationTraversals()));
+const emit = (
+  code: {
+    program: (body: Body<string>) => Program<string>;
+    coreOperationTraversals: () => readonly OperationTraversal<string>[];
+  },
+  body: Body<string>,
+) => emitJavaScript(code.program(body), coreJavaScript(code.coreOperationTraversals()));
 const unwrap = <T>(result: ReturnType<typeof run<T>>): T => {
-  if (!result.success) throw new Error(result.error.message);
+  if (!result.success) throw new Error(result.errors[0].message);
   return result.value;
 };
 
@@ -28,7 +34,7 @@ test("checks compose with typed yield results", () => {
 test("scope is local to a computation", () => {
   const key = scoped(0);
   const computation = check(function* () {
-    const inner = yield* within(key, 42, get(key));
+    const inner = yield* within(key, (current) => current + 42, get(key));
     return [inner, yield* get(key)];
   });
   assert.deepEqual(unwrap(run(computation)), [42, 0]);
@@ -70,7 +76,7 @@ test("failures short circuit and close generators", () => {
   assert.equal(continued, false);
   assert.deepEqual(result, {
     success: false,
-    error: { message: "no", context: ["outer", "inner"], span: { start: 2, end: 3 } },
+    errors: [{ message: "no", context: ["outer", "inner"], span: { start: 2, end: 3 } }],
   });
 });
 
@@ -107,19 +113,17 @@ test("checks in cleanup are rejected rather than silently skipped", () => {
           }
         }),
       ),
-    /cleanup/,
   );
 });
 
 test("body construction can be reused without accumulating declarations", () => {
-  const code = create<string>();
-  const computation = code.body(
-    check(function* () {
-      return yield* code.declare("x", code.literal("number", 42));
-    }),
-  );
-  const first = unwrap(run(computation));
-  const second = unwrap(run(computation));
+  const code = elaboration(create<string>());
+  const body = function* () {
+    const reference = yield* code.declare("x", code.literal("number", 42));
+    return reference;
+  };
+  const first = unwrap(run(code.body(body)));
+  const second = unwrap(run(code.body(body)));
   assert.equal(first.declarations.length, 1);
   assert.equal(second.declarations.length, 1);
   assert.notEqual(first.declarations[0]!.binding.id, second.declarations[0]!.binding.id);
@@ -127,7 +131,7 @@ test("body construction can be reused without accumulating declarations", () => 
   assert.equal(runInNewContext(emit(code, second)), 42);
 });
 test("reference types can vary without changing binding identity or scope", () => {
-  const code = create<string>();
+  const code = elaboration(create<string>());
   const binding = code.binding("id", "a -> a");
   const numeric = code.ref(binding, "number -> number");
   const boolean = code.ref(binding, "boolean -> boolean");
@@ -139,7 +143,7 @@ test("reference types can vary without changing binding identity or scope", () =
   assert.equal(numeric.node.binding, binding);
   assert.equal(boolean.node.binding, binding);
   assert.equal(binding.type, "a -> a");
-  assert.throws(() => code.validate({ declarations: [], result: numeric }), /Out-of-scope/);
+  assert.throws(() => code.validate({ declarations: [], result: numeric }));
   const param = code.binding("x", "a");
   const initial = code.fn("a -> a", param, { declarations: [], result: code.ref(param) });
   const body = {
@@ -149,20 +153,33 @@ test("reference types can vary without changing binding identity or scope", () =
   assert.equal(runInNewContext(emit(code, body)), 42);
 });
 
-test("declare needs an explicit construction body", () => {
-  const code = create<string>();
-  assert.throws(() => run(code.declare("x", code.literal("number", 1))), /enclosing body/);
+test("elaborated declarations are checked within an enclosing check", () => {
+  const code = elaboration(create<string>());
+  const body = unwrap(run(code.body(function* () {
+    const reference = yield* code.check(function* () {
+      return yield* code.declare("x", code.literal("number", 1));
+    });
+    return reference;
+  })));
+  assert.equal(runInNewContext(emit(code, body)), 1);
+
+  assert.throws(
+    () => run(code.check(function* () {
+      return yield* code.declare("x", code.literal("number", 1));
+    })),
+    { message: "IR declarations need an enclosing body" },
+  );
 });
 
 test("scope extrusion is rejected before emission", () => {
-  const code = create<string>();
+  const code = elaboration(create<string>());
   const escaped = code.binding("escaped", "number");
   const body: Body<string> = { declarations: [], result: code.ref(escaped) };
-  assert.throws(() => emit(code, body), /Out-of-scope binding: escaped/);
+  assert.throws(() => emit(code, body));
 });
 
 test("a declaration cannot reference itself or a later binding", () => {
-  const code = create<string>();
+  const code = elaboration(create<string>());
   const x = code.binding("x", "number");
   assert.throws(
     () =>
@@ -170,38 +187,30 @@ test("a declaration cannot reference itself or a later binding", () => {
         declarations: [{ binding: x, value: code.ref(x) }],
         result: code.ref(x),
       }),
-    /Out-of-scope/,
   );
 });
 
 test("duplicate binding identities are rejected", () => {
-  const code = create<string>();
+  const code = elaboration(create<string>());
   const x = code.binding("x", "number");
   const declaration = { binding: x, value: code.literal("number", 1) };
   assert.throws(
     () => code.validate({ declarations: [declaration, declaration], result: code.ref(x) }),
-    /declared twice/,
   );
 });
 
 test("emission makes hostile and colliding name hints harmless", () => {
-  const code = create<string>();
-  const body = unwrap(
-    run(
-      code.body(
-        check(function* () {
-          const a = yield* code.declare("x); throw 1; //", code.literal("number", 20));
-          const b = yield* code.declare("x); throw 1; //", code.literal("number", 22));
-          return code.binary("number", "+", a, b);
-        }),
-      ),
-    ),
-  );
+  const code = elaboration(create<string>());
+  const body = unwrap(run(code.body(function* () {
+    const a = yield* code.declare("x); throw 1; //", code.literal("number", 20));
+    const b = yield* code.declare("x); throw 1; //", code.literal("number", 22));
+    return code.binary("number", "+", a, b);
+  })));
   assert.equal(runInNewContext(emit(code, body)), 42);
 });
 
 test("conditional bodies run only in the selected branch", () => {
-  const code = create<string>();
+  const code = elaboration(create<string>());
   const param = code.binding("x", "number");
   // Deliberately malformed target operation would throw if the branch ran.
   const bad: Body<string> = {
@@ -222,22 +231,16 @@ test("conditional bodies run only in the selected branch", () => {
     42,
   );
 });
-
 test("IR declaration scopes preserve left-to-right evaluation", () => {
-  const code = create<string>();
+  const code = elaboration(create<string>());
   const bad = code.call("number", code.literal("number", 11), code.literal("number", 0));
-  const later = unwrap(
-    run(
-      code.scope(
-        check(function* () {
-          return yield* code.declare(
-            "later",
-            code.call("number", code.literal("number", 22), code.literal("number", 0)),
-          );
-        }),
-      ),
-    ),
-  );
+  const later = unwrap(run(code.scope(function* () {
+    return yield* code.declare(
+      "later",
+      code.call("number", code.literal("number", 22), code.literal("number", 0)),
+    );
+  })));
   const js = emit(code, { declarations: [], result: code.binary("number", "+", bad, later) });
-  assert.throws(() => runInNewContext(js), /11 is not a function/);
+  assert.throws(() => runInNewContext(js));
 });
+

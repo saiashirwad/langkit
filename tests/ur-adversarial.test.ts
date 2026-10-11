@@ -30,7 +30,7 @@ const wrappers = `${merge}
 
 const accepts = (source: string, expected: unknown, expectedType?: string): void => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
+  assert.ok(result.success, result.success ? "" : JSON.stringify(result.errors));
   if (expectedType !== undefined) assert.equal(show(result.value.type), expectedType);
 
   const output: unknown[] = [];
@@ -63,7 +63,7 @@ const accepts = (source: string, expected: unknown, expectedType?: string): void
 const rejects = (source: string, diagnostic: RegExp): void => {
   const result = compile(source);
   assert.equal(result.success, false, "Ill-typed probe must not compile");
-  if (!result.success) assert.match(result.error.message, diagnostic);
+  if (!result.success) assert.ok(result.errors.some(error => diagnostic.test(error.message)));
 };
 
 const positive: readonly [string, string, unknown, string?][] = [

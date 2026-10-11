@@ -25,7 +25,7 @@ let ignored = print(answer) in
 answer
 ```
 
-Imports are local file imports resolved relative to the importing source. The shared loader (`examples/modules.ts`) reads modules without evaluating them, strips import directives while retaining source offsets, and detects invalid/cyclic module graphs. Nothing is imported implicitly; write an import explicitly.
+Imports are local file imports resolved relative to the importing source. The shared loader ([`examples/modules.ts`](../modules.ts)) reads modules without evaluating them, strips import directives while retaining source offsets, and detects invalid/cyclic module graphs. Nothing is imported implicitly; write an import explicitly.
 
 ## Syntax and type model
 
@@ -46,6 +46,8 @@ This remains a pure expression language: there is no statement syntax or effect 
 
 ## Compile, analyze, and run
 
-[`rows.ts`](./rows.ts) exports `compile(source, options?)` to load imported source, parse it, infer/check types, and compile; `analyze(source, options?)` returns source analysis and editor facts without executing or printing the program. `program` is the parser, `elaborate` checks a parsed expression, and `show` prints inferred types. The optional module options let an embedder provide the root URI and source reader. Import the APIs from `./rows.ts`.
+[`rows.ts`](./rows.ts) exports `compile(source, options?)` to load imported source, parse it, infer/check types, and compile; `analyze(source, options?)` returns source analysis and editor facts without executing or printing the program. Its generator-based checker composes language-owned `Check` inference with raw portable IR declarations using `yield*`. Solver allocations and constraints are run-local; journaled constraint updates and atomic checking can roll back partial mutations on failure. The optional elaboration adapter collects declarations, while reusable consumers use Rows' language-owned `elaborateBody` without a foreign adapter wrapper.
 
-The CLI runner uses `console.log` and also displays the final program value. If evaluating emitted JavaScript yourself, supply a `console.log` implementation. The runtime primitive's uses can receive type hovers, but have no same-file definition location; imported library source spans are not returned as user-source facts. The VM runner is for trusted examples, not untrusted code.
+Independent operand checks can recover multiple diagnostics with source spans. Recovery is limited to checks that can safely continue; it does not claim every branch recovers. Diagnostics are plural, and the compiler does not emit a target program when errors are present. Import `program` for parsing and `show` for inferred types. The optional module options let an embedder provide the root URI and source reader.
+
+The CLI runner uses `console.log` and also displays the final program value. If evaluating emitted JavaScript yourself, supply a `console.log` implementation. The CLI uses the JavaScript backend, but the portable IR can be consumed by another selected backend; it is not JavaScript-specific and does not impose TypeScript's type ontology. The runtime primitive's uses can receive type hovers, but have no same-file definition location; imported library source spans are not returned as user-source facts. The VM runner is for trusted examples, not untrusted code.

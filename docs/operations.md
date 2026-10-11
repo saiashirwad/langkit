@@ -15,17 +15,48 @@ An `OperationDescriptor` supplies four structural contracts:
 
 ## Structural validation and mapping
 
-`Body<T>` is a scoped fragment: declarations plus a result, without a traversal registry or core function identity. `Program<T>` pairs a body with the builder's selected readonly traversal registry and optional core function identity. `language.program(body)` borrows those configured values without cloning or snapshotting them; configure the builder before creating programs and retain the operation descriptor identities used by their values. `language.validate(body)` remains a builder convenience. Standalone `validate(program)` and JavaScript `emit(program, handlers?)` consume the same portable program, so structural validation and emission do not require a separately reconstructed options object.
+`Body<T>` is a scoped fragment: declarations plus a result, without a traversal registry or core function identity. `Program<T>` pairs a body with the builder's selected readonly traversal registry and optional core function identity. `language.program(body)` borrows those configured values without cloning or snapshotting them; configure the builder before creating programs and retain the operation descriptor identities used by their values. `language.validate(body)` is a builder convenience. Standalone `validate(program)` and JavaScript `emit(program, handlers?)` consume the same portable program; the `program` carries traversal configuration, so no separate `operations` or `coreFunctionId` options object is passed to `emit`. `createJavaScriptEmitter(...handlerSets).emit(program)` is the composable emitter form. Python uses the analogous `createPythonEmitter(...handlerSets).emit(program)` API.
 
-Validation is structural, not a proof of language typing. It does not check that a value's `type` agrees with a literal, operator, field, or result. The language checker owns those invariants.
+Validation is structural, not a proof of language typing. It does not check that a value's `type` agrees with a literal, operator, field, or result. Each language owns its typing rules; the core IR deliberately permits language-specific descriptors and does not require a type checker.
 
-`mapBody(body, operations, mapBinding?, transformValue?)` maps a scoped fragment using exact descriptor identities. For a portable program, use `mapBody(program.body, program.operations, ...)` to preserve the registry associated with its values. Mapper arguments default to identity. `transformValue(original, mapped)` runs bottom-up after the descriptor has mapped that value's children; it can replace the reconstructed value. The descriptor map must preserve every child, body, scoped binding, and reference-bearing structure in its node, or deliberately transform it. `mapBody` does not revalidate the transformed result or prove type preservation; transformations that alter language-level invariants must maintain or recheck them. Missing descriptors throw rather than silently skipping opaque nodes.
+`mapBody(body, operations, mapBinding?, transformValue?)` maps a scoped fragment using exact descriptor identities. For a portable program, use `mapBody(program.body, program.operations, ...)` to preserve the registry associated with its values. Mapper arguments default to identity. `transformValue(original, mapped)` runs bottom-up after the descriptor has mapped that value's children; it can replace the reconstructed value. The descriptor map must preserve every child, body, scoped binding, and reference-bearing structure in its node, or deliberately transform it. `mapBody` does not revalidate the transformed result or prove type preservation; transformations that alter language-level invariants must maintain or recheck them. Missing descriptors throw rather than guessing from `kind`.
 
 References are descriptor-reported uses. Core references are narrowable with `isReference(value, language.coreReferenceId())`; checking `node.kind === "ref"` alone is not identity-safe in an extensible IR.
 
-## Core operations
+## Core operations and generator construction
 
-Core features are installed by `create<T>()`; their constructors are the builder's small mandatory basis. All richer operations are selected separately.
+Core is installed by `create<T>()`; it includes primitive expression operations only. Richer operations are selected separately. The core builder is pure IR construction and has no `Check` dependency:
+
+- `body(source)` accepts either a `Body<T>` or a factory returning `Generator<Declaration<T>, Value<T>, unknown>`.
+- `declare(name, initial)` is a generator: `yield*` it to add a non-recursive declaration and receive its `Reference<T>`.
+- `declareRecursive(binding, functionValue)` is a generator that adds a recursive declaration and returns a reference to the supplied binding. Its initializer must be a function value created by this builder's core `fn` descriptor identity; arbitrary values and functions from another descriptor instance are rejected.
+- `fn(type, parameter, bodySource)`, `conditional(type, condition, thenSource, elseSource)`, `block(type, bodySource)`, and `scope(bodySource)` accept a `Body<T>` or a generator factory. `scope` packages a body as a core block value.
+
+For example, ordinary declarations can be composed in the body generator:
+
+```ts
+const programBody = language.body(function* () {
+  const saved = yield* language.declare("saved", expression);
+  return saved;
+});
+const program = language.program(programBody);
+```
+
+Each execution of `declare(...)` creates a fresh ordinary binding and ID. A generator factory is intended to build a new scoped body each time it is called; this makes repeated construction produce distinct bindings rather than accidentally aliasing IDs. Within one body construction, call `declare` once and retain/use the returned reference as often as needed. Do not call it repeatedly to mean “reference the same declaration”: each call creates another declaration and binding ID.
+
+Build-time callbacks are materialized immediately into IR bodies: the `fn` body factory runs while constructing the function value, and both `conditional` branch factories run while constructing the conditional. Their resulting IR remains lazy at target execution: a function body runs only when called, and only the selected conditional branch executes. `block`/`scope` bodies run when the block expression executes. This separation lets traversal inspect all nested IR while target execution preserves function and branch laziness.
+
+At a checking boundary, configure operation features on the pure builder and then call `elaboration(builder)` from `langkit/ir/check`. The resulting adapter exposes `check(factory)`, `body(factory)`, and `scope(factory)`; each factory yields `Check<unknown> | Declaration<T>` and returns its ordinary value. `check` composes checks with optional declaration yields; declaration yields are valid only while an enclosing `body` factory of that adapter is collecting them. `body` collects mixed computation into a `Check<Body<T>>`; `scope` returns a checked block value. These are factory APIs, not Check-argument overloads. Configure features before wrapping; the adapter intentionally does not expose feature selection.
+
+Raw `declare(name, initial)` and `declareRecursive(binding, functionValue)` remain pure generator methods on both builder and adapter: each yields a declaration and returns a reference. They do not allocate IR through a Check protocol. Pure builder methods remain Check-free: `body`, `fn`, `conditional`, `block`, and `scope` accept a `Body<T>` or pure body factory. `program(body)` validates immediately. The portable program retains selected descriptor identities, and validation preserves lexical declaration/reference scope.
+
+## Checker and inference composition
+
+`elaboration(builder)` is an adapter around an already configured pure builder. Its mixed factories yield checks and, within an enclosing adapter body, declaration objects; pure `declare` and `declareRecursive` generators are still the only declaration protocol. `code.program(body)` performs structural validation when called, so construct it only after checking succeeds. The generated portable program borrows the configured operation registry and preserves descriptor identity and lexical binding links. Pure builder `body`, `fn`, `conditional`, `block`, and `scope` remain independent of `Check` and accept a body or pure body factory.
+
+`State<T>` from `state(init, checkpoint)` is mutable, run-local storage; `checkpoint(value)` must return a restore callback. `Scoped<T>` from `scoped(initial)` is an immutable environment binding. `get` reads either; `within(scopedKey, update, body)` derives a temporary binding by invoking only the updater callback, and `bind` extends readonly map environments. Every `run` gets fresh storage. `recover()` accumulates a diagnostic and continues only for void checks; even if later work succeeds, `run` returns failure with `errors: readonly [Diagnostic, ...Diagnostic[]]` whenever any diagnostic was recovered. Do not emit a program on that result. `atomic()` restores mutable run-local state on terminal failure or throw; `attempt(check)` additionally removes diagnostics recovered inside it and rolls back; `choice(...checks)` isolates alternatives and uses the first success, or first failure when all fail; `sequence(tuple)` returns values in a tuple preserving the checks' input order. Implementation exceptions propagate.
+
+Fresh inference allocation, instantiation, and generalization are checks composed with `yield*`, `map`, or `flatMap` inside the caller's run; inference helpers do not invoke nested runs. Journaled `assign`, `add`, `put`, and `append` undo object-property, set, map, and array writes during rollback without deep snapshots on each solver step. `pruneLink(value, variable, instance)` traverses links read-only and never compresses them. This compositional transactional checker/inference model is informed by typerator state/recovery and ts-macros-inspired generator IR, but does not import their JavaScript/TypeScript syntax assumptions or impose any source-language type ontology.
 
 | Operation | Children, left to right | Scoped bodies and structural role |
 | --- | --- | --- |
@@ -33,38 +64,63 @@ Core features are installed by `create<T>()`; their constructors are the builder
 | `ref` | none | `references` reports its target binding. |
 | `binary` | left, right | The order is the language's operand evaluation order. |
 | `call` | function, argument | The callee is visited before the argument. |
-| `fn` | none | Its body is scoped by its parameter binding. Creating a function does not evaluate that body at function-creation time. |
+| `fn` | none | Its body is scoped by its parameter binding. Creating a function does not evaluate that body at target function-creation time. |
 | `if` | condition | Then body followed by else body, both structurally traversed; at runtime only the selected branch executes. |
 | `block` | none | Its body is a nested scope. |
 
-A `Body<T>` is declarations plus a result value. Within a body, declarations execute in order before its result. `declare` appends a non-recursive declaration to the enclosing body; `declareRecursive` only accepts a core function value and creates a recursive declaration. `scope(check)` captures a body as a core block value. The JavaScript core backend emits functions/branches/scopes as JavaScript functions or IIFEs, retaining lexical scope and branch laziness.
-
 ## Records and merge
 
-Select `records<T>()` for `record`, `merge`, and `field` operations. A record evaluates its field values in source order, then its optional base; the JavaScript handler uses ordered function arguments so each value is evaluated once. The base is spread first and explicit fields override same-named base fields. `merge` evaluates left then right and right-side fields override left-side fields. A field selection evaluates its record expression once, then reads the named property. These operations describe runtime representation and order; they do not establish row typing, duplicate-field validity, or field existence. Those are language-owned checks.
+Select `records<T>()` for `record`, `merge`, and `field` operations. A record evaluates its field values in source order, then its optional base; handlers preserve that order and evaluate each value once. The base is spread first and explicit fields override same-named base fields. `merge` evaluates left then right and right-side fields override left-side fields. A field selection evaluates its record expression once, then reads the named property. These operations describe runtime representation and order; they do not establish row typing, duplicate-field validity, or field existence. Those are language-owned checks.
 
-The JavaScript representation is a null-prototype object. Record fields become string-keyed properties; merge constructs a new null-prototype object. The core does not require every backend to use this representation.
+The JavaScript representation is a null-prototype object. Python represents records with native dictionaries; the core does not require every backend to use either representation.
 
 ## Variants and matches
 
-Select `variants<T>()` for `variant` and `match`. A variant evaluates payload fields left to right and is represented by the JavaScript handler as a null-prototype object with `tag` and `fields` properties. A match evaluates its scrutinee once, then enters the matching branch body; branch bindings pair with payload entries by position and are visible only inside that branch. An optional fallback can bind the whole variant. Without a fallback, emitted JavaScript throws an internal non-exhaustive-match error if no branch matches.
+Select `variants<T>()` for `variant` and `match`. A variant evaluates payload fields left to right. JavaScript represents it as a null-prototype object with `tag` and `fields` properties; Python uses a native dictionary with the same keys and a list of payload values. A match evaluates its scrutinee once, then enters the matching branch body; branch bindings pair with payload entries by position and are visible only inside that branch. An optional fallback can bind the whole variant. Without a fallback, emitted code raises an internal non-exhaustive-match error if no branch matches.
 
 Duplicate match case tags are rejected by the match descriptor structural hook. The validity of individual tags, constructor arity, exhaustiveness, branch result types, and compatibility between variant and match remain language-owned invariants; the structural hook does not perform those checks.
 
 ## Printing
 
-Select `printing<T>()` for the `print` operation and `printingJavaScript` for its JavaScript handler. It has one child, evaluated exactly once before the print effect. The current handler calls `console.log` with that value and returns a null-prototype empty object. The operation constructor accepts a result type descriptor supplied by the language; output typing and the meaning/availability of `console` belong to the language/backend environment.
+Select `printing<T>()` for `print` and the backend's corresponding handler (`printingJavaScript` or `printingPython`). The operation has one child, evaluated exactly once before the print effect, and returns the backend's empty-record representation. JavaScript calls `console.log` and returns a null-prototype empty object; Python calls built-in `print` and returns `{}`. Printed formatting is host-native: Python uses Python's `print`/`str` representation and is not intended to mimic JavaScript `console.log` formatting. Output typing and the meaning/availability of the host print facility belong to the language/backend environment.
 
 ## Folder operations and fold order
 
-Select `folders<T>()` for `field-order` and `record-fold`. `field-order` has no IR value children; its ordered string list is metadata stored in the node. `record-fold` visits its five value children in this exact order: explicit field order, metadata, record, initial accumulator, and step function. Its current JavaScript handler uses that order to traverse the requested fields and apply the step function while carrying the accumulator. The generic folder descriptor does not know what metadata means, whether the order matches record fields, or what types the step function accepts; those are language-owned constraints.
+Select `folders<T>()` for `field-order` and `record-fold`. `field-order` has no IR value children; its ordered string list is metadata stored in the node. `record-fold` visits its five value children in this exact order: explicit field order, metadata, record, initial accumulator, and step function. Its handlers use that order to traverse requested fields and apply the step function while carrying the accumulator. The generic folder descriptor does not know what metadata means, whether the order matches record fields, or what types the step function accepts; those are language-owned constraints.
+
+## Python backend
+
+The Python backend is exported from `langkit/python` with feature handler sets from `langkit/python/*`. Compose only the handlers for the descriptors/features selected by a builder. A typical composition uses `corePython(program.operations)`, plus `recordsPython(program.operations)`, `variantsPython(program.operations)`, `printingPython(program.operations)`, or `foldersPython(program.operations)` as needed:
+
+```ts
+const emitter = createPythonEmitter(
+  corePython(program.operations),
+  recordsPython(program.operations),
+  variantsPython(program.operations),
+  printingPython(program.operations),
+  foldersPython(program.operations),
+);
+const source = emitter.emit(program);
+```
+
+`emit(program)` validates and returns executable Python source; it does not run the program, launch Python, or print the result automatically. The generated module assigns its final value to `result`, so an embedding host can inspect it or explicitly print it. The current backend requires Python 3.8 or newer and uses native lambdas, assignment expressions, floats, math helpers, dictionaries/tag-field variants, and reduction-based record folds.
+
+The numeric core targets JavaScript-like floating-point behavior: numeric literals are emitted as Python floats (including explicit signed zero, NaN, and infinities), division handles zero divisors as IEEE-style NaN/infinity rather than Python's zero-division exception, and strict equality treats numeric values by numeric value (including signed zeros), booleans separately from numbers, strings by value, and other objects by identity. Python print formatting is nevertheless native Python formatting, not JavaScript console formatting.
+
+Only type-correct arithmetic and field access are promised. The backend does not provide a cross-language contract for invalid operand types, mismatched record/variant shapes, or malformed fold inputs; those cases depend on language-owned typing and host behavior and should not be used as portable programs.
+
+### Custom Python handlers
+
+A custom Python handler must be selected by the exact descriptor identity of its operation, not merely its kind. `definePythonHandler(descriptor, emit)` binds a handler directly to a descriptor. When using structural traversal records, `operationIdFor(program.operations, kind)` obtains the unique selected operation ID for a kind, and `definePythonOperationHandler(operationId, kind, emit)` creates the typed handler. The handler receives the IR node plus `PythonContext<T>` (`expr`, `block`, `name`, and nesting depth) and returns Python expression source. A custom handler must preserve child evaluation order and scope/effect semantics just like a built-in backend handler.
+
+`createPythonEmitter(...handlerSets)` composes sets; duplicate descriptor IDs are rejected, as are missing handlers when emission reaches a selected operation with no implementation. Built-in Python feature sets and custom handlers can be composed together. Identity collisions in `kind` do not dispatch a handler, and a handler created for a different descriptor instance cannot implement this program's operation.
 
 ## Authoring custom operations
 
-A custom descriptor must expose every value child in runtime evaluation order and every nested body with exactly the bindings valid there. Put binding uses in `references` when they are not modeled as child values. `map` must rebuild all of this IR data, including scoped bindings, so validation and transformations see the same structure as execution. Omitting a child, nested body, or reference makes generic validation/mapping incomplete. A descriptor cannot claim recursive declaration privileges.
+A custom descriptor must expose every value child in runtime evaluation order and every nested body with exactly the bindings valid there. Put binding uses in `references` when they are not modeled as child values. `map` must rebuild all of this IR data, including scoped bindings, so validation and transformations see the same structure as execution. Omitting a child, nested body, or reference makes generic validation/mapping incomplete. A descriptor cannot claim recursive declaration privileges; only the selected core function descriptor is accepted as a recursive initializer.
 
-For JavaScript, define a handler tied to that exact descriptor, then include it in a `createJavaScriptEmitter` handler set. Core and feature handler factories must receive the same selected descriptor instances used to build IR. The emitter validates using the `operations` passed to `emit`; an unselected IR value fails validation, and a selected operation with no identity-matched handler throws `Missing JavaScript handler for operation: <kind>`. A same-kind handler from another descriptor instance does not match.
+For JavaScript, define a handler tied to that exact descriptor, then include it in a `createJavaScriptEmitter` handler set. Core and feature handler factories must receive the same selected descriptor instances used to build IR. The emitter validates the `Program` registry; an unselected IR value fails validation, and a selected operation with no identity-matched handler throws `Missing JavaScript handler for operation: <kind>`. A same-kind handler from another descriptor instance does not match.
 
 ## Composition example
 
-The [README example](../README.md#compose-an-ir-and-backend) selects core and records, adds a typed custom operation, and runs its JavaScript backend. Its type labels belong to the example language; the framework does not infer or validate their meaning.
+The [README examples](../README.md#compose-an-ir-and-backend) run one generator-authored program on JavaScript and Python, then show how to add a typed custom operation. Their type labels belong to the example language; the framework does not infer or validate their meaning.

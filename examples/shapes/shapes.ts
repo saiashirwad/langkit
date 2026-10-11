@@ -1,17 +1,9 @@
 import {
-  bind,
-  check,
-  fail,
-  get,
-  lookup,
-  render,
-  run,
-  scoped,
-  within,
-  Check,
-  type Result,
+  bind, check, fail, get, lookup, render, run, scoped, within,
+  Check, type Diagnostic, type Result,
 } from "langkit";
 import { create, type Body, type Binding, type Program, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -77,9 +69,12 @@ export { parse } from "./shapes-syntax.ts";
 
 const recordFeature = records<Type>();
 const printingFeature = printing<Type>();
-const code = create<Type>().use(recordFeature).use(printingFeature);
+const pureCode = create<Type>().use(recordFeature).use(printingFeature);
+const code = elaboration(pureCode);
+const checkedBody = (computation: Check<Value<Type>>) => code.body(function* () { return yield* computation; });
+const checkedScope = (computation: Check<Value<Type>>) => code.scope(function* () { return yield* computation; });
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript<Type>(code.coreOperationTraversals()),
+  coreJavaScript<Type>(pureCode.coreOperationTraversals()),
   recordsJavaScript<Type>(recordFeature.operations),
   printingJavaScript<Type>(printingFeature.operations),
 );
@@ -114,8 +109,8 @@ const inContext = <A>(context: ExpansionContext, body: Check<A>): Check<A> => ch
     while (values.has(`\0${index}`)) index++;
     values.set(`\0${index++}`, entry);
   }
-  return yield* within(generated, context.generated,
-    within(env, values, within(macros, context.macros, within(shapes, context.shapes, body))));
+  return yield* within(generated, () => context.generated,
+    within(env, () => values, within(macros, () => context.macros, within(shapes, () => context.shapes, body))));
 });
 const atom = (form: Form | undefined, text: string): boolean =>
   form?.kind === "symbol" && form.value === text;
@@ -161,7 +156,7 @@ const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
       if (form.value === "boolean") return boolean;
       if (form.value === "string") return string;
       if (/^'[a-zA-Z_]\w*$/.test(form.value)) {
-        if (!scope.types.has(form.value)) scope.types.set(form.value, fresh());
+        if (!scope.types.has(form.value)) scope.types.set(form.value, yield* fresh());
         return scope.types.get(form.value)!;
       }
       const shape = (yield* get(shapes)).get(form.value);
@@ -171,18 +166,18 @@ const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
         yield* facts.reference(shape, span);
         yield* facts.typed(shape.type, span);
       }
-      const resolved = yield* within(generated, true, annotation(shape.body, typeScope(), true));
+      const resolved = yield* within(generated, () => true, annotation(shape.body, typeScope(), true));
       return named(resolved, shape.name);
     }
     if (form.kind === "record") {
       const fields = new Map<string, Type>();
-      let tail: RowVariable | null = open ? freshRow() : null;
+      let tail: RowVariable | null = open ? yield* freshRow() : null;
       for (let i = 0; i < form.items.length; i += 2) {
         const label = form.items[i]!;
         if (label.kind === "symbol" && label.value.startsWith("..")) {
           if (!/^\.\.[a-zA-Z_]\w*$/.test(label.value) || i !== form.items.length - 1)
             return yield* fail("A row tail must be named and appear last").at(label.span);
-          if (!scope.rows.has(label.value)) scope.rows.set(label.value, freshRow());
+          if (!scope.rows.has(label.value)) scope.rows.set(label.value, yield* freshRow());
           tail = scope.rows.get(label.value)!;
           break;
         }
@@ -202,9 +197,7 @@ const annotation = (form: Form, scope: TypeScope, open = false): Check<Type> =>
       for (const param of types.reverse()) result = fn(param, result);
       return result;
     }
-    return yield* fail(
-      "Expected a type: number, boolean, string, 'a, a shape, a record, or (-> A B)",
-    );
+    return yield* fail("Expected a type: number, boolean, string, 'a, a shape, a record, or (-> A B)");
   }).at(form.span);
 
 // Observe template annotations without checking unused templates or specializing their types.
@@ -241,8 +234,8 @@ const fields = (form: Form): Check<{ name: string; value: Value<Type> }[]> =>
 
 const requireField = (base: Type, key: string): Check<{ type: Type; tail: RowVariable }> =>
   check(function* () {
-    const type = fresh();
-    const tail = freshRow([key]);
+    const type = yield* fresh();
+    const tail = yield* freshRow([key]);
     yield* unify(base, record(row(new Map([[key, type]]), tail)));
     return { type, tail };
   });
@@ -252,7 +245,7 @@ export const elaborate = (form: Form): Check<Value<Type>> => {
   return context ? inContext(context, elaborateForm(form)) : elaborateForm(form);
 };
 const elaborateForm = (form: Form): Check<Value<Type>> =>
-  check(function* () {
+  code.check(function* () {
     if ((yield* get(expansionDepth)) > 0 && --(yield* get(expansionBudget)).remaining < 0)
       return yield* fail("Macro expansion resource limit exceeded");
     if (form.kind === "string") return code.literal(string, form.value);
@@ -266,7 +259,7 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
       }
       const { binding, scheme } = yield* lookup(env, form.value);
       if (!(yield* get(generated))) yield* facts.reference(binding, form.span);
-      return code.ref(binding, instantiate(scheme));
+      return code.ref(binding, yield* instantiate(scheme));
     }
     if (form.kind === "record") {
       const values = yield* fields(form);
@@ -297,10 +290,25 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
         argumentsAt.set(copy, argumentsAt.get(argument) ?? caller);
         return copy;
       }), form.span);
-      const body = within(expansionDepth, depth + 1, inContext({ ...macro.context, generated: true }, elaborate(expanded)));
+      const body = within(expansionDepth, () => depth + 1, inContext({ ...macro.context, generated: true }, elaborate(expanded)));
+      const invocation = `expanding macro ${head.kind === "symbol" ? head.value : ""}`;
       const value = yield* new Check((runtime) => {
-        const result = body.context(`expanding macro ${head.kind === "symbol" ? head.value : ""}`).step(runtime);
-        return result.success ? result : { success: false, error: { ...result.error, span: form.span } };
+        const errorCount = runtime.storage.errors.length;
+        const result = body.context(invocation).step(runtime);
+        const relocate = (error: Diagnostic): Diagnostic => {
+          const original = error.span === undefined || runtime.document === undefined
+            ? undefined
+            : { uri: runtime.document, span: error.span };
+          return {
+            ...error,
+            span: form.span,
+            ...(original ? { origin: error.origin ?? error.location ?? original } : {}),
+            ...(runtime.document !== undefined ? { location: { uri: runtime.document, span: form.span } } : {}),
+          };
+        };
+        for (let index = errorCount; index < runtime.storage.errors.length; index++)
+          runtime.storage.errors[index] = relocate(runtime.storage.errors[index]!);
+        return result.ok ? result : { ...result, error: relocate(result.error) };
       });
       if (visible) yield* facts.typed({ kind: "macro", name: macro.name, params: macro.params, result: value.type }, nameSpan);
       return value;
@@ -315,7 +323,7 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
       const seen = new Set<string>();
       for (const param of params.items) {
         let label: Form = param;
-        let type = fresh() as Type;
+        let type: Type = yield* fresh();
         if (param.kind === "list") {
           if (param.items.length !== 2)
             return yield* fail("Annotated parameter syntax: (name Type)").at(param.span);
@@ -332,7 +340,7 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
       const lambda = (index: number): Check<Value<Type>> =>
         check(function* () {
           const param = bindings[index]!;
-          const body = yield* code.body(
+          const body = yield* checkedBody(
             bind(
               env,
               [[param.name, { binding: param, scheme: mono(param.type) }]],
@@ -349,12 +357,12 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
       if (bindings.kind !== "vector" || bindings.items.length % 2)
         return yield* fail("let syntax: (let [name value ...] body)");
       const next = (index: number): Check<Value<Type>> =>
-        check(function* () {
+        code.check(function* () {
           if (index === bindings.items.length) return yield* elaborate(items[2]!);
           const label = bindings.items[index]!;
           const key = yield* bindingName(label);
           const initial = yield* elaborate(bindings.items[index + 1]!);
-          const scheme = generalize(initial.type, yield* get(env));
+          const scheme = yield* generalize(initial.type, yield* get(env));
           const value = yield* code.declare(key, initial);
           if (!(yield* get(generated))) yield* facts.define(value.node.binding, label.span, "variable");
           return yield* bind(
@@ -363,15 +371,15 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
             next(index + 2),
           );
         });
-      return yield* code.scope(next(0));
+      return yield* checkedScope(next(0));
     }
     if (atom(head, "if")) {
       yield* arity(form, items, 4);
       const cond = yield* elaborate(items[1]!);
-      yield* unify(cond.type, boolean).at(items[1]!.span);
-      const then = yield* code.body(elaborate(items[2]!));
-      const otherwise = yield* code.body(elaborate(items[3]!));
-      yield* unify(then.result.type, otherwise.result.type).at(items[3]!.span);
+      yield* unify(cond.type, boolean).at(items[1]!.span).recover();
+      const then = yield* checkedBody(elaborate(items[2]!));
+      const otherwise = yield* checkedBody(elaborate(items[3]!));
+      yield* unify(then.result.type, otherwise.result.type).at(items[3]!.span).recover();
       return code.conditional(then.result.type, cond, then, otherwise);
     }
     if (atom(head, ".")) {
@@ -383,8 +391,8 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
     }
     if (atom(head, "update")) {
       yield* arity(form, items, 4);
-      return yield* code.scope(
-        check(function* () {
+      return yield* checkedScope(
+        code.check(function* () {
           // Bind the base before the replacement: evaluate once, left to right.
           const base = yield* code.declare("record", yield* elaborate(items[1]!));
           const key = yield* name(items[2]!);
@@ -400,10 +408,10 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
     }
     if (atom(head, "extend") || atom(head, "merge")) {
       yield* arity(form, items, 3);
-      return yield* code.scope(
-        check(function* () {
+      return yield* checkedScope(
+        code.check(function* () {
           const base = yield* code.declare("record", yield* elaborate(items[1]!));
-          const tail = freshRow();
+          const tail = yield* freshRow();
           yield* unify(base.type, record(row(new Map(), tail)));
           if (atom(head, "extend")) {
             const values = yield* fields(items[2]!);
@@ -428,10 +436,10 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
       const labels = items[2]!;
       if (labels.kind !== "vector")
         return yield* fail("select syntax: (select record [field ...])");
-      return yield* code.scope(
-        check(function* () {
+      return yield* checkedScope(
+        code.check(function* () {
           const base = yield* code.declare("record", yield* elaborate(items[1]!));
-          yield* unify(base.type, record(row(new Map(), freshRow())));
+          yield* unify(base.type, record(row(new Map(), yield* freshRow())));
           const values: { name: string; value: Value<Type> }[] = [];
           const types = new Map<string, Type>();
           for (const label of labels.items) {
@@ -451,8 +459,10 @@ const elaborateForm = (form: Form): Check<Value<Type>> =>
     let callee = yield* elaborate(head);
     for (const arg of items.slice(1)) {
       const value = yield* elaborate(arg);
-      const result = fresh();
-      yield* unify(callee.type, fn(value.type, result)).at(arg.span);
+      const parameter = yield* fresh();
+      const result = yield* fresh();
+      yield* unify(callee.type, fn(parameter, result)).atomic().at(arg.span);
+      yield* unify(parameter, value.type).atomic().at(arg.span).recover();
       callee = code.call(result, callee, value);
     }
     return callee;
@@ -469,11 +479,11 @@ const primitives = (): Check<ReadonlyMap<string, Entry>> =>
   check(function* () {
     const environment = new Map<string, Entry>();
     const add = (name: string, value: Value<Type>): Check<void> =>
-      check(function* () {
+      code.check(function* () {
         const ref = yield* code.declare(name, value);
         environment.set(name, {
           binding: ref.node.binding,
-          scheme: generalize(value.type, new Map()),
+          scheme: yield* generalize(value.type, new Map()),
         });
       });
     for (const op of ["+", "-", "*", "/", ">", "==", "concat"] as const) {
@@ -481,36 +491,27 @@ const primitives = (): Check<ReadonlyMap<string, Entry>> =>
       const output = op === ">" || op === "==" ? boolean : input;
       const a = code.binding("left", input);
       const b = code.binding("right", input);
-      yield* add(
-        op,
-        code.fn(fn(input, fn(input, output)), a, {
-          declarations: [],
-          result: code.fn(fn(input, output), b, {
-            declarations: [],
-            result: code.binary(output, op === "concat" ? "+" : op, code.ref(a), code.ref(b)),
-          }),
-        }),
-      );
+      const inner = yield* code.body(function* () {
+        return code.binary(output, op === "concat" ? "+" : op, code.ref(a), code.ref(b));
+      });
+      const nested = yield* code.body(function* () {
+        return code.fn(fn(input, output), b, inner);
+      });
+      yield* add(op, code.fn(fn(input, fn(input, output)), a, nested));
     }
-    const value = code.binding("value", fresh());
+    const value = code.binding("value", yield* fresh());
     const unit = record(row());
-    yield* add(
-      "print",
-      code.fn(fn(value.type, unit), value, {
-        declarations: [],
-        result: code.print(unit, code.ref(value)),
-      }),
-    );
+    const body = yield* code.body(function* () { return code.print(unit, code.ref(value)); });
+    yield* add("print", code.fn(fn(value.type, unit), value, body));
     return environment;
   });
 
 const build = (forms: readonly Form[]): Check<Body<Type>> =>
-  code.body(
-    check(function* () {
+  code.body(function* () {
       const environment = yield* primitives();
       const definitions = new Set<string>();
       const next = (index: number): Check<Value<Type>> =>
-        check(function* () {
+        code.check(function* () {
           const form = forms[index];
           if (!form) return yield* fail("A Shapes program must end with an expression");
           if (form.kind === "list" && atom(form.items[0], "macro")) {
@@ -574,7 +575,7 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
               return yield* fail(`Duplicate definition: ${key}`).at(label.span);
             definitions.add(key);
             const initial = yield* elaborate(form.items[2]!);
-            const scheme = generalize(initial.type, yield* get(env));
+            const scheme = yield* generalize(initial.type, yield* get(env));
             const ref = yield* code.declare(key, initial);
             yield* facts.define(
               ref.node.binding,
@@ -591,10 +592,10 @@ const build = (forms: readonly Form[]): Check<Body<Type>> =>
             return yield* fail("Only the final top-level form may be an expression").at(form.span);
           return yield* elaborate(form);
         });
-      return yield* within(expansionBudget, { remaining: 10000 }, within(expansionDepth, 0,
-        within(macros, new Map(), within(shapes, new Map(), within(env, environment, next(0))))));
-    }),
-  );
+      return yield* within(expansionBudget, () => ({ remaining: 10000 }), within(expansionDepth, () => 0,
+        within(macros, () => new Map<string, Macro>(), within(shapes, () => new Map<string, Shape>(), within(env, () => environment, next(0))))));
+  });
+export const elaborateBody = build;
 
 export type Compiled = {
   readonly type: Type;
@@ -617,7 +618,7 @@ export const analyze = (source: string): Analysis<EditorType> => {
   const parsed = parse(source);
   if (!parsed.success)
     return {
-      diagnostics: [parsed.error],
+      diagnostics: [...parsed.errors],
       types: [],
       definitions: [],
       references: [],
@@ -633,7 +634,8 @@ if (import.meta.main) {
   const source = readFileSync(file, "utf8");
   const result = compile(source);
   if (!result.success) {
-    console.error(render(result.error, source));
+    for (let index = 0; index < result.errors.length; index++)
+      console.error(render(result.errors[index]!, source));
     process.exitCode = 1;
   } else {
     console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));

@@ -1,4 +1,4 @@
-import { get, run, scoped, within, type Check, type Result } from "./check.ts";
+import { Check, run, scoped, state, within, type Result, type State } from "./check.ts";
 import type { Diagnostic, SourceLocation, Span } from "./diagnostic.ts";
 
 export const tokenKinds = [
@@ -106,7 +106,7 @@ export const highlight = (source: string, rules: readonly TokenRule[]): readonly
 };
 
 type Facts<T> = {
-  types: Typed<T>[];
+  types: (Typed<T> & { readonly document: string | undefined })[];
   definitions: Definition<T>[];
   references: Reference[];
 };
@@ -121,41 +121,61 @@ type Binding<T> = {
 
 /** Optional observation: without collect, these operations do not retain facts. */
 export const create = <T>() => {
-  const current = scoped<Facts<T> | undefined>(undefined);
+  const collecting = scoped<State<Facts<T>> | undefined>(undefined);
+  const checkpoint = (value: Facts<T>) => {
+    const lengths = [value.types.length, value.definitions.length, value.references.length] as const;
+    return () => {
+      value.types.length = lengths[0];
+      value.definitions.length = lengths[1];
+      value.references.length = lengths[2];
+    };
+  };
+  const record = (write: (facts: Facts<T>, document: string | undefined) => void): Check<void> =>
+    new Check((runtime) => {
+      const selected = runtime.get(collecting);
+      if (selected) write(runtime.get(selected), runtime.document);
+      return { ok: true, value: undefined };
+    });
 
   return {
     typed: (type: T, span: Span): Check<void> =>
-      get(current).map((facts) => {
-        facts?.types.push({ type, span });
-      }),
+      record((facts, document) => facts.types.push({ type, span, document })),
 
     define: (
       binding: Binding<T>,
       span: Span,
       kind: DefinitionKind = "variable",
     ): Check<void> =>
-      get(current).map((facts) => {
-        facts?.definitions.push({ ...binding, span, kind });
-        if (binding.type !== undefined) facts?.types.push({ type: binding.type, span });
+      record((facts, document) => {
+        facts.definitions.push({ ...binding, span, kind });
+        if (binding.type !== undefined) facts.types.push({ type: binding.type, span, document });
       }),
 
     // Identity comes from the declaration; the use-site type is reported by typed.
     reference: (binding: { readonly id: symbol }, span: Span): Check<void> =>
-      get(current).map((facts) => {
-        facts?.references.push({ id: binding.id, span });
-      }),
+      record((facts) => facts.references.push({ id: binding.id, span })),
 
     collect: <A>(
       body: Check<A>,
       tokens: readonly Token[] = [],
     ): { result: Result<A>; analysis: Analysis<T> } => {
       const facts: Facts<T> = { types: [], definitions: [], references: [] };
-      const result = run(within(current, facts, body));
+      const selected = state(() => facts, checkpoint);
+      const result = run(within(collecting, () => selected, body));
+      const types = facts.types.filter((value) => result.success || !result.errors.some((diagnostic) => {
+        const location = diagnostic.location ?? diagnostic.origin;
+        const errorSpan = location?.span ?? diagnostic.span;
+        if (!errorSpan || value.span.start > errorSpan.start || value.span.end < errorSpan.end) return false;
+        if (value.span.start === errorSpan.start && value.span.end === errorSpan.end) return false;
+        return value.document === location?.uri;
+      })).map(({ type, span }) => ({ type, span }));
       return {
         result,
         analysis: {
-          ...facts,
-          diagnostics: result.success ? [] : [result.error],
+          types,
+          definitions: facts.definitions,
+          references: facts.references,
+          diagnostics: result.success ? [] : [...result.errors],
           tokens,
         },
       };

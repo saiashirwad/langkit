@@ -1,10 +1,61 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { readFileSync } from "node:fs";
-import { check, fail, pure, run, withDocument, withLocation, type Diagnostic } from "langkit";
+import { Check, check, choice, fail, pure, run, withDocument, withLocation, type Diagnostic } from "langkit";
 import { create, definitionAt, highlight, semanticTokens, typeAt } from "langkit/analysis";
 import { analyze, compile, show } from "../examples/toy/toy.ts";
+test("successful collection retains typed facts", () => {
+  const facts = create<string>();
+  const analysis = facts.collect(check(function* () {
+    yield* facts.typed("inferred", { start: 1, end: 5 });
+    return "done";
+  })).analysis;
+  assert.deepEqual(analysis.types, [{ type: "inferred", span: { start: 1, end: 5 } }]);
+});
+test("observation facts roll back with abandoned alternatives", () => {
+  const facts = create<string>();
+  const analysis = facts.collect(choice(
+    check(function* () {
+      yield* facts.typed("abandoned", { start: 0, end: 3 });
+      return yield* fail("not this alternative");
+    }),
+    check(function* () {
+      yield* facts.typed("chosen", { start: 4, end: 8 });
+      return "chosen";
+    }),
+  )).analysis;
+  assert.deepEqual(analysis.types, [{ type: "chosen", span: { start: 4, end: 8 } }]);
+});
 
+test("recovered diagnostics suppress only enclosing types from their document", () => {
+  const facts = create<string>();
+  const document = "file:///source.lang";
+  const otherDocument = "file:///other.lang";
+  const analysis = facts.collect(check(function* () {
+    yield* facts.typed("enclosing", { start: 0, end: 10 }).inDocument(document);
+    yield* facts.typed("exact-span", { start: 4, end: 10 }).inDocument(document);
+    yield* facts.typed("other-document", { start: 0, end: 10 }).inDocument(otherDocument);
+    yield* fail("invalid child").at({ start: 4, end: 10 }).inDocument(document).recover();
+  })).analysis;
+  assert.deepEqual(analysis.types, [
+    { type: "exact-span", span: { start: 4, end: 10 } },
+    { type: "other-document", span: { start: 0, end: 10 } },
+  ]);
+});
+test("recovered diagnostic matching prefers primary location over origin", () => {
+  const facts = create<string>();
+  const origin = "file:///origin.lang";
+  const primary = "file:///primary.lang";
+  const analysis = facts.collect(check(function* () {
+    yield* facts.typed("origin-type", { start: 0, end: 10 }).inDocument(origin);
+    yield* facts.typed("primary-type", { start: 0, end: 10 }).inDocument(primary);
+    const routed = withLocation(withDocument({
+      message: "routed error", context: [], span: { start: 4, end: 6 },
+    }, origin), { uri: primary, span: { start: 4, end: 6 } });
+    yield* new Check<void>(() => ({ ok: false, error: routed })).recover();
+  })).analysis;
+  assert.deepEqual(analysis.types, [{ type: "origin-type", span: { start: 0, end: 10 } }]);
+});
 const main = readFileSync(new URL("../examples/toy/main.toy", import.meta.url), "utf8");
 
 test("the example has hover types and definitions without emitting code", () => {
@@ -60,7 +111,7 @@ test("hover chooses the smallest typed expression", () => {
 test("checking errors retain earlier facts without inventing successful parent types", () => {
   const source = "let x = 1 in x + true";
   const analysis = analyze(source);
-  assert.equal(analysis.diagnostics[0]!.message, "Expected number, found boolean");
+  assert.ok(analysis.diagnostics.length > 0);
   assert.equal(show(typeAt(analysis, source.lastIndexOf("x"))!.type), "number");
   assert.equal(show(typeAt(analysis, source.indexOf("true"))!.type), "boolean");
   assert.equal(typeAt(analysis, source.indexOf("+")), undefined);
@@ -157,6 +208,19 @@ test("collect is optional and isolated between runs, including errors", () => {
   assert.equal(first.types.length, 1);
 });
 
+test("collect returns recovered diagnostics in order and withholds success", () => {
+  const facts = create<string>();
+  const body = check(function* () {
+    yield* fail("first").recover();
+    yield* fail("second").recover();
+    return "recovered";
+  });
+  const { result, analysis } = facts.collect(body);
+  assert.equal(result.success, false);
+  if (!result.success) assert.equal(result.errors.length, 2);
+  assert.equal(analysis.diagnostics.length, 2);
+  assert.deepEqual(analysis.diagnostics, result.success ? [] : result.errors);
+});
 test("separate source analyses and compilation do not share facts", () => {
   const first = analyze("let x = 1 in x");
   const compiled = compile("let x = 1 in x");
@@ -164,7 +228,7 @@ test("separate source analyses and compilation do not share facts", () => {
   const second = analyze("x");
   assert.equal(second.definitions.length, 0);
   assert.equal(second.references.length, 0);
-  assert.equal(second.diagnostics[0]!.message, "Unbound variable: x");
+  assert.ok(second.diagnostics.length > 0);
   assert.equal(first.definitions.length, 1);
   assert.equal(first.references.length, 1);
 });

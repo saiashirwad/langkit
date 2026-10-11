@@ -8,27 +8,27 @@ import {
   fn,
   record,
   row,
-  fresh,
-  freshRow,
+  fresh as freshCheck,
+  freshRow as freshRowCheck,
   prune,
   flatten,
   free,
   exclude,
   unify,
   mono,
-  generalize,
-  instantiate,
+  generalize as generalizeCheck,
+  instantiate as instantiateCheck,
   show,
-  data,
+  data as dataCheck,
   generic,
   forall,
-  substitute,
-  instantiateForall,
-  skolemize,
+  substitute as substituteCheck,
+  instantiateForall as instantiateForallCheck,
+  skolemize as skolemizeCheck,
   subsume,
   typeKind,
   kindArrow,
-  freshKind,
+  freshKind as freshKindCheck,
   pruneKind,
   unifyKinds,
   showKind,
@@ -41,17 +41,36 @@ import {
   defaultKind,
   type Type,
   type TypeConstructor,
+  type Scheme,
+  type Generic,
 } from "../examples/strict/strict-types.ts";
+
+const value = <A>(body: Check<A>): A => {
+  const result = run(body);
+  assert.ok(result.success, result.success ? "" : result.errors[0].message);
+  return result.value;
+};
+
+const fresh = (level = 0, kind?: Parameters<typeof freshCheck>[1]) => value(freshCheck(level, kind));
+const freshRow = (lacks: Iterable<string> = [], level = 0) => value(freshRowCheck(lacks, level));
+const freshKind = () => value(freshKindCheck());
+const data = (constructor: TypeConstructor, args: readonly Type[]): Type => value(dataCheck(constructor, args));
+const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type =>
+  value(substituteCheck(type, replacements));
+const generalize = (type: Type, environment: Iterable<Scheme>) => value(generalizeCheck(type, environment));
+const instantiate = (scheme: Scheme, level = 0) => value(instantiateCheck(scheme, level));
+const instantiateForall = (type: Type, level = 0) => value(instantiateForallCheck(type, level));
+const skolemize = (type: Type, level: number) => value(skolemizeCheck(type, level));
 
 const accept = (body: Check<unknown>) => {
   const result = run(body);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors[0].message);
 };
 
 const reject = (body: Check<unknown>, message: RegExp) => {
   const result = run(body);
   assert.equal(result.success, false);
-  if (!result.success) assert.match(result.error.message, message);
+  if (!result.success) assert.match(result.errors[0].message, message);
 };
 
 const option: TypeConstructor = { id: Symbol("Option"), name: "Option", arity: 1 };
@@ -62,6 +81,23 @@ const identity = () => {
 };
 
 const field = (label: string, type: Type) => record(row(new Map([[label, type]])));
+
+test("strict types: fresh allocations run per checker execution", () => {
+  const operation = freshCheck();
+  const first = run(operation);
+  const second = run(operation);
+  assert.ok(first.success && second.success);
+  assert.notEqual(first.value, second.value);
+});
+
+test("strict types: instantiation allocates per checker execution", () => {
+  const scheme = value(generalizeCheck(fn(fresh(), fresh()), []));
+  const operation = instantiateCheck(scheme);
+  const first = run(operation);
+  const second = run(operation);
+  assert.ok(first.success && second.success);
+  assert.notEqual(first.value, second.value);
+});
 
 test("strict types: ordinary and row polymorphism freshen together", () => {
   const a = fresh();
@@ -107,6 +143,20 @@ test("strict types: absence constraints survive instantiation and aliases", () =
   reject(unify(instance, field("flag", boolean)), /Duplicate field/);
   assert.equal(tail.instance, undefined);
 });
+
+test("strict constraints: failed nested kind and type constraints roll back links", () => {
+  const kind = freshKind();
+  reject(
+    unifyKinds(kindArrow(kind, typeKind), kindArrow(typeKind, kindArrow(typeKind, typeKind))),
+    /Kind mismatch/,
+  );
+  assert.equal(kind.kind, "kind-variable");
+
+  const variable = fresh();
+  reject(unify(fn(variable, number), fn(boolean, string)), /Cannot unify/);
+  assert.equal(prune(variable), variable);
+});
+
 
 test("strict types: nominal ADTs compare identity, not spelling", () => {
   const other: TypeConstructor = { id: Symbol("Option"), name: "Option", arity: 1 };
@@ -315,7 +365,7 @@ test("strict types: rigid witnesses allocate per execution of reusable subsumpti
 
 const applied = (head: Type, arg: Type): Type => {
   const result = run(apply(head, arg));
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors[0].message);
   return result.value;
 };
 
@@ -541,7 +591,7 @@ test("strict kinds: defaulting fixes only remaining unknown leaves", () => {
   const left = freshKind();
   const right = freshKind();
   const kind = kindArrow(left, kindArrow(right, typeKind));
-  defaultKind(kind);
+  accept(defaultKind(kind));
   assert.equal(showKind(kind), "(Type -> (Type -> Type))");
   assert.equal(pruneKind(left), typeKind);
   assert.equal(pruneKind(right), typeKind);

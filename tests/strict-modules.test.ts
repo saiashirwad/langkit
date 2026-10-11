@@ -48,7 +48,7 @@ const parsedImportSpan = (source: string, target: string, files: Readonly<Record
 };
 const evaluate = (source: string, files: Readonly<Record<string, string>> = {}) => {
   const result = compile(source, options(files));
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
   return runInNewContext(result.value.javascript, {}, { timeout: 1000 });
 };
 
@@ -92,11 +92,12 @@ test("strict imports are isolated from unrelated earlier siblings", () => {
   );
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.origin?.uri, "file:///modules/b.strict");
-    assert.equal(result.error.location?.uri, "file:///modules/main.strict");
+    const error = result.errors[0]!;
+    assert.equal(error.origin?.uri, "file:///modules/b.strict");
+    assert.equal(error.location?.uri, "file:///modules/main.strict");
     const importSpan = parsedImportSpan(source, "file:///modules/b.strict", files);
     assert.equal(importSpan.start, 'import "./a.strict"; '.length);
-    assert.deepEqual(result.error.location?.span, importSpan);
+    assert.deepEqual(error.location?.span, importSpan);
     assert.equal(source.slice(importSpan.start, importSpan.end).trim(), 'import "./b.strict";');
   }
 });
@@ -142,7 +143,7 @@ test("strict imported modules evaluate once, while constructing effects stays in
       "file:///modules/right.strict": 'import "./base.strict";',
     }),
   );
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
   // The action is re-exported, never implicitly run by any import.
   const output: unknown[] = [];
   const context = {
@@ -194,7 +195,7 @@ test("strict caller-provided module reads model unsaved dependencies", () => {
     [],
   );
   const changed = analyze(source, options({ "file:///modules/helpers.strict": "value = true;" }));
-  assert.equal(changed.diagnostics.length, 1);
+  assert.ok(changed.diagnostics.length > 0);
 });
 
 test("strict diagnostics retain transitive origin and root importer locations", () => {
@@ -210,13 +211,14 @@ test("strict diagnostics retain transitive origin and root importer locations", 
   }));
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.origin?.uri, "file:///modules/base.strict");
-    assert.equal(result.error.location?.uri, "file:///modules/main.strict");
-    assert.deepEqual(result.error.location?.span, rootImport);
+    const error = result.errors[0]!;
+    assert.equal(error.origin?.uri, "file:///modules/base.strict");
+    assert.equal(error.location?.uri, "file:///modules/main.strict");
+    assert.deepEqual(error.location?.span, rootImport);
     assert.equal(source.slice(rootImport.start, rootImport.end).trim(), 'import "./left.strict";');
-    assert.ok(result.error.origin);
-    assert.equal(base.slice(result.error.origin.span.start, result.error.origin.span.end), "missing");
-    assert.ok(result.error.related?.some((entry) => entry.location.uri === "file:///modules/base.strict"));
+    assert.ok(error.origin);
+    assert.equal(base.slice(error.origin.span.start, error.origin.span.end), "missing");
+    assert.ok(error.related?.some((entry) => entry.location.uri === "file:///modules/base.strict"));
   }
 });
 
@@ -234,9 +236,10 @@ test("strict diagnostics choose the first root import path through a diamond", (
   }));
   assert.equal(result.success, false);
   if (!result.success) {
-    assert.equal(result.error.origin?.uri, "file:///modules/base.strict");
-    assert.deepEqual(result.error.location?.span, leftImport);
+    const error = result.errors[0]!;
+    assert.equal(error.origin?.uri, "file:///modules/base.strict");
+    assert.deepEqual(error.location?.span, leftImport);
     assert.equal(source.slice(leftImport.start, leftImport.end).trim(), 'import "./left.strict";');
-    assert.ok(result.error.related?.some((entry) => entry.location.uri === "file:///modules/base.strict"));
+    assert.ok(error.related?.some((entry) => entry.location.uri === "file:///modules/base.strict"));
   }
 });

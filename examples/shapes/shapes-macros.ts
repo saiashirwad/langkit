@@ -35,7 +35,7 @@ export const template = (
   ) => Check<Form>,
   span?: Span,
   annotation?: (form: Form) => Check<void>,
-): Check<Form> => {
+): Check<Form> => check(function* () {
   let remaining = 10000;
   const visit = (form: Form, bound: ReadonlySet<string>, depth = 0, callee = false): Check<Form> =>
     check(function* () {
@@ -64,10 +64,7 @@ export const template = (
       if (head === "fn" || head === "let") {
         yield* count(3);
         const vector = items[1]!;
-        if (
-          vector.kind !== "vector" ||
-          (head === "fn" ? !vector.items.length : vector.items.length % 2)
-        )
+        if (vector.kind !== "vector" || (head === "fn" ? !vector.items.length : vector.items.length % 2))
           return yield* fail(`Invalid ${head} bindings in macro template`);
         const locals = new Set(bound);
         const bindings = [...vector.items];
@@ -96,12 +93,10 @@ export const template = (
         else if (head === "extend" || head === "merge") yield* count(3);
         else items[0] = yield* visit(items[0]!, bound, depth + 1, true);
         if (head === "extend" && items[2]!.kind !== "record")
-          return yield* fail(
-            "Macro extend template needs a literal record; fields cannot be spliced",
-          );
+          return yield* fail("Macro extend template needs a literal record; fields cannot be spliced");
         for (let i = 1; i < items.length; i++) items[i] = yield* expr(i);
       }
       return { ...form, items, span: at };
     }).at(span ?? form.span);
-  return visit(root, new Set());
-};
+  return yield* visit(root, new Set());
+});

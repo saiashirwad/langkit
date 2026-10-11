@@ -8,37 +8,50 @@ import {
   fn,
   record,
   row,
-  fresh,
-  freshRow,
+  fresh as freshCheck,
+  freshRow as freshRowCheck,
   prune,
   flatten,
   free,
   exclude,
   unify,
   mono,
-  generalize,
-  instantiate,
+  generalize as generalizeCheck,
+  instantiate as instantiateCheck,
   show,
   data,
   generic,
   forall,
   substitute,
-  instantiateForall,
-  skolemize,
+  instantiateForall as instantiateForallCheck,
+  skolemize as skolemizeCheck,
   subsume,
   type Type,
   type TypeConstructor,
 } from "../examples/advanced/advanced-types.ts";
 
+const value = <A>(body: Check<A>): A => {
+  const result = run(body);
+  assert.ok(result.success, result.success ? "" : result.errors[0].message);
+  return result.success ? result.value : undefined as never;
+};
+
+const fresh = (level = 0) => value(freshCheck(level));
+const freshRow = (lacks: Iterable<string> = [], level = 0) => value(freshRowCheck(lacks, level));
+const generalize = (type: Type, environment: Iterable<import("../examples/advanced/advanced-types.ts").Scheme>) => value(generalizeCheck(type, environment));
+const instantiate = (scheme: import("../examples/advanced/advanced-types.ts").Scheme, level = 0) => value(instantiateCheck(scheme, level));
+const instantiateForall = (type: Type, level = 0) => value(instantiateForallCheck(type, level));
+const skolemize = (type: Type, level: number) => value(skolemizeCheck(type, level));
+
 const accept = (body: Check<unknown>) => {
   const result = run(body);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
 };
 
 const reject = (body: Check<unknown>, message: RegExp) => {
   const result = run(body);
   assert.equal(result.success, false);
-  if (!result.success) assert.match(result.error.message, message);
+  if (!result.success) assert.ok(result.errors.some((error) => message.test(error.message)));
 };
 
 const option: TypeConstructor = { id: Symbol("Option"), name: "Option", arity: 1 };
@@ -85,6 +98,12 @@ test("advanced types: generalization follows solved environment variables", () =
   assert.equal(generalize(inner, [mono(outer)]).variables.size, 0);
   assert.equal(generalize(fn(fresh(), inner), [mono(outer)]).variables.size, 1);
 });
+test("advanced types: failed function unification rolls back earlier links", () => {
+  const parameter = fresh();
+  reject(unify(fn(parameter, number), fn(string, boolean)), /Cannot unify/);
+  assert.equal(parameter.instance, undefined);
+});
+
 
 test("advanced types: absence constraints survive instantiation and aliases", () => {
   const tail = freshRow();
@@ -287,7 +306,7 @@ test("advanced types: rigid witnesses allocate per execution of reusable subsump
   accept(operation);
   accept(operation);
   const operationWithFresh = check(function* () {
-    const variable = fresh();
+    const variable = yield* freshCheck();
     yield* unify(variable, number);
     return variable;
   });

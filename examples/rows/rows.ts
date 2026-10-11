@@ -23,10 +23,13 @@ import {
   scoped,
   within,
   type Check,
+  type Diagnostic,
   type Result,
   type Span,
 } from "langkit";
+import { add, assign } from "langkit/inference";
 import { create, type Binding, type Body, type Operator, type Program, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
 import {
   create as createAnalysis,
   highlight,
@@ -77,12 +80,10 @@ const row = (
   tail: RowVariable | null = null,
 ): Row => ({ fields, tail });
 
-const fresh = (): Variable => ({ kind: "variable" });
+const fresh = (): Check<Variable> => check(function* () { return { kind: "variable" }; });
 
-const freshRow = (lacks: Iterable<string> = []): RowVariable => ({
-  kind: "row-variable",
-  lacks: new Set(lacks),
-});
+const freshRow = (lacks: Iterable<string> = []): Check<RowVariable> =>
+  check(function* () { return { kind: "row-variable", lacks: new Set(lacks) }; });
 
 const prune = (type: Type): Type => {
   if (type.kind !== "variable" || !type.instance) return type;
@@ -156,9 +157,9 @@ const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
     const { fields, tail } = flatten(input);
     for (const label of labels) {
       if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
-      tail?.lacks.add(label);
+      if (tail) yield* add(tail.lacks, label);
     }
-  });
+  }).atomic();
 
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
@@ -169,9 +170,9 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (variables.has(variable)) return yield* fail("Infinite row");
     yield* exclude(target, variable.lacks);
     // Preserve the unique-label invariant even when the target is assembled by unification.
-    if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
-    variable.instance = target;
-  });
+    if (target.tail) for (const label of target.fields.keys()) yield* add(target.tail.lacks, label);
+    yield* assign(variable, "instance", target);
+  }).atomic();
 
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function* () {
@@ -200,12 +201,12 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
       return;
     }
     if (a.tail && b.tail) {
-      const shared = freshRow();
+      const shared = yield* freshRow();
       yield* solveRow(a.tail, row(onlyB, shared));
       yield* solveRow(b.tail, row(onlyA, shared));
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
     else if (b.tail) yield* solveRow(b.tail, row(onlyA));
-  });
+  }).atomic();
 
 const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
@@ -214,18 +215,18 @@ const unify = (left: Type, right: Type): Check<void> =>
     if (a === b) return;
     if (a.kind === "variable") {
       if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-      a.instance = b;
+      yield* assign(a, "instance", b);
     } else if (b.kind === "variable") yield* unify(b, a);
     else if (a.kind === "function" && b.kind === "function") {
       yield* unify(a.param, b.param);
       yield* unify(a.result, b.result);
     } else if (a.kind === "record" && b.kind === "record") yield* unifyRows(a.row, b.row);
     else if (a.kind !== b.kind) return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-  });
+  }).atomic();
 
 const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
-const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme => {
+const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Check<Scheme> => check(function* () {
   const variables = free(type);
   for (const { scheme } of environment.values()) {
     for (const variable of free(scheme.type)) {
@@ -233,30 +234,32 @@ const generalize = (type: Type, environment: ReadonlyMap<string, Entry>): Scheme
     }
   }
   return { type, variables };
-};
+});
 
-const instantiate = (scheme: Scheme): Type => {
+const instantiate = (scheme: Scheme): Check<Type> => check(function* () {
   const replacements = new Map<Variable, Variable>();
   const rows = new Map<RowVariable, RowVariable>();
-  const visitRow = (input: Row): Row => {
+  const visitRow = function* (input: Row): Generator<Check<unknown>, Row, unknown> {
     const flat = flatten(input);
     let tail = flat.tail;
     if (tail && scheme.variables.has(tail)) {
-      if (!rows.has(tail)) rows.set(tail, freshRow(tail.lacks));
+      if (!rows.has(tail)) rows.set(tail, yield* freshRow(tail.lacks));
       tail = rows.get(tail)!;
     }
-    return row(new Map([...flat.fields].map(([name, type]) => [name, visit(type)])), tail);
+    const fields = new Map<string, Type>();
+    for (const [name, type] of flat.fields) fields.set(name, yield* visit(type));
+    return row(fields, tail);
   };
-  const visit = (type: Type): Type => {
-    type = prune(type);
-    if (type.kind === "function") return fn(visit(type.param), visit(type.result));
-    if (type.kind === "record") return record(visitRow(type.row));
+  const visit = function* (input: Type): Generator<Check<unknown>, Type, unknown> {
+    const type = prune(input);
+    if (type.kind === "function") return fn(yield* visit(type.param), yield* visit(type.result));
+    if (type.kind === "record") return record(yield* visitRow(type.row));
     if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
-    if (!replacements.has(type)) replacements.set(type, fresh());
+    if (!replacements.has(type)) replacements.set(type, yield* fresh());
     return replacements.get(type)!;
   };
-  return visit(scheme.type);
-};
+  return yield* visit(scheme.type);
+});
 
 // Syntax. Source spans survive elaboration into the IR.
 type Syntax =
@@ -459,7 +462,7 @@ export const program = lex.complete(expression);
 // Rows explicitly selects records and printing in its IR and JavaScript backend.
 const recordFeature = records<Type>();
 const printingFeature = printing<Type>();
-const code = create<Type>().use(recordFeature).use(printingFeature);
+const code = elaboration(create<Type>().use(recordFeature).use(printingFeature));
 const javascript = createJavaScriptEmitter<Type>(
   coreJavaScript(code.coreOperationTraversals()),
   recordsJavaScript(recordFeature.operations),
@@ -470,7 +473,7 @@ const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const observe = scoped(true);
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
-  check(function* () {
+  code.check(function* () {
     switch (expr.kind) {
       case "number":
         if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
@@ -490,28 +493,29 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         }
         if (!expr.base) return code.record(record(row(types)), fields);
         const base = yield* elaborate(expr.base);
-        const tail = freshRow();
+        const tail = yield* freshRow();
         yield* unify(base.type, record(row(new Map(), tail))).at(expr.base.span);
         yield* exclude(row(new Map(), tail), types.keys()).at(expr.base.span);
         return code.record(record(row(types, tail)), fields, base);
       }
       case "field": {
         const base = yield* elaborate(expr.record);
-        const type = fresh();
-        yield* unify(base.type, record(row(new Map([[expr.name, type]]), freshRow([expr.name]))));
+        const type = yield* fresh();
+        const tail = yield* freshRow([expr.name]);
+        yield* unify(base.type, record(row(new Map([[expr.name, type]]), tail)));
         return code.field(type, base, expr.name);
       }
       case "name": {
         const { binding, scheme } = yield* lookup(env, expr.name);
         if (yield* get(observe)) yield* facts.reference(binding, expr.span);
-        return code.ref(binding, instantiate(scheme));
+        return code.ref(binding, yield* instantiate(scheme));
       }
       case "binary": {
         const left = yield* elaborate(expr.left);
         const right = yield* elaborate(expr.right);
         // Equality is numeric here, avoiding type-class/qualified-type machinery.
-        yield* unify(left.type, number).at(expr.left.span);
-        yield* unify(right.type, number).at(expr.right.span);
+        yield* unify(left.type, number).at(expr.left.span).recover();
+        yield* unify(right.type, number).at(expr.right.span).recover();
         return code.binary(
           expr.op === ">" || expr.op === "==" ? boolean : number,
           expr.op,
@@ -520,11 +524,10 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         );
       }
       case "let":
-        return yield* code.scope(
-          check(function* () {
+        return yield* code.scope(function* () {
             const initial = yield* elaborate(expr.value);
             const environment = yield* get(env);
-            const scheme = generalize(initial.type, environment);
+            const scheme = yield* generalize(initial.type, environment);
             const value = yield* code.declare(expr.name, initial);
             const binding = value.node.binding;
             if (yield* get(observe))
@@ -534,28 +537,29 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
                 prune(binding.type).kind === "function" ? "function" : "variable",
               );
             return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
-          }),
-        );
+        });
       case "fn": {
-        const param = code.binding(expr.param, fresh());
+        const param = code.binding(expr.param, yield* fresh());
         if (yield* get(observe)) yield* facts.define(param, expr.paramSpan, "parameter");
         const entry = { binding: param, scheme: mono(param.type) };
-        const body = yield* code.body(bind(env, [[expr.param, entry]], elaborate(expr.body)));
+        const body = yield* code.body(function* () {
+          return yield* bind(env, [[expr.param, entry]], elaborate(expr.body));
+        });
         return code.fn(fn(param.type, body.result.type), param, body);
       }
       case "call": {
         const callee = yield* elaborate(expr.fn);
         const arg = yield* elaborate(expr.arg);
-        const result = fresh();
+        const result = yield* fresh();
         yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span);
         return code.call(result, callee, arg);
       }
       case "if": {
         const cond = yield* elaborate(expr.cond);
-        yield* unify(cond.type, boolean).at(expr.cond.span);
-        const then = yield* code.body(elaborate(expr.then));
-        const otherwise = yield* code.body(elaborate(expr.else));
-        yield* unify(then.result.type, otherwise.result.type).at(expr.else.span);
+        yield* unify(cond.type, boolean).at(expr.cond.span).recover();
+        const then = yield* code.body(function* () { return yield* elaborate(expr.then); });
+        const otherwise = yield* code.body(function* () { return yield* elaborate(expr.else); });
+        yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
         return code.conditional(then.result.type, cond, then, otherwise);
       }
     }
@@ -568,6 +572,8 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
     )
     .at(expr.span);
 
+export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
+  code.body(function* () { return yield* elaborate(expr); });
 export type Compiled = {
   readonly type: Type;
   readonly ir: Program<Type>;
@@ -580,11 +586,11 @@ const parse = (source: string): Result<Expr> => {
     ? parsed
     : {
         success: false,
-        error: {
+        errors: [{
           message: parsed.error.message,
           span: parsed.error.diagnostic.span,
           context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-        },
+        }],
       };
 };
 
@@ -608,24 +614,22 @@ const exportOrigins = (expr: Expr): Map<string, Span> => {
   return result;
 };
 
+const printDeclaration = function* () {
+  const param = code.binding("value", yield* fresh());
+  const unit = record(row());
+  const body = yield* code.body(function* () { return code.print(unit, code.ref(param)); });
+  return yield* code.declare("print", code.fn(fn(param.type, unit), param, body));
+};
+
 const buildModules = (
   graph: ModuleGraph,
   external: Map<symbol, Export>,
 ): Check<Body<Type>> =>
-  code.body(
-    check(function* () {
-      const param = code.binding("value", fresh());
-      const unit = record(row());
-      const printed = yield* code.declare(
-        "print",
-        code.fn(fn(param.type, unit), param, {
-          declarations: [],
-          result: code.print(unit, code.ref(param)),
-        }),
-      );
+  code.body(function* () {
+      const printed = yield* printDeclaration();
       const primitive: Entry = {
         binding: printed.node.binding,
-        scheme: generalize(printed.type, new Map()),
+        scheme: yield* generalize(printed.type, new Map()),
       };
       const completed = new Map<string, ReadonlyMap<string, Export>>();
       for (const module of graph.modules) {
@@ -641,16 +645,20 @@ const buildModules = (
           }
         const environment = new Map<string, Entry>([["print", primitive], ...imported]);
         const parsed = parse(module.source);
-        if (!parsed.success)
-          return yield* fail(parsed.error.message).at(parsed.error.span).inDocument(module.uri);
+        if (!parsed.success) {
+          const diagnostic = parsed.errors[0]!;
+          let parsing = fail(diagnostic.message).at(diagnostic.span);
+          for (const context of diagnostic.context ?? []) parsing = parsing.context(context);
+          return yield* parsing.inDocument(module.uri);
+        }
         if (module.uri === graph.root) {
           for (const entry of imported.values()) external.set(entry.binding.id, entry);
-          return yield* within(env, environment, elaborate(parsed.value)).inDocument(module.uri);
+          return yield* within(env, () => environment, elaborate(parsed.value)).inDocument(module.uri);
         }
         const initial = yield* within(
           observe,
-          false,
-          within(env, environment, elaborate(parsed.value)),
+          () => false,
+          within(env, () => environment, elaborate(parsed.value)),
         ).inDocument(module.uri);
         const type = prune(initial.type);
         if (type.kind !== "record")
@@ -668,7 +676,7 @@ const buildModules = (
           const reference = yield* code.declare(name, code.field(fieldType, value, name));
           entries.set(name, {
             binding: reference.node.binding,
-            scheme: generalize(fieldType, environment),
+            scheme: yield* generalize(fieldType, environment),
             identity: Symbol(name),
             origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.span },
           });
@@ -676,8 +684,7 @@ const buildModules = (
         completed.set(module.uri, entries);
       }
       throw new Error("Module graph has no root");
-    }),
-  );
+  });
 
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
@@ -685,7 +692,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   const lexical = highlight(source, tokens);
   if (!graph.success)
     return {
-      diagnostics: [graph.error],
+      diagnostics: graph.errors,
       types: [],
       definitions: [],
       references: [],
@@ -721,7 +728,12 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
   const graph = loadModules(source, options, "rows");
   if (!graph.success) return graph;
   const built = run(buildModules(graph.value, new Map()));
-  if (!built.success) return { success: false, error: graph.value.routeDiagnostic(built.error) };
+  if (!built.success) {
+    const errors: [Diagnostic, ...Diagnostic[]] = [graph.value.routeDiagnostic(built.errors[0])];
+    for (let i = 1; i < built.errors.length; i++)
+      errors.push(graph.value.routeDiagnostic(built.errors[i]!));
+    return { success: false, errors };
+  }
   const ir = code.program(built.value);
   return {
     success: true,
@@ -740,7 +752,7 @@ if (import.meta.main) {
   const source = readFileSync(file, "utf8");
   const result = compile(source, { uri: file.href });
   if (!result.success) {
-    console.error(render(result.error, source));
+    for (const error of result.errors) console.error(render(error, source));
     process.exitCode = 1;
   } else console.log(runInNewContext(result.value.javascript, { console }, { timeout: 1000 }));
 }

@@ -1,5 +1,6 @@
-export { Check, check, pure, fail, run, scoped, get, within, bind, lookup } from "./check.ts";
-export type { Result, Scoped } from "./check.ts";
+export { Check, check, pure, fail, run, state, scoped, get, within, bind, lookup, sequence, attempt, choice } from "./check.ts";
+export type { Result, State, Scoped } from "./check.ts";
+export { pruneLink, assign, add, put, append } from "./inference.ts";
 export { render } from "./diagnostic.ts";
 export type { Diagnostic, Span } from "./diagnostic.ts";
 export { withDocument, withLocation } from "./diagnostic.ts";

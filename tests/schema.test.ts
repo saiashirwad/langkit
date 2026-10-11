@@ -9,7 +9,8 @@ import { parse } from "../examples/schema/schema-syntax.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
-  if (!result.success) assert.fail(render(result.error, source));
+  if (!result.success)
+    assert.fail(result.errors.map((error) => render(error, source)).join("\n"));
   return result.value;
 };
 
@@ -276,12 +277,40 @@ for (const [source, message] of [
     const result = compile(source);
     assert.equal(result.success, false);
     if (result.success) return;
-    assert.match(result.error.message, message);
-    assert.ok(result.error.span);
-    assert.match(render(result.error, source), /\^/);
-    assert.equal(analyze(source).diagnostics[0]?.message, result.error.message);
+    const error = result.errors[0]!;
+    assert.match(error.message, message);
+    assert.ok(error.span);
+    assert.match(render(error, source), /\^/);
+    assert.equal(analyze(source).diagnostics[0]?.message, error.message);
   });
 }
+test("schema: independent field and constraint errors recover with precise locations", () => {
+  const source =
+    "model A = { x : Missing, y : Int |> default true } |> index [.missing, .alsoMissing]";
+  const result = compile(source);
+  assert.equal(result.success, false);
+  if (result.success) return;
+  assert.ok(result.errors.length >= 4);
+  const locations = result.errors.map((error) =>
+    source.slice(error.span?.start, error.span?.end),
+  );
+  assert.deepEqual(locations, ["Missing", "default", "missing", "alsoMissing"]);
+  assert.ok(result.errors.every((error) => error.context.includes("model A")));
+  const analysis = analyze(source);
+  assert.deepEqual(analysis.diagnostics, result.errors);
+});
+
+test("schema: recovered diagnostics do not leak across checker runs", () => {
+  const invalid = "model A = { x : Missing, y : Int |> default true }";
+  const first = compile(invalid);
+  const valid = compile("model B = { y : String }");
+  const second = compile(invalid);
+  assert.equal(first.success, false);
+  assert.equal(valid.success, true);
+  assert.equal(second.success, false);
+  if (first.success || second.success) return;
+  assert.deepEqual(second.errors, first.errors);
+});
 
 for (const source of [
   "model A = { x Int }",
@@ -296,7 +325,9 @@ for (const source of [
   "type Role =",
 ]) {
   test(`schema syntax rejects: ${source}`, () => {
-    assert.equal(parse(source).success, false);
+    const parsed = parse(source);
+    assert.equal(parsed.success, false);
+    if (!parsed.success) assert.equal(parsed.errors.length, 1);
     assert.equal(compile(source).success, false);
     const analysis = analyze(source);
     assert.equal(analysis.diagnostics.length, 1);

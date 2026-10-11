@@ -773,4 +773,4 @@ export const apply = (
     for (let i = 0; i < args.length; i++)
       yield* expect(args[i]!, yield* substitute(callee.params[i]!, sub, assumptions, bound));
     return yield* substitute(callee.result, sub, assumptions, bound);
-  });
+  }).atomic();

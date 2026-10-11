@@ -1,5 +1,5 @@
 import { choice, commit, createLexemes, many, parser, recursive, regex, type Parser } from "langkit/parse";
-import type { Result, Span } from "langkit";
+import type { Diagnostic, Result, Span } from "langkit";
 import type { TokenRule } from "langkit/analysis";
 
 export type Form = (
@@ -30,9 +30,13 @@ const form: Parser<Form> = recursive<Form>((form) => {
 export const program = lex.complete(many(form));
 export const parse = (source: string): Result<readonly Form[]> => {
   const result = program.parse(source);
-  return result.success ? result : { success: false, error: {
-    message: result.error.message, span: result.error.diagnostic.span, context: ["parsing"],
-  } };
+  if (result.success) return result;
+  const errors: [Diagnostic, ...Diagnostic[]] = [{
+    ...result.error.diagnostic,
+    message: result.error.message,
+    context: ["parsing", ...(result.error.diagnostic.context ?? [])],
+  }];
+  return { success: false, errors };
 };
 const keywords = new Set(["shape", "def", "macro", "fn", "let", "if", ".", "extend", "update", "select", "merge", "true", "false"]);
 export const tokens: readonly TokenRule[] = [

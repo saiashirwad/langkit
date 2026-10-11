@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { check, run } from "../src/check.ts";
+import { run } from "../src/check.ts";
+import { elaboration } from "../src/ir/check.ts";
 import { create, mapBody, validate, type Body, type OperationNode, type Value } from "../src/ir.ts";
 import { emit, createJavaScriptEmitter, type JavaScriptContext } from "../src/javascript.ts";
 import { coreJavaScript } from "../src/javascript/core.ts";
@@ -120,7 +121,8 @@ test("recursive programs carry their core function identity through validation a
   const backend = createJavaScriptEmitter(coreJavaScript(language.coreOperationTraversals()));
   const num = (value: number) => language.literal("number", value);
   const empty = (result: Value<string>): Body<string> => ({ declarations: [], result });
-  const built = run(language.body(check(function* () {
+  const code = elaboration(language);
+  const built = run(code.body(function* () {
     const factorial = language.binding("factorial", "number -> number");
     const n = language.binding("n", "number");
     const fn = language.fn(factorial.type, n, empty(language.conditional(
@@ -131,9 +133,9 @@ test("recursive programs carry their core function identity through validation a
         "number", language.ref(factorial), language.binary("number", "-", language.ref(n), num(1)),
       ))),
     )));
-    const reference = yield* language.declareRecursive(factorial, fn);
+    const reference = yield* code.declareRecursive(factorial, fn);
     return language.call("number", reference, num(5));
-  })));
+  }));
   assert.equal(built.success, true);
   if (!built.success) return;
   const program = language.program(built.value);

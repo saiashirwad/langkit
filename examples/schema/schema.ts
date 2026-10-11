@@ -294,25 +294,34 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
     for (const model of models.values()) {
       let primaryKeys = 0;
       for (const field of model.fields) {
-        yield* validateField(field).context(`model ${model.name.name}`);
+        yield* validateField(field).context(`model ${model.name.name}`).recover();
         if (has(field, "primaryKey") && ++primaryKeys > 1)
-          return yield* error(field.name, "A model can have only one primary key");
+          yield* error(field.name, "A model can have only one primary key")
+            .context(`model ${model.name.name}`).recover();
       }
       const constraints = new Set<string>();
       for (const constraint of model.constraints) {
+        const signature = `${constraint.kind}:${constraint.fields.map((field) => field.name).join(",")}`;
+        if (constraints.has(signature))
+          yield* error(constraint.name, `Duplicate model operation: ${constraint.kind}`)
+            .context(`model ${model.name.name}`).recover();
+        constraints.add(signature);
         const selected = new Set<string>();
         for (const name of constraint.fields) {
           const value = fieldBindings.get(model)!.get(name.name);
-          if (!value) return yield* error(name, `Unknown field: ${model.name.name}.${name.name}`);
-          if (selected.has(name.name))
-            return yield* error(name, `Repeated field in ${constraint.kind}: ${name.name}`);
+          if (!value) {
+            yield* error(name, `Unknown field: ${model.name.name}.${name.name}`)
+              .context(`model ${model.name.name}`).recover();
+            continue;
+          }
+          if (selected.has(name.name)) {
+            yield* error(name, `Repeated field in ${constraint.kind}: ${name.name}`)
+              .context(`model ${model.name.name}`).recover();
+            continue;
+          }
           selected.add(name.name);
-          yield* reference(value, name);
+          yield* reference(value, name).context(`model ${model.name.name}`).recover();
         }
-        const signature = `${constraint.kind}:${constraint.fields.map((field) => field.name).join(",")}`;
-        if (constraints.has(signature))
-          return yield* error(constraint.name, `Duplicate model operation: ${constraint.kind}`);
-        constraints.add(signature);
       }
     }
 
@@ -321,7 +330,7 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
       for (const op of helper.body.ops) {
         if (op.kind === "extend")
           for (const field of op.fields)
-            yield* validateField(field).context(`helper ${helper.name.name}`);
+            yield* validateField(field).context(`helper ${helper.name.name}`).recover();
       }
     }
     return { models: [...models.values()], enums: [...enums.values()] };
@@ -405,7 +414,7 @@ export const analyze = (source: string): Analysis<Type> => {
   const parsed = parse(source);
   if (!parsed.success)
     return {
-      diagnostics: [parsed.error],
+      diagnostics: [...parsed.errors],
       types: [],
       definitions: [],
       references: [],
@@ -419,7 +428,7 @@ if (import.meta.main) {
   const result = compile(source);
   if (result.success) process.stdout.write(result.value.sql);
   else {
-    console.error(render(result.error, source));
+    for (const error of result.errors) console.error(render(error, source));
     process.exitCode = 1;
   }
 }

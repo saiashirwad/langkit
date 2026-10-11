@@ -181,11 +181,11 @@ export const parse = (source: string): Result<readonly Declaration[]> => {
     ? result
     : {
         success: false,
-        error: {
+        errors: [{
+          ...result.error.diagnostic,
           message: result.error.message,
-          span: result.error.diagnostic.span,
-          context: ["parsing"],
-        },
+          context: ["parsing", ...(result.error.diagnostic.context ?? [])],
+        }],
       };
 };
 

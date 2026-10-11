@@ -4,12 +4,11 @@ import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { definitionAt, semanticTokens, typeAt } from "langkit/analysis";
-import { create } from "langkit/ir";
-import { analyze, compile, elaborate, program, show, type Type } from "../examples/hm/hm.ts";
+import { analyze, compile, elaborateBody, program, show } from "../examples/hm/hm.ts";
 
 const compiled = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors[0]!.message);
   return result.value;
 };
 
@@ -76,7 +75,7 @@ for (const source of [
   test(`HM rejects inconsistent constraints: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, /Cannot unify/);
+    if (!result.success) assert.match(result.errors.map((error) => error.message).join("\n"), /Cannot unify/);
   });
 }
 
@@ -84,7 +83,7 @@ for (const source of ["fn(x) => x(x)", "fn(f) => fn(x) => let y = f(x) in f(f)"]
   test(`HM occurs check: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, /Infinite type/);
+    if (!result.success) assert.match(result.errors.map((error) => error.message).join("\n"), /Infinite type/);
   });
 }
 
@@ -97,21 +96,20 @@ for (const source of ["missing", "let x = x in x", "(let x = 1 in x) + x"]) {
   test(`HM lexical scope failure: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, /Unbound variable/);
+    if (!result.success) assert.match(result.errors.map((error) => error.message).join("\n"), /Unbound variable/);
   });
 }
 
 test("HM operand type errors keep the offending source span", () => {
   const result = compile("1 + true");
   assert.equal(result.success, false);
-  if (!result.success) assert.deepEqual(result.error.span, { start: 4, end: 8 });
+  if (!result.success) assert.deepEqual(result.errors[0]!.span, { start: 4, end: 8 });
 });
 
 test("HM reusable elaboration and independent analyses allocate fresh inference variables", () => {
   const parsed = program.parse("fn(x) => x");
   assert.ok(parsed.success);
-  const code = create<Type>();
-  const computation = code.body(elaborate(parsed.value));
+  const computation = elaborateBody(parsed.value);
   const first = run(computation);
   const second = run(computation);
   assert.ok(first.success && second.success);
@@ -128,6 +126,25 @@ test("HM reusable elaboration and independent analyses allocate fresh inference 
   compiled("fn(x) => x + 1");
   assert.equal(show(typeAt(previous, 3)!.type), "a");
   assert.equal(show(compiled("fn(x) => x").type), "(a -> a)");
+});
+
+test("HM reports independent constraints and preserves inference state after a partial mismatch", () => {
+  const invalidSource = "true + false";
+  const independent = compile(invalidSource);
+  assert.equal(independent.success, false);
+  if (!independent.success) {
+    assert.equal(independent.errors.length, 2);
+    assert.deepEqual(independent.errors.map((error) => {
+      assert.ok(error.span);
+      return invalidSource.slice(error.span.start, error.span.end).trim();
+    }), ["true", "false"]);
+  }
+
+  const source = "fn(f) => let first = f(fn(x) => x + 1) in f(fn(y) => true)";
+  const analysis = analyze(source);
+  assert.equal(analysis.diagnostics.length, 1);
+  assert.equal(show(typeAt(analysis, source.indexOf("y)"))!.type), "a");
+  assert.equal(compile(source).success, false);
 });
 
 test("HM analysis distinguishes a generic declaration from instantiated uses", () => {

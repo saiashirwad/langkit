@@ -213,8 +213,8 @@ Boundaries:
 - No quoting, unquoting, variadic pattern rules, syntax splicing, or user-defined
   compiler-time computations.
 - Expansion is bounded to 32 nested calls and 10,000 expression elaborations
-  inside expansions per compilation. Each template traversal allows at most
-  10,000 nodes and depth 64. Exceeding a limit is a source diagnostic.
+  inside expansions per compilation. Each template traversal run allows at most
+  10,000 nodes and depth 64. Exceeding any limit is a source diagnostic.
 
 Hover on a macro declaration shows its parameter list and identifies it as an
 expression template typechecked at use, not a universally typed signature. Hover
@@ -281,18 +281,20 @@ if (result.success) {
   // result.value.ir: langkit typed IR
   // result.value.javascript: emitted JavaScript expression
 } else {
-  // result.error: source-spanned langkit diagnostic
+  // result.errors: source-spanned diagnostics
 }
 ```
 
 `analyze` provides expression types, value definitions/references, diagnostics,
-and semantic tokens. The language server uses langkit's shared adapter. Shape
-names and macro names have their own semantic symbol roles in addition to value
-bindings: declaration names are definitions, while shape annotations and macro
-calls refer back to those declarations. Macro-expanded template-local bindings
-are intentionally not exposed as source definitions. Record labels still do not
-have dedicated definition/reference facts; comments are skipped by semantic
-highlighting. There is no import system.
+and semantic tokens. Recoverable independent constraints can yield multiple
+diagnostics; not every name or shape failure is recoverable. Compilation with
+errors does not emit JavaScript. The language server uses langkit's shared
+adapter. Shape names and macro names have their own semantic symbol roles in
+addition to value bindings. Declaration names are definitions, while shape
+annotations and macro calls refer back to those declarations. Macro-expanded
+template-local bindings are intentionally not exposed as source definitions.
+Record labels still do not have dedicated definition/reference facts; comments
+are skipped by semantic highlighting. There is no import system.
 
 Implementation:
 

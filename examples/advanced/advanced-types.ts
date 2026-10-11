@@ -1,4 +1,4 @@
-import { pruneLink } from "langkit/inference"
+import { add, assign, pruneLink } from "langkit/inference";
 import { check, fail, type Check } from "langkit";
 
 // Inference belongs to this language, not the IR or the checking runner.
@@ -62,24 +62,17 @@ export const row = (
   tail: RowVariable | null = null,
 ): Row => ({ fields, tail });
 
-export const fresh = (level = 0): Variable => ({ kind: "variable", level });
+export const fresh = (level = 0): Check<Variable> =>
+  check(function* () { return { kind: "variable" as const, level }; });
 
-export const freshRow = (lacks: Iterable<string> = [], level = 0): RowVariable => ({
-  level,
-  kind: "row-variable",
-  lacks: new Set(lacks),
-});
+export const freshRow = (lacks: Iterable<string> = [], level = 0): Check<RowVariable> =>
+  check(function* () { return { level, kind: "row-variable" as const, lacks: new Set(lacks) }; });
 
 const typeVariable = (value: Type): Variable | null =>
   value.kind === "variable" ? value : null;
 const typeInstance = (variable: Variable): Type | undefined => variable.instance;
-const linkType = (variable: Variable, instance: Type): void => {
-  variable.instance = instance;
-};
 
-export const prune = (type: Type): Type =>
-  pruneLink(type, typeVariable, typeInstance, linkType);
-
+export const prune = (type: Type): Type => pruneLink(type, typeVariable, typeInstance);
 export const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);
   let tail = input.tail;
@@ -157,9 +150,9 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
     const { fields, tail } = flatten(input);
     for (const label of labels) {
       if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
-      tail?.lacks.add(label);
+      if (tail) yield* add(tail.lacks, label);
     }
-  });
+  }).atomic();
 
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
@@ -170,10 +163,9 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (variables.has(variable)) return yield* fail("Infinite row");
     yield* lower(record(target), variable.level);
     yield* exclude(target, variable.lacks);
-    // Preserve the unique-label invariant even when the target is assembled by unification.
-    if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
-    variable.instance = target;
-  });
+    if (target.tail) for (const label of target.fields.keys()) yield* add(target.tail.lacks, label);
+    yield* assign(variable, "instance", target);
+  }).atomic();
 
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function* () {
@@ -202,12 +194,12 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
       return;
     }
     if (a.tail && b.tail) {
-      const shared = freshRow([], Math.min(a.tail.level, b.tail.level));
+      const shared = yield* freshRow([], Math.min(a.tail.level, b.tail.level));
       yield* solveRow(a.tail, row(onlyB, shared));
       yield* solveRow(b.tail, row(onlyA, shared));
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
     else if (b.tail) yield* solveRow(b.tail, row(onlyA));
-  });
+  }).atomic();
 
 export const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
@@ -221,7 +213,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
           "Cannot infer an impredicative type; add an explicit polymorphic annotation",
         );
       yield* lower(b, a.level);
-      a.instance = b;
+      yield* assign(a, "instance", b);
     } else if (b.kind === "variable") yield* unify(b, a);
     else if (a.kind === "function" && b.kind === "function") {
       yield* unify(a.param, b.param);
@@ -245,44 +237,46 @@ export const unify = (left: Type, right: Type): Check<void> =>
     else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
     else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind))
       return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-  });
+  }).atomic();
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
-export const generalize = (type: Type, environment: Iterable<Scheme>): Scheme => {
-  const variables = free(type);
-  for (const scheme of environment) {
-    for (const variable of free(scheme.type)) {
-      if (!scheme.variables.has(variable)) variables.delete(variable);
+export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> =>
+  check(function* () {
+    const variables = free(type);
+    for (const scheme of environment) {
+      for (const variable of free(scheme.type)) {
+        if (!scheme.variables.has(variable)) variables.delete(variable);
+      }
     }
-  }
-  return { type, variables };
-};
+    return { type, variables };
+  });
 
-export const instantiate = (scheme: Scheme, level = 0): Type => {
-  const replacements = new Map<Variable, Variable>();
-  const rows = new Map<RowVariable, RowVariable>();
-  const visitRow = (input: Row): Row => {
-    const flat = flatten(input);
-    let tail = flat.tail;
-    if (tail && scheme.variables.has(tail)) {
-      if (!rows.has(tail)) rows.set(tail, freshRow(tail.lacks, level));
-      tail = rows.get(tail)!;
-    }
-    return row(new Map([...flat.fields].map(([name, type]) => [name, visit(type)])), tail);
-  };
-  const visit = (type: Type): Type => {
-    type = prune(type);
-    if (type.kind === "function") return fn(visit(type.param), visit(type.result));
-    if (type.kind === "record") return record(visitRow(type.row));
-    if (type.kind === "data") return data(type.constructor, type.args.map(visit));
-    if (type.kind === "forall") return forall(type.variables, visit(type.body));
-    if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
-    if (!replacements.has(type)) replacements.set(type, fresh(level));
-    return replacements.get(type)!;
-  };
-  return visit(scheme.type);
-};
+export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
+  check(function* () {
+    const replacements = new Map<Variable, Variable>();
+    const rows = new Map<RowVariable, RowVariable>();
+    const visitRow = (input: Row): Row => {
+      const flat = flatten(input);
+      let tail = flat.tail;
+      if (tail && scheme.variables.has(tail)) {
+        if (!rows.has(tail)) rows.set(tail, { kind: "row-variable", level, lacks: new Set(tail.lacks) });
+        tail = rows.get(tail)!;
+      }
+      return row(new Map([...flat.fields].map(([name, type]) => [name, visit(type)])), tail);
+    };
+    const visit = (type: Type): Type => {
+      type = prune(type);
+      if (type.kind === "function") return fn(visit(type.param), visit(type.result));
+      if (type.kind === "record") return record(visitRow(type.row));
+      if (type.kind === "data") return data(type.constructor, type.args.map(visit));
+      if (type.kind === "forall") return forall(type.variables, visit(type.body));
+      if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
+      if (!replacements.has(type)) replacements.set(type, { kind: "variable", level });
+      return replacements.get(type)!;
+    };
+    return visit(scheme.type);
+  });
 
 // Levels are lexical skolem scopes, not let-generalization levels. Connecting an
 // outer meta to an inner structure lowers every reachable unsolved meta, including
@@ -292,7 +286,7 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
     type = prune(type);
     switch (type.kind) {
       case "variable":
-        type.level = Math.min(type.level, level);
+        yield* assign(type, "level", Math.min(type.level, level));
         return;
       case "skolem":
         if (type.level > level) return yield* fail(`Skolem escape: ${show(type)}`);
@@ -313,11 +307,11 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
       case "record": {
         const { fields, tail } = flatten(type.row);
         for (const field of fields.values()) yield* lower(field, level, bound);
-        if (tail) tail.level = Math.min(tail.level, level);
+        if (tail) yield* assign(tail, "level", Math.min(tail.level, level));
         return;
       }
     }
-  });
+  }).atomic();
 
 const maxLevel = (type: Type): number => {
   type = prune(type);
@@ -373,15 +367,16 @@ export const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>)
   }
 };
 
-export const instantiateForall = (type: Type, level = 0): Type => {
-  type = prune(type);
-  while (type.kind === "forall") {
-    type = prune(
-      substitute(type.body, new Map(type.variables.map((variable) => [variable, fresh(level)]))),
-    );
-  }
-  return type;
-};
+export const instantiateForall = (input: Type, level = 0): Check<Type> =>
+  check(function* () {
+    let type = prune(input);
+    while (type.kind === "forall") {
+      const replacements = new Map<Generic, Type>();
+      for (const variable of type.variables) replacements.set(variable, yield* fresh(level));
+      type = prune(substitute(type.body, replacements));
+    }
+    return type;
+  });
 
 const skolem = (name: string, level: number): Type => ({
   kind: "skolem",
@@ -390,18 +385,19 @@ const skolem = (name: string, level: number): Type => ({
   id: Symbol(name),
 });
 
-export const skolemize = (type: Type, level: number): Type => {
-  type = prune(type);
-  while (type.kind === "forall") {
-    type = prune(
-      substitute(
-        type.body,
-        new Map(type.variables.map((variable) => [variable, skolem(variable.name, level)])),
-      ),
-    );
-  }
-  return type;
-};
+export const skolemize = (input: Type, level: number): Check<Type> =>
+  check(function* () {
+    let type = prune(input);
+    while (type.kind === "forall") {
+      type = prune(
+        substitute(
+          type.body,
+          new Map(type.variables.map((variable) => [variable, skolem(variable.name, level)])),
+        ),
+      );
+    }
+    return type;
+  });
 
 /** Predicative subsumption; expected polymorphism is checked using rigid witnesses. */
 
@@ -409,12 +405,12 @@ export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
   check(function* () {
     const target = prune(expected);
     if (target.kind === "forall") {
-      yield* subsume(instantiateForall(actual, level + 1), skolemize(target, level + 1), level + 1);
+      yield* subsume(yield* instantiateForall(actual, level + 1), yield* skolemize(target, level + 1), level + 1);
       return;
     }
-    const source = instantiateForall(actual, level);
+    const source = yield* instantiateForall(actual, level);
     if (source.kind === "function" && target.kind === "function") {
       yield* subsume(target.param, source.param, level);
       yield* subsume(source.result, target.result, level);
     } else yield* unify(source, target);
-  });
+  }).atomic();

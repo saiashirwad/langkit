@@ -2,16 +2,14 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
-import { run } from "langkit";
+import { choice, run } from "langkit";
 import { typeAt, definitionAt } from "langkit/analysis";
-import { create } from "langkit/ir";
 import {
   analyze,
   compile as compileSource,
-  elaborate,
+  elaborateBody,
   program,
   show,
-  type Type,
 } from "../examples/rows/rows.ts";
 
 const compile = (source: string) =>
@@ -21,7 +19,7 @@ const compile = (source: string) =>
 
 const compiled = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
   return result.value;
 };
 
@@ -109,7 +107,7 @@ for (const [source, error] of [
   test(`rows rejects: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, error);
+    if (!result.success) assert.match(result.errors.map((item) => item.message).join("\n"), error);
   });
 }
 
@@ -175,8 +173,7 @@ test("rows analysis keeps library spans out of user facts and never prints", () 
 test("rows reusable checking allocates fresh ordinary and row variables", () => {
   const parsed = program.parse("fn(r) => r.x");
   assert.ok(parsed.success);
-  const code = create<Type>();
-  const computation = code.body(elaborate(parsed.value));
+  const computation = elaborateBody(parsed.value);
   const first = run(computation);
   const second = run(computation);
   assert.ok(first.success && second.success);
@@ -185,4 +182,23 @@ test("rows reusable checking allocates fresh ordinary and row variables", () => 
   const before = analyze("fn(r) => r.x");
   compile("fn(r) => if true then r else { x = 1 | r }");
   assert.equal(show(typeAt(before, 3)!.type), "{ x: a | r } where r lacks x");
+});
+
+test("rows rolls back an abandoned elaboration and its diagnostics", () => {
+  const rejected = program.parse('let hidden = true + "x" in hidden');
+  const fallback = program.parse("42");
+  assert.ok(rejected.success && fallback.success);
+  const selected = run(choice(elaborateBody(rejected.value), elaborateBody(fallback.value)));
+  assert.ok(selected.success);
+  assert.equal(selected.value.declarations.length, 0);
+  assert.equal(show(selected.value.result.type), "number");
+});
+
+test("rows reports independent binary operand errors together", () => {
+  const result = compile('true + "x"');
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.errors.length, 2);
+    assert.ok(result.errors.every((error) => /Cannot unify/.test(error.message)));
+  }
 });

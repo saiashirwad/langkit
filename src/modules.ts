@@ -70,8 +70,9 @@ export class ModuleGraph {
 
 /** Local file imports only. No code is evaluated; offsets survive directive stripping. */
 export const loadModules = (source: string, options: ModuleOptions, extension: string): Result<ModuleGraph> => {
-  const error = (message: string, uri: string, span: Span = { start: 0, end: 0 }): Result<never> =>
-    ({ success: false, error: withDocument({ message, span, context: [] }, uri) });
+  const diagnostic = (message: string, uri: string, span: Span = { start: 0, end: 0 }): Diagnostic =>
+    withDocument({ message, span, context: [] }, uri);
+  const failure = (errors: readonly [Diagnostic, ...Diagnostic[]]): Result<never> => ({ success: false, errors });
   const normalize = (input: string): string => {
     const uri = new URL(input);
     if (uri.protocol !== "file:" || uri.search || uri.hash) throw new Error("Modules require local file URLs without query strings or fragments");
@@ -79,34 +80,51 @@ export const loadModules = (source: string, options: ModuleOptions, extension: s
   };
   let root: string;
   try { root = normalize(options.uri ?? pathToFileURL(resolve("input." + extension)).href); }
-  catch (cause) { return error("Invalid module URI: " + String(cause), options.uri ?? ""); }
+  catch (cause) { return failure([diagnostic("Invalid module URI: " + String(cause), options.uri ?? "")]); }
   const read = options.read ?? ((uri: string) => readFileSync(fileURLToPath(uri), "utf8"));
   const completed = new Map<string, ModuleSource>(); const active = new Set<string>(); const modules: ModuleSource[] = [];
   const visit = (uri: string, original: string): Result<void> => {
     if (completed.has(uri)) return { success: true, value: undefined };
     active.add(uri);
     const parsed = imports.parsePrefix(original);
-    if (!parsed.success) return error(parsed.error.message, uri, parsed.error.diagnostic.span);
+    if (!parsed.success) {
+      active.delete(uri);
+      return failure([diagnostic(parsed.error.message, uri, parsed.error.diagnostic.span)]);
+    }
     const dependencies: { uri: string; span: Span }[] = [];
+    const errors: Diagnostic[] = [];
     for (const imported of parsed.value.value) {
       let target: string;
       try {
         if (!imported.path.startsWith("./") && !imported.path.startsWith("../")) throw new Error("Import paths must start with ./ or ../");
         target = normalize(new URL(imported.path, uri).href);
         if (!fileURLToPath(target).endsWith("." + extension)) throw new Error("Imports must use ." + extension + " files");
-      } catch (cause) { return error("Invalid import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span); }
+      } catch (cause) {
+        errors.push(diagnostic("Invalid import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span));
+        continue;
+      }
       dependencies.push({ uri: target, span: imported.span });
-      if (active.has(target)) return error("Import cycle: " + [...active, target].join(" -> "), uri, imported.span);
+      if (active.has(target)) {
+        errors.push(diagnostic("Import cycle: " + [...active, target].join(" -> "), uri, imported.span));
+        continue;
+      }
       if (completed.has(target)) continue;
       let text: string;
       try { text = read(target); }
-      catch (cause) { return error("Cannot read import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span); }
+      catch (cause) {
+        errors.push(diagnostic("Cannot read import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span));
+        continue;
+      }
       const result = visit(target, text);
       if (!result.success) {
         const location = { uri, span: imported.span };
-        return { success: false, error: { ...withLocation(result.error, location), span: imported.span,
-          related: [...(result.error.related ?? []), { location: result.error.origin ?? location, message: "Imported dependency failure" }] } };
+        errors.push(...result.errors.map((error) => ({ ...withLocation(error, location), span: imported.span,
+          related: [...(error.related ?? []), { location: error.origin ?? location, message: "Imported dependency failure" }] })));
       }
+    }
+    if (errors.length) {
+      active.delete(uri);
+      return failure(errors as [Diagnostic, ...Diagnostic[]]);
     }
     let stripped = original;
     for (const imported of parsed.value.value.toReversed())

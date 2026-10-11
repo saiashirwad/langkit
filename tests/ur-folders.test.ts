@@ -7,7 +7,7 @@ import { analyze, compile, show } from "../examples/ur/ur.ts";
 
 const execute = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
+  assert.ok(result.success, result.success ? "" : JSON.stringify(result.errors));
   const output: unknown[] = [];
   const value: unknown = runInNewContext(
     result.value.javascript,
@@ -291,7 +291,7 @@ for (const [name, source, message] of [
   test(`Ur folders reject ${name}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, message);
+    if (!result.success) assert.match(result.errors.map(({ message }) => message).join("\n"), message);
     assert.equal(analyze(source).diagnostics.length, 1);
   });
 }

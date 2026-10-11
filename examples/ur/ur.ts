@@ -1,5 +1,6 @@
-import { check, fail, render, run, type Check, type Result } from "langkit";
+import { check, fail, render, run, type Check, type Diagnostic, type Result } from "langkit";
 import { create, type Binding, type Body, type Program, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
 import { create as createAnalysis, highlight, type Analysis } from "langkit/analysis";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -53,9 +54,10 @@ export { show, type Type } from "./ur-types.ts";
 const recordFeature = records<Type>();
 const printingFeature = printing<Type>();
 const folderFeature = folders<Type>();
-const code = create<Type>().use(recordFeature).use(printingFeature).use(folderFeature);
+const pureCode = create<Type>().use(recordFeature).use(printingFeature).use(folderFeature);
+const code = elaboration(pureCode);
 const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript<Type>(code.coreOperationTraversals()),
+  coreJavaScript<Type>(pureCode.coreOperationTraversals()),
   recordsJavaScript<Type>(recordFeature.operations),
   printingJavaScript<Type>(printingFeature.operations),
   foldersJavaScript<Type>(folderFeature.operations),
@@ -94,32 +96,34 @@ const parameters = (params: readonly SyntaxParameter[], context: Context): Check
 
 // Surface calls are exact-arity. The shared unary IR represents an n-argument
 // function as nested closures, with an erased empty-record argument for arity 0.
-const lambda = (params: readonly Binding<Type>[], body: Body<Type>, type: Type): Value<Type> => {
-  if (!params.length) return code.fn(type, code.binding("unit", record(row())), body);
-  let value: Value<Type> = body.result;
-  for (let i = params.length - 1; i >= 0; i--) {
-    const intermediate =
-      i === 0
-        ? type
-        : fn(
-            params.slice(i).map((p) => p.type),
-            body.result.type,
-          );
-    value = code.fn(
-      intermediate,
-      params[i]!,
-      i === params.length - 1 ? body : { declarations: [], result: value },
-    );
-  }
-  return value;
-};
+const lambda = (params: readonly Binding<Type>[], body: Body<Type>, type: Type): Check<Value<Type>> =>
+  code.check(function* () {
+    if (!params.length) return code.fn(type, code.binding("unit", record(row())), body);
+    let value: Value<Type> = body.result;
+    for (let i = params.length - 1; i >= 0; i--) {
+      const intermediate =
+        i === 0
+          ? type
+          : fn(
+              params.slice(i).map((p) => p.type),
+              body.result.type,
+            );
+      const inner =
+        i === params.length - 1
+          ? body
+          : yield* code.body(function* () {
+              return value;
+            });
+      value = code.fn(intermediate, params[i]!, inner);
+    }
+    return value;
+  });
 
 const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
   check(function* () {
     switch (expr.kind) {
       case "block":
-        return yield* code.scope(
-          check(function* () {
+        return yield* code.scope(function* () {
             let inner = context;
             const names = new Set<string>();
             for (const statement of expr.statements) {
@@ -148,8 +152,7 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
               inner = withValue(inner, ref.node.binding);
             }
             return code.record(record(row()), []);
-          }),
-        );
+          });
       case "folder": {
         const r = yield* resolveRow(expr.row, context.types, context.constraints);
         if (r.variables.length) return yield* fail("Folder construction requires a closed row");
@@ -221,11 +224,11 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
         if (expr.op === "==") {
           if (!["number", "boolean", "string"].includes(left.type.kind))
             return yield* fail("Equality is supported only for primitive values");
-          yield* expect(right.type, left.type);
+          yield* expect(right.type, left.type).at(expr.right.span).recover();
           return code.binary(boolean, expr.op, left, right);
         }
-        yield* expect(left.type, number);
-        yield* expect(right.type, number);
+        yield* expect(left.type, number).at(expr.left.span).recover();
+        yield* expect(right.type, number).at(expr.right.span).recover();
         return code.binary(expr.op === ">" ? boolean : number, expr.op, left, right);
       }
       case "call": {
@@ -276,8 +279,8 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
         const params = yield* parameters(expr.params, context);
         let inner = context;
         for (const p of params) inner = withValue(inner, p);
-        const body = yield* code.body(elaborate(expr.body, inner));
-        return lambda(
+        const body = yield* elaborateBody(expr.body, inner);
+        return yield* lambda(
           params,
           body,
           fn(
@@ -287,8 +290,7 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
         );
       }
       case "let":
-        return yield* code.scope(
-          check(function* () {
+        return yield* code.scope(function* () {
             const value = yield* elaborate(expr.value, context);
             if (expr.annotation)
               yield* expect(
@@ -302,13 +304,16 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
               value.type.kind === "function" ? "function" : "variable",
             );
             return yield* elaborate(expr.body, withValue(context, ref.node.binding));
-          }),
-        );
+          });
       case "if": {
         const cond = yield* elaborate(expr.cond, context);
         yield* expect(cond.type, boolean);
-        const then = yield* code.body(elaborate(expr.then, context));
-        const otherwise = yield* code.body(elaborate(expr.else, context));
+        const then = yield* code.body(function* () {
+          return yield* elaborate(expr.then, context);
+        });
+        const otherwise = yield* code.body(function* () {
+          return yield* elaborate(expr.else, context);
+        });
         yield* expect(otherwise.result.type, then.result.type);
         return code.conditional(then.result.type, cond, then, otherwise);
       }
@@ -321,6 +326,11 @@ const elaborate = (expr: Expr, context: Context): Check<Value<Type>> =>
       }),
     )
     .at(expr.span);
+
+export const elaborateBody = (expr: Expr, context: Context): Check<Body<Type>> =>
+  code.body(function* () {
+    return yield* elaborate(expr, context);
+  });
 
 const declaration = (
   decl: Exclude<Declaration, { kind: "type" }>,
@@ -355,9 +365,9 @@ const declaration = (
       return yield* fail("Expression-bodied functions require a return type annotation");
     const result = decl.result ? yield* resolve(decl.result, types, constraints) : record(row());
     for (const p of params) inner = withValue(inner, p);
-    const body = yield* code.body(elaborate(decl.body, inner));
+    const body = yield* elaborateBody(decl.body, inner);
     yield* expect(body.result.type, result).at(decl.body.span);
-    return lambda(
+    return yield* lambda(
       params,
       body,
       fn(
@@ -371,34 +381,29 @@ const declaration = (
     .at(decl.span)
     .context(decl.name.name);
 
-const build = (declarations: readonly Declaration[], entry: boolean): Check<Body<Type>> =>
-  code.body(
-    check(function* () {
+export const build = (declarations: readonly Declaration[], entry: boolean): Check<Body<Type>> =>
+  code.body(function* () {
       const parameter: Parameter = { id: Symbol("A"), name: "A", typeKind };
       const valueType: Type = { kind: "variable", parameter };
       const printed = code.binding("value", valueType);
       const unit = record(row());
+      const printBody = yield* code.body(function* () {
+        return code.print(unit, code.ref(printed));
+      });
       const print = yield* code.declare(
         "print",
-        code.fn(fn([valueType], unit, [parameter]), printed, {
-          declarations: [],
-          result: code.print(unit, code.ref(printed)),
-        }),
+        code.fn(fn([valueType], unit, [parameter]), printed, printBody),
       );
       let context = withValue(empty, print.node.binding);
 
       const left = code.binding("left", string),
         right = code.binding("right", string);
+      const concatBody = yield* code.body(function* () {
+        return code.binary(string, "+", code.ref(left), code.ref(right));
+      });
       const textConcat = yield* code.declare(
         "textConcat",
-        lambda(
-          [left, right],
-          {
-            declarations: [],
-            result: code.binary(string, "+", code.ref(left), code.ref(right)),
-          },
-          fn([string, string], string),
-        ),
+        yield* lambda([left, right], concatBody, fn([string, string], string)),
       );
       context = withValue(context, textConcat.node.binding);
 
@@ -424,16 +429,12 @@ const build = (declarations: readonly Declaration[], entry: boolean): Check<Body
         code.binding(["order", "metadata", "values", "initial", "step"][i]!, type),
       );
       const [order, metadata, values, initial, step] = foldParams.map((param) => code.ref(param));
+      const foldBody = yield* code.body(function* () {
+        return code.recordFold(variable(S), order!, metadata!, values!, initial!, step!);
+      });
       const foldRecord = yield* code.declare(
         "foldRecord",
-        lambda(
-          foldParams,
-          {
-            declarations: [],
-            result: code.recordFold(variable(S), order!, metadata!, values!, initial!, step!),
-          },
-          foldType,
-        ),
+        yield* lambda(foldParams, foldBody, foldType),
       );
       context = withValue(context, foldRecord.node.binding);
       const declared = new Set<string>();
@@ -481,21 +482,18 @@ const build = (declarations: readonly Declaration[], entry: boolean): Check<Body
         return code.call(result, code.ref(main), code.record(unit, []));
       }
       return main ? code.ref(main) : code.record(unit, []);
-    }),
-  );
+  });
 
 const parse = (source: string): Result<readonly Declaration[]> => {
   const parsed = program.parse(source);
-  return parsed.success
-    ? parsed
-    : {
-        success: false,
-        error: {
-          message: parsed.error.message,
-          span: parsed.error.diagnostic.span,
-          context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-        },
-      };
+  if (parsed.success) return parsed;
+  const diagnostic = parsed.error.diagnostic;
+  const errors: [Diagnostic, ...Diagnostic[]] = [{
+    ...diagnostic,
+    message: parsed.error.message,
+    context: ["parsing", ...(diagnostic.context ?? [])],
+  }];
+  return { success: false, errors };
 };
 
 export type Compiled = {
@@ -529,7 +527,7 @@ export const analyze = (source: string): Analysis<Type> => {
     parsed = parse(source);
   if (!parsed.success)
     return {
-      diagnostics: [parsed.error],
+      diagnostics: [...parsed.errors],
       types: [],
       definitions: [],
       references: [],
@@ -544,7 +542,7 @@ if (import.meta.main) {
     const source = readFileSync(file, "utf8"),
       result = compile(source);
     if (!result.success) {
-      console.error(render(result.error, source));
+      for (const error of result.errors) console.error(render(error, source));
       process.exitCode = 1;
     } else {
       const value = runInNewContext(

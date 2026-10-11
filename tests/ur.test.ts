@@ -15,7 +15,7 @@ const identity = "fn identity<A>(value: A) -> A = value;";
 
 const compiled = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
+  assert.ok(result.success, result.success ? "" : JSON.stringify(result.errors));
   return result.value;
 };
 
@@ -203,7 +203,7 @@ for (const [source, message] of [
   test(`Ur rejects: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, message);
+    if (!result.success) assert.match(result.errors.map(({ message }) => message).join("\n"), message);
   });
 }
 
@@ -290,13 +290,13 @@ test("Ur disjointness is symmetric but not transitive and never leaks between fu
     let main = 0;
   `);
   assert.equal(notTransitive.success, false);
-  if (!notTransitive.success) assert.match(notTransitive.error.message, /Cannot prove disjoint/);
+  if (!notTransitive.success) assert.match(notTransitive.errors.map(({ message }) => message).join("\n"), /Cannot prove disjoint/);
   const noLeak = compile(`${merge}
     fn bad<A: Row<Type>, B: Row<Type>>(a: Record<A>, b: Record<B>) -> {} = let unused = a ++ b in {};
     let main = 0;
   `);
   assert.equal(noLeak.success, false);
-  if (!noLeak.success) assert.match(noLeak.error.message, /Cannot prove disjoint/);
+  if (!noLeak.success) assert.match(noLeak.errors.map(({ message }) => message).join("\n"), /Cannot prove disjoint/);
 });
 
 test("Ur statement functions execute in order exactly once, even when results are discarded", () => {
@@ -402,7 +402,7 @@ for (const [source, message] of [
   test(`Ur rejects invalid statement program: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, message);
+    if (!result.success) assert.match(result.errors.map(({ message }) => message).join("\n"), message);
     assert.ok(analyze(source).diagnostics.length);
   });
 }
@@ -459,4 +459,21 @@ test("Ur CLI executes statement main without an extra result and preserves value
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("Ur reports both independent operand type errors", () => {
+  const source = 'let main = true + "not a number";';
+  const compiled = compile(source);
+  assert.equal(compiled.success, false);
+  if (!compiled.success) {
+    assert.equal(compiled.errors.length, 2);
+    assert.deepEqual(
+      compiled.errors.map(({ span }) => {
+        assert.ok(span);
+        return source.slice(span.start, span.end).trim();
+      }),
+      ["true", '"not a number"'],
+    );
+  }
+  assert.equal(analyze(source).diagnostics.length, 2);
 });

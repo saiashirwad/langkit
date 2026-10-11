@@ -5,7 +5,7 @@ import { analyze, compile, show } from "../examples/ur/ur.ts";
 
 const evaluate = (source: string): { value: unknown; type: string } => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : JSON.stringify(result.error));
+  assert.ok(result.success, result.success ? "" : JSON.stringify(result.errors));
   const value: unknown = runInNewContext(result.value.javascript, {}, { timeout: 1000 });
   assert.deepEqual(analyze(source).diagnostics, []);
   return { value: JSON.parse(JSON.stringify(value)), type: show(result.value.type) };
@@ -214,7 +214,7 @@ test("Ur infers a mapped row from an earlier unmapped argument without inverting
   assert.deepEqual(evaluate(source).value, { count: { value: 7 }, ready: { value: false } });
   const invalid = compile(source.replace("ready: {value: false}", "ready: {value: 0}"));
   assert.equal(invalid.success, false);
-  if (!invalid.success) assert.match(invalid.error.message, /Expected boolean, found number/);
+  if (!invalid.success) assert.match(invalid.errors.map(({ message }) => message).join("\n"), /Expected boolean, found number/);
 });
 
 for (const [name, source, error] of [
@@ -362,7 +362,7 @@ for (const [name, source, error] of [
   test(`Ur constructors reject: ${name}`, () => {
     const result = compile(source);
     assert.equal(result.success, false, `Unexpected acceptance: ${source}`);
-    if (!result.success) assert.match(result.error.message, error);
+    if (!result.success) assert.match(result.errors.map(({ message }) => message).join("\n"), error);
   });
 }
 
@@ -396,7 +396,7 @@ test("Ur row maps preserve label sets across every pair of three-field subsets",
       if (a & b) {
         const result = compile(source);
         assert.equal(result.success, false, source);
-        if (!result.success) assert.match(result.error.message, /Overlapping field/);
+        if (!result.success) assert.match(result.errors.map(({ message }) => message).join("\n"), /Overlapping field/);
         rejected++;
       } else {
         assert.deepEqual(evaluate(source).value, { ...left, ...right });

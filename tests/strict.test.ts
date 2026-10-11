@@ -11,7 +11,7 @@ const compile = (source: string) => rawCompile(withStdlib(source));
 
 const compiled = (source: string, uri?: string) => {
   const result = uri ? rawCompile(source, { uri }) : compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors[0].message);
   return result.value;
 };
 
@@ -148,9 +148,18 @@ for (const [source, message] of [
   test(`strict rejects: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false, result.success ? show(result.value.type) : "");
-    if (!result.success) assert.match(result.error.message, message);
+    if (!result.success) assert.match(result.errors[0].message, message);
   });
 }
+
+test("strict reports independent operand errors with source locations", () => {
+  const result = compile('main = true + "not a number";');
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.ok(result.errors.length >= 2);
+    assert.ok(result.errors.every((error) => error.span !== undefined));
+  }
+});
 
 test("strict print constructs an opaque action without executing it", () => {
   const output: unknown[] = [];
@@ -211,7 +220,7 @@ test("strict Functor instance methods are checked even if unused", () => {
     "data Box a = Box a; instance Functor Box where { map f box = case box of { Box x -> Box true; }; } main = 42;";
   const result = compile(source);
   assert.equal(result.success, false);
-  if (!result.success) assert.match(result.error.message, /unify|skolem|rigid/i);
+  if (!result.success) assert.match(result.errors[0].message, /unify|skolem|rigid/i);
 });
 
 test("strict constrained functions expose inferred predicates in analysis", () => {

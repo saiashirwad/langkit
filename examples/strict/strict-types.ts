@@ -1,5 +1,5 @@
-import { pruneLink } from "langkit/inference"
-import { check, fail, run, type Check } from "langkit";
+import { add, assign, pruneLink } from "langkit/inference";
+import { check, fail, type Check } from "langkit";
 
 export type Kind =
   | { readonly kind: "type" }
@@ -8,19 +8,17 @@ export type Kind =
 
 export const typeKind: Kind = { kind: "type" };
 
+
 export const kindArrow = (param: Kind, result: Kind): Kind => ({ kind: "arrow", param, result });
 
-export const freshKind = (): Kind => ({ kind: "kind-variable" });
+export const freshKind = (): Check<Kind> => check(function* () {
+  return { kind: "kind-variable" };
+});
 type KindVariable = Extract<Kind, { readonly kind: "kind-variable" }>;
 const kindVariable = (value: Kind): KindVariable | null =>
   value.kind === "kind-variable" ? value : null;
 const kindInstance = (variable: KindVariable): Kind | undefined => variable.instance;
-const linkKind = (variable: KindVariable, instance: Kind): void => {
-  variable.instance = instance;
-};
-
-export const pruneKind = (kind: Kind): Kind =>
-  pruneLink(kind, kindVariable, kindInstance, linkKind);
+export const pruneKind = (kind: Kind): Kind => pruneLink(kind, kindVariable, kindInstance);
 
 export const showKind = (kind: Kind): string => {
   const names = new Map<Kind, string>();
@@ -35,14 +33,14 @@ export const showKind = (kind: Kind): string => {
 };
 
 /** Finalize a declaration's inferred kinds; call only after the whole group is checked. */
-export const defaultKind = (input: Kind): void => {
+export const defaultKind = (input: Kind): Check<void> => check(function* () {
   const kind = pruneKind(input);
-  if (kind.kind === "kind-variable") kind.instance = typeKind;
+  if (kind.kind === "kind-variable") yield* assign(kind, "instance", typeKind);
   else if (kind.kind === "arrow") {
-    defaultKind(kind.param);
-    defaultKind(kind.result);
+    yield* defaultKind(kind.param);
+    yield* defaultKind(kind.result);
   }
-};
+}).atomic();
 
 const kindOccurs = (variable: Kind, input: Kind): boolean => {
   const kind = pruneKind(input);
@@ -60,14 +58,14 @@ export const unifyKinds = (left: Kind, right: Kind): Check<void> =>
     if (a === b) return;
     if (a.kind === "kind-variable") {
       if (kindOccurs(a, b)) return yield* fail("Infinite kind");
-      a.instance = b;
+      yield* assign(a, "instance", b);
     } else if (b.kind === "kind-variable") yield* unifyKinds(b, a);
     else if (a.kind === "arrow" && b.kind === "arrow") {
       yield* unifyKinds(a.param, b.param);
       yield* unifyKinds(a.result, b.result);
     } else if (a.kind !== b.kind)
       return yield* fail(`Kind mismatch: ${showKind(a)} versus ${showKind(b)}`);
-  });
+  }).atomic();
 
 // Kinds and constraints belong to this example, not the shared IR/checking runner.
 export type Type =
@@ -137,16 +135,12 @@ export const row = (
   tail: RowVariable | null = null,
 ): Row => ({ fields, tail });
 
-export const fresh = (level = 0, kind: Kind = typeKind): Variable => ({
-  kind: "variable",
-  level,
-  typeKind: kind,
+export const fresh = (level = 0, kind: Kind = typeKind): Check<Variable> => check(function* () {
+  return { kind: "variable", level, typeKind: kind };
 });
 
-export const freshRow = (lacks: Iterable<string> = [], level = 0): RowVariable => ({
-  kind: "row-variable",
-  level,
-  lacks: new Set(lacks),
+export const freshRow = (lacks: Iterable<string> = [], level = 0): Check<RowVariable> => check(function* () {
+  return { kind: "row-variable", level, lacks: new Set(lacks) };
 });
 
 export const generic = (name: string, kind: Kind = typeKind): Generic => ({
@@ -173,12 +167,7 @@ export const constructorType = (constructor: TypeConstructor): Type => ({
 const typeVariable = (value: Type): Variable | null =>
   value.kind === "variable" ? value : null;
 const typeInstance = (variable: Variable): Type | undefined => variable.instance;
-const linkType = (variable: Variable, instance: Type): void => {
-  variable.instance = instance;
-};
-
-export const prune = (type: Type): Type =>
-  pruneLink(type, typeVariable, typeInstance, linkType);
+export const prune = (type: Type): Type => pruneLink(type, typeVariable, typeInstance);
 
 export const flatten = (input: Row): Row => {
   const fields = new Map(input.fields);
@@ -215,21 +204,17 @@ export const kindOf = (input: Type): Kind => {
 
 export const apply = (head: Type, arg: Type): Check<Type> =>
   check(function* () {
-    const result = freshKind();
+    const result = yield* freshKind();
     yield* unifyKinds(kindOf(head), kindArrow(kindOf(arg), result));
     return { kind: "application", fn: head, arg, typeKind: result };
   });
 
-/** Internal convenience; source applications should use apply for diagnostics. */
-export const data = (constructor: TypeConstructor, args: readonly Type[]): Type => {
-  let type = constructorType(constructor);
-  for (const arg of args) {
-    const result = run(apply(type, arg));
-    if (!result.success) throw new Error(result.error.message);
-    type = result.value;
-  }
-  return type;
-};
+export const data = (constructor: TypeConstructor, args: readonly Type[]): Check<Type> =>
+  check(function* () {
+    let type = constructorType(constructor);
+    for (const arg of args) type = yield* apply(type, arg);
+    return type;
+  });
 
 export const decompose = (input: Type): { head: Type; args: readonly Type[] } => {
   const args: Type[] = [];
@@ -333,9 +318,9 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
     const { fields, tail } = flatten(input);
     for (const label of labels) {
       if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
-      tail?.lacks.add(label);
+      if (tail) yield* add(tail.lacks, label);
     }
-  });
+  }).atomic();
 
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
@@ -346,9 +331,9 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     if (variables.has(variable)) return yield* fail("Infinite row");
     yield* lower(record(target), variable.level);
     yield* exclude(target, variable.lacks);
-    if (target.tail) for (const label of target.fields.keys()) target.tail.lacks.add(label);
-    variable.instance = target;
-  });
+    if (target.tail) for (const label of target.fields.keys()) yield* add(target.tail.lacks, label);
+    yield* assign(variable, "instance", target);
+  }).atomic();
 
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function* () {
@@ -375,7 +360,7 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
       return;
     }
     if (a.tail && b.tail) {
-      const shared = freshRow([], Math.min(a.tail.level, b.tail.level));
+      const shared = yield* freshRow([], Math.min(a.tail.level, b.tail.level));
       yield* solveRow(a.tail, row(onlyB, shared));
       yield* solveRow(b.tail, row(onlyA, shared));
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
@@ -397,7 +382,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
           "Cannot infer an impredicative type; add an explicit polymorphic annotation",
         );
       yield* lower(b, a.level);
-      a.instance = b;
+      yield* assign(a, "instance", b);
     } else if (b.kind === "variable") yield* unify(b, a);
     else if (a.kind === "function" && b.kind === "function") {
       yield* unify(a.param, b.param);
@@ -418,8 +403,8 @@ export const unify = (left: Type, right: Type): Check<void> =>
       a.variables.length === b.variables.length
     ) {
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
-      const ac = instantiate(mono(a));
-      const bc = instantiate(mono(b));
+      const ac = yield* instantiate(mono(a));
+      const bc = yield* instantiate(mono(b));
       if (ac.kind !== "forall" || bc.kind !== "forall")
         throw new Error("Expected copied quantifier");
       const witnesses: Type[] = [];
@@ -429,25 +414,25 @@ export const unify = (left: Type, right: Type): Check<void> =>
         witnesses.push(skolem(ac.variables[i]!.name, level, kind));
       }
       yield* unify(
-        substitute(ac.body, new Map(ac.variables.map((v, i) => [v, witnesses[i]!]))),
-        substitute(bc.body, new Map(bc.variables.map((v, i) => [v, witnesses[i]!]))),
+        yield* substitute(ac.body, new Map(ac.variables.map((v, i) => [v, witnesses[i]!]))),
+        yield* substitute(bc.body, new Map(bc.variables.map((v, i) => [v, witnesses[i]!]))),
       );
     } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
     else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
     else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind))
       return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-  });
+  }).atomic();
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
-export const generalize = (type: Type, environment: Iterable<Scheme>): Scheme => {
+export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> => check(function* () {
   const variables = free(type);
   for (const scheme of environment)
     for (const variable of free(scheme.type)) {
       if (!scheme.variables.has(variable)) variables.delete(variable);
     }
   return { type, variables };
-};
+});
 
 // Kind metavariables belonging to unquantified outer types must stay shared.
 // All others are copied with one map, preserving relationships within an instance.
@@ -463,7 +448,7 @@ const kindVariables = (input: Kind, found: Set<Kind>): void => {
 const cloneKindsFor = (
   type: Type,
   quantified: ReadonlySet<FreeVariable> = new Set(),
-): ((kind: Kind) => Kind) => {
+): ((kind: Kind) => Check<Kind>) => {
   const protectedKinds = new Set<Kind>();
   const visit = (input: Type, bound: ReadonlySet<Generic>): void => {
     const type = prune(input);
@@ -502,51 +487,52 @@ const cloneKindsFor = (
   };
   visit(type, new Set());
   const replacements = new Map<Kind, Kind>();
-  const copy = (input: Kind): Kind => {
+  const copy = (input: Kind): Check<Kind> => check(function* () {
     const kind = pruneKind(input);
     if (kind.kind === "type" || protectedKinds.has(kind)) return kind;
-    if (kind.kind === "arrow") return kindArrow(copy(kind.param), copy(kind.result));
-    if (!replacements.has(kind)) replacements.set(kind, freshKind());
+    if (kind.kind === "arrow") return kindArrow(yield* copy(kind.param), yield* copy(kind.result));
+    if (!replacements.has(kind)) replacements.set(kind, yield* freshKind());
     return replacements.get(kind)!;
-  };
+  });
   return copy;
 };
 
 // Rebuilding an application derives its result kind from the substituted head.
-const application = (head: Type, arg: Type): Type => {
+const application = (head: Type, arg: Type): Check<Type> => check(function* () {
   const kind = pruneKind(kindOf(head));
   return {
     kind: "application",
     fn: head,
     arg,
-    typeKind: kind.kind === "arrow" ? kind.result : freshKind(),
+    typeKind: kind.kind === "arrow" ? kind.result : yield* freshKind(),
   };
-};
+});
 
-export const instantiate = (scheme: Scheme, level = 0): Type => {
+export const instantiate = (scheme: Scheme, level = 0): Check<Type> => check(function* () {
   const replacements = new Map<Variable, Variable>();
   const rows = new Map<RowVariable, RowVariable>();
   const copyKind = cloneKindsFor(scheme.type, scheme.variables);
-  const visit = (input: Type, generics: ReadonlyMap<Generic, Generic> = new Map()): Type => {
+  const visit = (input: Type, generics: ReadonlyMap<Generic, Generic> = new Map()): Check<Type> => check(function* () {
     const type = prune(input);
     switch (type.kind) {
       case "function":
-        return fn(visit(type.param, generics), visit(type.result, generics));
+        return fn(yield* visit(type.param, generics), yield* visit(type.result, generics));
       case "application":
-        return application(visit(type.fn, generics), visit(type.arg, generics));
-      case "qualified":
-        return qualified(
-          type.predicates.map((p) => ({ className: p.className, arg: visit(p.arg, generics) })),
-          visit(type.type, generics),
-        );
+        return yield* application(yield* visit(type.fn, generics), yield* visit(type.arg, generics));
+      case "qualified": {
+        const predicates: Predicate[] = [];
+        for (const p of type.predicates) predicates.push({ className: p.className, arg: yield* visit(p.arg, generics) });
+        return qualified(predicates, yield* visit(type.type, generics));
+      }
       case "forall": {
         const nested = new Map(generics);
-        const variables = type.variables.map((v) => {
-          const replacement = generic(v.name, copyKind(v.typeKind));
+        const variables: Generic[] = [];
+        for (const v of type.variables) {
+          const replacement = generic(v.name, yield* copyKind(v.typeKind));
           nested.set(v, replacement);
-          return replacement;
-        });
-        return forall(variables, visit(type.body, nested));
+          variables.push(replacement);
+        }
+        return forall(variables, yield* visit(type.body, nested));
       }
       case "generic":
         return generics.get(type) ?? type;
@@ -554,26 +540,23 @@ export const instantiate = (scheme: Scheme, level = 0): Type => {
         const flat = flatten(type.row);
         let tail = flat.tail;
         if (tail && scheme.variables.has(tail)) {
-          if (!rows.has(tail)) rows.set(tail, freshRow(tail.lacks, level));
+          if (!rows.has(tail)) rows.set(tail, yield* freshRow(tail.lacks, level));
           tail = rows.get(tail)!;
         }
-        return record(
-          row(
-            new Map([...flat.fields].map(([name, field]) => [name, visit(field, generics)])),
-            tail,
-          ),
-        );
+        const fields = new Map<string, Type>();
+        for (const [name, field] of flat.fields) fields.set(name, yield* visit(field, generics));
+        return record(row(fields, tail));
       }
       case "variable":
         if (!scheme.variables.has(type)) return type;
-        if (!replacements.has(type)) replacements.set(type, fresh(level, copyKind(type.typeKind)));
+        if (!replacements.has(type)) replacements.set(type, yield* fresh(level, yield* copyKind(type.typeKind)));
         return replacements.get(type)!;
       default:
         return type;
     }
-  };
-  return visit(scheme.type);
-};
+  });
+  return yield* visit(scheme.type);
+});
 
 // Lexical levels prevent an outer type or row meta acquiring an inner skolem.
 const lower = (input: Type, level: number, bound: ReadonlySet<Generic> = new Set()): Check<void> =>
@@ -581,7 +564,7 @@ const lower = (input: Type, level: number, bound: ReadonlySet<Generic> = new Set
     const type = prune(input);
     switch (type.kind) {
       case "variable":
-        type.level = Math.min(type.level, level);
+        yield* assign(type, "level", Math.min(type.level, level));
         return;
       case "skolem":
         if (type.level > level) return yield* fail(`Skolem escape: ${show(type)}`);
@@ -607,7 +590,7 @@ const lower = (input: Type, level: number, bound: ReadonlySet<Generic> = new Set
       case "record": {
         const { fields, tail } = flatten(type.row);
         for (const field of fields.values()) yield* lower(field, level, bound);
-        if (tail) tail.level = Math.min(tail.level, level);
+        if (tail) yield* assign(tail, "level", Math.min(tail.level, level));
         return;
       }
     }
@@ -669,64 +652,62 @@ const freeGenerics = (
 };
 
 /** Capture-avoiding substitution; replacement types must have the binder's kind. */
-export const substitute = (input: Type, replacements: ReadonlyMap<Generic, Type>): Type => {
-  const type = prune(input);
-  switch (type.kind) {
-    case "generic":
-      return replacements.get(type) ?? type;
-    case "function":
-      return fn(substitute(type.param, replacements), substitute(type.result, replacements));
-    case "application":
-      return application(substitute(type.fn, replacements), substitute(type.arg, replacements));
-    case "qualified":
-      return qualified(
-        type.predicates.map((p) => ({
-          className: p.className,
-          arg: substitute(p.arg, replacements),
-        })),
-        substitute(type.type, replacements),
-      );
-    case "record": {
-      const { fields, tail } = flatten(type.row);
-      return record(
-        row(
-          new Map([...fields].map(([name, field]) => [name, substitute(field, replacements)])),
-          tail,
-        ),
-      );
-    }
-    case "forall": {
-      const local = new Map(replacements);
-      for (const variable of type.variables) local.delete(variable);
-      const captures = new Set<Generic>();
-      for (const replacement of local.values()) freeGenerics(replacement, captures);
-      const renaming = new Map<Generic, Type>();
-      const variables = type.variables.map((variable) => {
-        if (!captures.has(variable)) return variable;
-        const renamed = generic(variable.name, variable.typeKind);
-        renaming.set(variable, renamed);
-        return renamed;
+export const substitute = (input: Type, replacements: ReadonlyMap<Generic, Type>): Check<Type> =>
+  check(function* () {
+    const visit = (input: Type, replacements: ReadonlyMap<Generic, Type>): Check<Type> =>
+      check(function* () {
+        const type = prune(input);
+        switch (type.kind) {
+          case "generic":
+            return replacements.get(type) ?? type;
+          case "function":
+            return fn(yield* visit(type.param, replacements), yield* visit(type.result, replacements));
+          case "application":
+            return yield* application(yield* visit(type.fn, replacements), yield* visit(type.arg, replacements));
+          case "qualified": {
+            const predicates: Predicate[] = [];
+            for (const predicate of type.predicates)
+              predicates.push({ className: predicate.className, arg: yield* visit(predicate.arg, replacements) });
+            return qualified(predicates, yield* visit(type.type, replacements));
+          }
+          case "record": {
+            const { fields, tail } = flatten(type.row);
+            const substituted = new Map<string, Type>();
+            for (const [name, field] of fields) substituted.set(name, yield* visit(field, replacements));
+            return record(row(substituted, tail));
+          }
+          case "forall": {
+            const local = new Map(replacements);
+            for (const variable of type.variables) local.delete(variable);
+            const captures = new Set<Generic>();
+            for (const replacement of local.values()) freeGenerics(replacement, captures);
+            const renaming = new Map<Generic, Type>();
+            const variables = type.variables.map((variable) => {
+              if (!captures.has(variable)) return variable;
+              const renamed = generic(variable.name, variable.typeKind);
+              renaming.set(variable, renamed);
+              return renamed;
+            });
+            const body = renaming.size ? yield* visit(type.body, renaming) : type.body;
+            return forall(variables, yield* visit(body, local));
+          }
+          default:
+            return type;
+        }
       });
-      const body = renaming.size ? substitute(type.body, renaming) : type.body;
-      return forall(variables, substitute(body, local));
-    }
-    default:
-      return type;
-  }
-};
+    return yield* visit(input, replacements);
+  });
 
-export const instantiateForall = (input: Type, level = 0): Type => {
-  let type = prune(instantiate(mono(input), level));
+export const instantiateForall = (input: Type, level = 0): Check<Type> => check(function* () {
+  let type = prune(yield* instantiate(mono(input), level));
   while (type.kind === "forall") {
-    type = prune(
-      substitute(
-        type.body,
-        new Map(type.variables.map((variable) => [variable, fresh(level, variable.typeKind)])),
-      ),
-    );
+    const replacements = new Map<Generic, Type>();
+    for (const variable of type.variables)
+      replacements.set(variable, yield* fresh(level, variable.typeKind));
+    type = prune(yield* substitute(type.body, replacements));
   }
   return type;
-};
+});
 
 const skolem = (name: string, level: number, kind: Kind): Type => ({
   kind: "skolem",
@@ -736,23 +717,18 @@ const skolem = (name: string, level: number, kind: Kind): Type => ({
   id: Symbol(name),
 });
 
-export const skolemize = (input: Type, level: number): Type => {
-  let type = prune(instantiate(mono(input), level));
+export const skolemize = (input: Type, level: number): Check<Type> => check(function* () {
+  let type = prune(yield* instantiate(mono(input), level));
   while (type.kind === "forall") {
-    type = prune(
-      substitute(
-        type.body,
-        new Map(
-          type.variables.map((variable) => [
-            variable,
-            skolem(variable.name, level, variable.typeKind),
-          ]),
-        ),
-      ),
-    );
+    type = prune(yield* substitute(type.body, new Map(
+      type.variables.map((variable) => [
+        variable,
+        skolem(variable.name, level, variable.typeKind),
+      ]),
+    )));
   }
   return type;
-};
+});
 
 export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
   check(function* () {
@@ -760,17 +736,17 @@ export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
     if (target.kind === "qualified")
       return yield* fail("Qualified types require dictionary checking");
     if (target.kind === "forall") {
-      yield* subsume(instantiateForall(actual, level + 1), skolemize(target, level + 1), level + 1);
+      yield* subsume(yield* instantiateForall(actual, level + 1), yield* skolemize(target, level + 1), level + 1);
       return;
     }
-    const source = instantiateForall(actual, level);
+    const source = yield* instantiateForall(actual, level);
     if (source.kind === "qualified")
       return yield* fail("Qualified types require dictionary checking");
     if (source.kind === "function" && target.kind === "function") {
       yield* subsume(target.param, source.param, level);
       yield* subsume(source.result, target.result, level);
     } else yield* unify(source, target);
-  });
+  }).atomic();
 
 /** Read-only identity/structure comparison for dictionary selection, never inference. */
 export const sameType = (left: Type, right: Type): boolean => {

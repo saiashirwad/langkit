@@ -13,7 +13,6 @@ import {
 } from "langkit/parse";
 import {
   bind,
-  check,
   fail,
   lookup,
   pure,
@@ -24,7 +23,8 @@ import {
   type Result,
   type Span,
 } from "langkit";
-import { create, isReference, type Binding, type Operator, type Program, type Value } from "langkit/ir";
+import { create, isReference, type Binding, type Body, type Operator, type Program, type Value } from "langkit/ir";
+import { elaboration } from "langkit/ir/check";
 import {
   create as createAnalysis,
   highlight,
@@ -231,7 +231,7 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 export const program = lex.complete(expression);
 
 // Toy selects only the core IR and JavaScript operations.
-const code = create<Type>();
+const code = elaboration(create<Type>());
 const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreOperationTraversals()));
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
@@ -239,18 +239,16 @@ const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
 const expect = (value: Value<Type>, type: Type): Check<void> =>
   same(value.type, type)
     ? pure(undefined)
-    : fail(`Expected ${show(type)}, found ${show(value.type)}`).at(value.span);
+    : fail(`Expected ${show(type)}, found ${show(value.type)}`).at(value.span).atomic().recover();
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
-  check(function* () {
+  code.check(function* () {
     switch (expr.kind) {
       case "number":
         if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
         return code.literal(number, expr.value);
-      case "boolean":
-        return code.literal(boolean, expr.value);
-      case "name":
-        return code.ref(yield* lookup(env, expr.name));
+      case "boolean": return code.literal(boolean, expr.value);
+      case "name": return code.ref(yield* lookup(env, expr.name));
       case "binary": {
         const left = yield* elaborate(expr.left);
         const right = yield* elaborate(expr.right);
@@ -261,40 +259,24 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           yield* expect(left, number);
           yield* expect(right, number);
         }
-        return code.binary(
-          expr.op === ">" || expr.op === "==" ? boolean : number,
-          expr.op,
-          left,
-          right,
-        );
+        return code.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
       }
-      case "let":
-        // Keep declarations inside this expression, rather than hoisting them out
-        // of branches or across other operands. JS emits this scope as an IIFE.
-        return yield* code.scope(
-          check(function* () {
-            const initial = yield* elaborate(expr.value);
-            const value = yield* code.declare(expr.name, initial);
-            const binding = value.node.binding;
-            yield* facts.define(
-              binding,
-              expr.nameSpan,
-              binding.type.kind === "function" ? "function" : "variable",
-            );
-            return yield* bind(env, [[expr.name, binding]], elaborate(expr.body));
-          }),
-        );
+      case "let": return yield* code.scope(function* () {
+        const initial = yield* elaborate(expr.value);
+        const value = yield* code.declare(expr.name, initial);
+        const binding = value.node.binding;
+        yield* facts.define(binding, expr.nameSpan, binding.type.kind === "function" ? "function" : "variable");
+        return yield* bind(env, [[expr.name, binding]], elaborate(expr.body));
+      });
       case "fn": {
         const param = code.binding(expr.param, expr.annotation);
         yield* facts.define(param, expr.paramSpan, "parameter");
-        const body = yield* code.body(bind(env, [[expr.param, param]], elaborate(expr.body)));
+        const body = yield* code.body(function* () { return yield* bind(env, [[expr.param, param]], elaborate(expr.body)); });
         return code.fn(fn(param.type, body.result.type), param, body);
       }
       case "call": {
         const callee = yield* elaborate(expr.fn);
-        if (callee.type.kind !== "function") {
-          return yield* fail(`Expected a function, found ${show(callee.type)}`).at(expr.fn.span);
-        }
+        if (callee.type.kind !== "function") return yield* fail(`Expected a function, found ${show(callee.type)}`).at(expr.fn.span);
         const arg = yield* elaborate(expr.arg);
         yield* expect(arg, callee.type.param);
         return code.call(callee.type.result, callee, arg);
@@ -302,21 +284,19 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       case "if": {
         const cond = yield* elaborate(expr.cond);
         yield* expect(cond, boolean);
-        const then = yield* code.body(elaborate(expr.then));
-        const otherwise = yield* code.body(elaborate(expr.else));
+        const then = yield* code.body(function* () { return yield* elaborate(expr.then); });
+        const otherwise = yield* code.body(function* () { return yield* elaborate(expr.else); });
         yield* expect(otherwise.result, then.result.type);
         return code.conditional(then.result.type, cond, then, otherwise);
       }
     }
-  })
-    .flatMap((value) =>
-      check(function* () {
-        if (isReference(value, code.coreReferenceId())) yield* facts.reference(value.node.binding, expr.span);
-        yield* facts.typed(value.type, expr.span);
-        return code.at(value, expr.span);
-      }),
-    )
-    .at(expr.span);
+  }).flatMap((value) => code.check(function* () {
+    if (isReference(value, code.coreReferenceId())) yield* facts.reference(value.node.binding, expr.span);
+    yield* facts.typed(value.type, expr.span);
+    return code.at(value, expr.span);
+  })).at(expr.span);
+export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
+  code.body(function* () { return yield* elaborate(expr); });
 
 export type Compiled = {
   readonly type: Type;
@@ -330,11 +310,11 @@ const parse = (source: string): Result<Expr> => {
     ? parsed
     : {
         success: false,
-        error: {
+        errors: [{
+          ...parsed.error.diagnostic,
           message: parsed.error.message,
-          span: parsed.error.diagnostic.span,
           context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-        },
+        }],
       };
 };
 
@@ -343,19 +323,19 @@ export const analyze = (source: string): Analysis<Type> => {
   const parsed = parse(source);
   if (!parsed.success)
     return {
-      diagnostics: [parsed.error],
+      diagnostics: parsed.errors,
       types: [],
       definitions: [],
       references: [],
       tokens: lexical,
     };
-  return facts.collect(code.body(elaborate(parsed.value)), lexical).analysis;
+  return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 
 export const compile = (source: string): Result<Compiled> => {
   const parsed = parse(source);
   if (!parsed.success) return parsed;
-  const built = run(code.body(elaborate(parsed.value)));
+  const built = run(elaborateBody(parsed.value));
   if (!built.success) return built;
   const ir = code.program(built.value);
   return {
@@ -373,7 +353,7 @@ if (import.meta.main) {
   const source = readFileSync(file, "utf8");
   const result = compile(source);
   if (!result.success) {
-    console.error(render(result.error, source));
+    console.error(result.errors.map((error) => render(error, source)).join("\n"));
     process.exitCode = 1;
   } else {
     console.log(runInNewContext(result.value.javascript, {}, { timeout: 1000 }));

@@ -3,12 +3,11 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { run } from "langkit";
-import { create } from "langkit/ir";
 import { definitionAt, typeAt } from "langkit/analysis";
 import {
   analyze,
   compile as compileSource,
-  elaborate,
+  elaborateBody,
   program,
   show,
   type Type,
@@ -21,7 +20,7 @@ const compile = (source: string) =>
 
 const compiled = (source: string) => {
   const result = compile(source);
-  assert.ok(result.success, result.success ? "" : result.error.message);
+  assert.ok(result.success, result.success ? "" : result.errors.map((error) => error.message).join("\n"));
   return result.value;
 };
 
@@ -173,7 +172,7 @@ for (const [source, message] of [
   test(`advanced rejects: ${source}`, () => {
     const result = compile(source);
     assert.equal(result.success, false);
-    if (!result.success) assert.match(result.error.message, message);
+    if (!result.success) assert.ok(result.errors.some((error) => message.test(error.message)));
   });
 }
 
@@ -250,8 +249,7 @@ test("advanced user constructors and recursive calls retain definition identity"
 test("advanced independent checks do not retain metas, skolems or nominal declarations", () => {
   const parsed = program.parse("fn(r) => r.x");
   assert.ok(parsed.success);
-  const code = create<Type>();
-  const computation = code.body(elaborate(parsed.value.body));
+  const computation = elaborateBody(parsed.value.body);
   const first = run(computation);
   const second = run(computation);
   assert.ok(first.success && second.success);
@@ -262,4 +260,16 @@ test("advanced independent checks do not retain metas, skolems or nominal declar
   compiled("type Private = Private Private");
   assert.equal(compile("Private").success, false);
   assert.equal(show(typeAt(before, 3)!.type), "{ x: a | r } where r lacks x");
+});
+
+test("advanced reports independent binary operand type errors with source spans", () => {
+  const result = compile("true + false");
+  assert.equal(result.success, false);
+  if (!result.success) {
+    assert.equal(result.errors.length, 2);
+    assert.ok(result.errors.every((error) => error.span));
+    const [first, second] = result.errors;
+    assert.ok(first && second, "both independent operand errors have source spans");
+    assert.notEqual(first.span?.start, second.span?.start);
+  }
 });
