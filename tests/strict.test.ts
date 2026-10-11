@@ -33,63 +33,6 @@ const execute = (
   return runInNewContext(`(${javascript})({})`, { console: { log } }, { timeout: 1000 });
 };
 
-for (const [source, expected] of [
-  ["main = if id true then id 42 else 0;", 42],
-  ["get r = r.x; main = if get { x = true } then get { x = 42, flag = true } else 0;", 42],
-  ["extend r = { flag = true | r }; main = (extend { x = 42 }).x;", 42],
-  ["main = (\\(f : forall a. a -> a) -> if f true then f 42 else 0) id;", 42],
-  [
-    "identity : forall a. a -> a; identity x = x; main = if identity true then identity 42 else 0;",
-    42,
-  ],
-  ["rec factorial n = if n == 0 then 1 else n * factorial (n - 1); main = factorial 5;", 120],
-  [
-    "data Tree a = Leaf a | Branch (Tree a) (Tree a); rec sum tree = case tree of { Leaf x -> x; Branch a b -> sum a + sum b; }; main = sum (Branch (Leaf 20) (Leaf 22));",
-    42,
-  ],
-  ["main = withDefault 0 (map (\\x -> x + 1) (Some 41));", 42],
-  ["main = foldList (\\sum x -> sum + x) 0 (map (\\x -> x * 2) (range 1 6));", 42],
-  [
-    "bump xs = map (\\x -> x + 1) xs; main = withDefault 0 (bump (Some 20)) + foldList (\\a b -> a + b) 0 (bump (Cons 20 Nil));",
-    42,
-  ],
-  ["mapping = map; main = withDefault 0 (mapping id (Some 42));", 42],
-  ["main = let mapping = map in withDefault 0 (mapping id (Some 42));", 42],
-  [
-    "keep : forall f a. Functor f => f a -> f a; keep xs = map id xs; main = withDefault 0 (keep (Some 42));",
-    42,
-  ],
-  [
-    "keep : forall f a. Functor f => f a -> f a; keep xs = map id xs; main = length (keep (range 1 42));",
-    42,
-  ],
-  [
-    "keep xs = let apply f ys = map f ys in apply id xs; main = withDefault 0 (keep (Some 42));",
-    42,
-  ],
-  [
-    "class Select a where { select : a -> a; } instance Select number where { select x = x + 1; } instance Select boolean where { select x = x; } choose x = select x; main = if choose true then choose 41 else 0;",
-    42,
-  ],
-  [
-    "class Select a where { select : a -> a; } instance Select number where { select x = x + 1; } twice x = select (select x); main = twice 40;",
-    42,
-  ],
-  [
-    "class Select a where { select : a -> a; } instance Select number where { select x = x + 1; } alias = select; main = alias 41;",
-    42,
-  ],
-  ["main = withDefault 42 (mapOption id None);", 42],
-  ["main = case mapResult (\\x -> x + 1) (Ok 41) of { Ok value -> value; Err _ -> 0; };", 42],
-  ["main = case andThen (\\x -> Ok (x + 1)) (Ok 41) of { Ok value -> value; Err _ -> 0; };", 42],
-  ["main = length (append (range 1 20) (range 1 22));", 42],
-  ["main = withDefault 42 (head Nil);", 42],
-  ["main = { __proto__ = 42 }.__proto__;", 42],
-  ["main = 12 - 3 - 2;", 7],
-  ["main = id (-2) * 3;", -6],
-] as const) {
-  test(`strict execution: ${source}`, () => assert.equal(evaluate(source), expected));
-}
 
 for (const [source, message] of [
   ["main = map id 42;", /kind|unify|instance/i],

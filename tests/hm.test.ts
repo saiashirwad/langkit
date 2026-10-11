@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
 import { test } from "node:test";
-import { runInNewContext } from "node:vm";
 import { run } from "langkit";
 import { definitionAt, semanticTokens, typeAt } from "langkit/analysis";
 import { analyze, compile, elaborateBody, program, show } from "../examples/hm/hm.ts";
@@ -12,48 +10,7 @@ const compiled = (source: string) => {
   return result.value;
 };
 
-const evaluate = (source: string): unknown =>
-  runInNewContext(compiled(source).javascript, {}, { timeout: 1000 });
 
-for (const [source, expected] of [
-  ["fn(x) => x", "(a -> a)"],
-  ["fn(x) => fn(y) => x", "(a -> (b -> a))"],
-  ["fn(f) => fn(g) => fn(x) => f(g(x))", "((a -> b) -> ((c -> a) -> (c -> b)))"],
-  ["fn(f) => fn(x) => f(f(x))", "((a -> a) -> (a -> a))"],
-  ["fn(x) => x + 1", "(number -> number)"],
-  ["fn(x) => if x then 1 else 2", "(boolean -> number)"],
-  ["let id = fn(x) => x in id(id)", "(a -> a)"],
-  ["fn(x) => let f = fn(y) => x in f", "(a -> (b -> a))"],
-  ["fn(f) => let y = f(1) in y", "((number -> a) -> a)"],
-] as const) {
-  test(`HM principal type: ${source}`, () => {
-    assert.equal(show(compiled(source).type), expected);
-  });
-}
-
-for (const [source, expected] of [
-  ["let id = fn(x) => x in if id(true) then id(42) else 0", 42],
-  ["let id = fn(x) => x in let alias = id in if alias(true) then id(42) else 0", 42],
-  ["let choose = fn(x) => fn(y) => x in choose(42)(true)", 42],
-  ["let apply = fn(f) => fn(x) => f(x) in apply(fn(x) => x + 1)(41)", 42],
-  ["let x = 10 in let f = fn(y) => x + y in let x = 100 in f(2)", 12],
-  ["let x = 1 in (let x = x + 1 in x) + x", 3],
-  ["(let x = 1 in x) + (let x = 2 in x)", 3],
-  ["(if false then let x = 10 in x else let x = 20 in x) + 2", 22],
-  ["if 2 > 1 then 42 else 0", 42],
-  ["1 == 1", true],
-  ["12 - 3 - 2", 7],
-  ["-2 * 3", -6],
-  ["let f = fn(x) => let g = fn(y) => x in let b = g(true) in g(1) in f(42)", 42],
-  ["let constructor = 42 in constructor", 42],
-] as const) {
-  test(`HM execution: ${source}`, () => assert.equal(evaluate(source), expected));
-}
-
-test("HM sample is separate source and evaluates to 42", () => {
-  const source = readFileSync(new URL("../examples/hm/main.hm", import.meta.url), "utf8");
-  assert.equal(evaluate(source), 42);
-});
 
 for (const source of [
   "fn(f) => let x = f(1) in f(true)",

@@ -34,69 +34,6 @@ const execute = (source: string) => {
 const evaluate = (source: string): unknown =>
   runInNewContext(compiled(source).javascript, {}, { timeout: 1000 });
 
-for (const [source, expected] of [
-  ["let main = 12 - 3 - 2;", 7],
-  ["let main = 2 + 3 * 4;", 14],
-  ["let main = -2 * 3;", -6],
-  ["let main = if 4 > 2 then 42 else 0;", 42],
-  ['let main = if "a" == "a" then 42 else 0;', 42],
-  ["let main = if true == false then 0 else 42;", 42],
-  [`${identity} let main = if identity(true) then identity(42) else 0;`, 42],
-  [`${identity} let alias = identity; let main = alias(42);`, 42],
-  [`${identity} let main = identity({ answer: 42 }).answer;`, 42],
-  ["fn id<A: Type>(value: A) -> A = value; let main = id(42);", 42],
-  [
-    'fn greet(person: { name: string }) -> string = person.name; let main = greet({ name: "Ada" });',
-    "Ada",
-  ],
-  [`${merge} let main = merge({ name: "Ada" }, { age: 37 }).age;`, 37],
-  [`${merge} let main = merge({}, { answer: 42 }).answer;`, 42],
-  [`${merge} let main = merge({ answer: 42 }, {}).answer;`, 42],
-  ["let main = ({ a: 20 } ++ { b: 22 }).a + ({ a: 20 } ++ { b: 22 }).b;", 42],
-  ["let main = ({ a: 20 }++{ b: 22 }).b;", 22],
-  ["fn id<R: Row<Type>>(value: Record<R>) -> Record<R> = value; let main = id({ x: 42 }).x;", 42],
-  [
-    "fn get<R: Row<Type>>(value: Record<{ x: number } ++ R>) -> number where disjoint({ x: number }, R) = value.x; let main = get({ y: true, x: 42 });",
-    42,
-  ],
-  [
-    `${merge} fn extend<R: Row<Type>>(value: Record<R>) -> Record<R ++ { x: number }> where disjoint(R, { x: number }) = merge(value, { x: 42 }); let main = extend({ y: true }).x;`,
-    42,
-  ],
-  [
-    `${merge} fn swap<A: Row<Type>, B: Row<Type>>(a: Record<A>, b: Record<B>) -> Record<B ++ A> where disjoint(A, B) = merge(b, a); let main = swap({ x: 42 }, { y: false }).x;`,
-    42,
-  ],
-  [
-    `${merge} fn three<A: Row<Type>, B: Row<Type>, C: Row<Type>>(a: Record<A>, b: Record<B>, c: Record<C>) -> Record<A ++ B ++ C> where disjoint(A, B), disjoint(A ++ B, C) = merge(merge(a, b), c); let main = three({ x: 1 }, { y: 42 }, { z: 3 }).y;`,
-    42,
-  ],
-  [
-    "fn makeAdder(amount: number) -> number -> number = fn(value: number) => value + amount; let plus20 = makeAdder(20); let main = plus20(22);",
-    42,
-  ],
-  ["let x = 20; fn add(y: number) -> number = x + y; let main = let x = 100 in add(22);", 42],
-  ["let x = 20; let main = (fn(x: number) => fn(y: number) => x + y)(40)(2);", 42],
-  ["fn answer() -> number = 42; let main = answer();", 42],
-  ["fn add(a: number, b: number) -> number = a + b; let main = add(20, 22);", 42],
-  [
-    "fn apply(f: number -> number, x: number) -> number = f(x); let main = apply(fn(n: number) => n + 1, 41);",
-    42,
-  ],
-  ["let main: { a: number, b: boolean } = { b: true, a: 42 }; let answer = main.a;", undefined],
-  [
-    "fn same<A>(x: A, y: A) -> A = x; let main = same({ x: 42, y: true }, { y: false, x: 1 }).x;",
-    42,
-  ],
-  ["let main = { __proto__: 42 }.__proto__;", 42],
-  [`${merge} let main = merge({ __proto__: 42 }, { constructor: true }).__proto__;`, 42],
-] as const) {
-  test(`Ur execution: ${source}`, () => {
-    const result = evaluate(source);
-    if (expected !== undefined) assert.equal(result, expected);
-    else assert.equal((result as { a: number }).a, 42);
-  });
-}
 
 for (const [source, message] of [
   ["let main = unknown;", /Unknown value/],

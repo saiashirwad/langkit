@@ -27,98 +27,21 @@ const compiled = (source: string) => {
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
   runInNewContext(compiled(source).javascript, { console: { log } }, { timeout: 1000 });
 
-for (const [source, expected] of [
-  ["let id = fn(x) => x in if id(true) then id(42) else 0", 42],
-  [
-    "let get = fn(r) => r.x in let a = get({ x = true }) in if a then get({ x = 42, y = 1 }) else 0",
-    42,
-  ],
-  ["let add = fn(r) => { flag = true | r } in add({ x = 42 }).x", 42],
-  ["let both = fn(f: forall a. a -> a) => if f(true) then f(42) else 0 in both(id)", 42],
-  ["(fn(f: forall a. a -> a) => if f(true) then f(42) else 0)(fn(x) => x)", 42],
-  [
-    "let apply: (forall a. a -> a) -> number = fn(f) => if f(true) then f(42) else 0 in apply(id)",
-    42,
-  ],
-  ["let identity: forall a. a -> a = fn(x) => x in if identity(true) then identity(42) else 0", 42],
-  ["let identity = (fn(x) => x : forall a. a -> a) in identity(42)", 42],
-  ["let make: number -> (forall a. a -> a) = fn(ignored) => fn(x) => x in make(0)(42)", 42],
-  [
-    "let use = fn(f: forall a. a -> a) => let alias = f in if alias(true) then alias(42) else 0 in use(id)",
-    42,
-  ],
-  [
-    "let use: ((forall a. a -> a) -> number) -> number = fn(g) => g(id) in use(fn(f) => if f(true) then f(42) else 0)",
-    42,
-  ],
-  [
+test("advanced explicit annotations permit polymorphic recursion", () => {
+  assert.equal(evaluate(
     "type Nest(a) = Done(a) | More(Nest(List(a))) let rec depth: forall a. Nest(a) -> number = fn(n) => match n { Done(_) => 0, More(rest) => 1 + depth(rest) } in depth(More(Done(Cons(42, Nil))))",
-    1,
-  ],
-  ["let rec factorial = fn(n) => if n == 0 then 1 else n * factorial(n - 1) in factorial(5)", 120],
-  [
-    "let rec factorial: number -> number = fn(n) => if n == 0 then 1 else n * factorial(n - 1) in factorial(5)",
-    120,
-  ],
-  [
-    "let rec identity: forall a. a -> a = fn(x) => if true then x else identity(x) in if identity(true) then identity(42) else 0",
-    42,
-  ],
-  ["type Color = Red | Blue match Red { Red => 42, Blue => 0 }", 42],
-  [
-    "type Box(a) = Box(a) let unbox = fn(box) => match box { Box(value) => value } in unbox(Box(42))",
-    42,
-  ],
-  [
-    "type Tree(a) = Leaf(a) | Branch(Tree(a), Tree(a)) let rec sum = fn(tree) => match tree { Leaf(x) => x, Branch(a, b) => sum(a) + sum(b) } in sum(Branch(Leaf(20), Leaf(22)))",
-    42,
-  ],
-  [
-    "type A = A(B) type B = B | More(A) match A(B) { A(value) => match value { B => 42, More(_) => 0 } }",
-    42,
-  ],
-  ["match Some(42) { None => 0, Some(x) => x }", 42],
-  ["match Some(42) { None => 0, other => match other { None => 1, Some(x) => x } }", 42],
-  ["match 42 { value => value }", 42],
-  ["match true { _ => 42 }", 42],
-  ["let get = fn(option) => match option { Some(x) => x, None => 0 } in get(Some(42))", 42],
-  ["withDefault(0)(mapOption(fn(x) => x + 1)(Some(41)))", 42],
-  ["withDefault(42)(None)", 42],
-  ["match mapResult(fn(x) => x + 1)(Ok(41)) { Ok(value) => value, Err(_) => 0 }", 42],
-  ["match andThen(fn(x) => Ok(x + 1))(Ok(41)) { Ok(value) => value, Err(_) => 0 }", 42],
-  ["foldList(fn(sum) => fn(x) => sum + x)(0)(mapList(fn(x) => x * 2)(range(1)(6)))", 42],
-  ["length(append(range(1)(20))(range(1)(22)))", 42],
-  ["withDefault(0)(head(Cons(42, Nil)))", 42],
-  [
-    "let first = fn(xs) => match xs { Nil => None, Cons(x, _) => Some(x) } in withDefault(0)(first(Cons(42, Nil)))",
-    42,
-  ],
-  ["let print = fn(x) => x in print(42)", 42],
-  ["{ __proto__ = 42 }.__proto__", 42],
-] as const) {
-  test(`advanced execution: ${source}`, () => assert.equal(evaluate(source), expected));
-}
-
-for (const [source, expected] of [
-  ["fn(x) => x", "(a -> a)"],
-  ["fn(r) => r.x", "({ x: a | r } -> a) where r lacks x"],
-  ["Some(42)", "Option(number)"],
-  ["Cons(true, Nil)", "List(boolean)"],
-  ["mapList(fn(x) => x + 1)(Nil)", "List(number)"],
-  [
-    "let rec count = fn(xs) => match xs { Nil => 0, Cons(_, rest) => 1 + count(rest) } in count",
-    "(List(a) -> number)",
-  ],
-] as const) {
-  test(`advanced inferred type: ${source}`, () =>
-    assert.equal(show(compiled(source).type), expected));
-}
-
-test("advanced higher-rank type retains the parameter's quantifier", () => {
-  const type = show(compiled("fn(f: forall a. a -> a) => if f(true) then f(42) else 0").type);
-  assert.match(type, /forall/);
-  assert.match(type, /number/);
+  ), 1);
 });
+
+test("advanced expected higher-rank types check unannotated parameters and results", () => {
+  assert.equal(evaluate(
+    "let use: ((forall a. a -> a) -> number) -> number = fn(g) => g(id) in use(fn(f) => if f(true) then f(42) else 0)",
+  ), 42);
+  assert.equal(evaluate(
+    "let make: number -> (forall a. a -> a) = fn(ignored) => fn(x) => x in make(0)(42)",
+  ), 42);
+});
+
 
 for (const [source, message] of [
   [

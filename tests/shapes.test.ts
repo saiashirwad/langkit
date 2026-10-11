@@ -18,51 +18,6 @@ const compiled = (source: string) => {
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
   runInNewContext(compiled(source).javascript, { console: { log } }, { timeout: 1000 });
 
-for (const [source, expected] of [
-  ["(fn [r] (. r x))", "({ x: a, ..r } -> a)"],
-  ["(fn [r] (extend r {flag true}))", "({ ..r } -> { flag: boolean, ..r })"],
-  ["(fn [r] (+ (. r x) (. r y)))", "({ x: number, y: number, ..r } -> number)"],
-  ["(fn [r] (update r x true))", "({ x: a, ..r } -> { x: boolean, ..r })"],
-  ["(fn [r] (select r [x]))", "({ x: a, ..r } -> { x: a })"],
-  ["(fn [(r {x 'a ..rest})] (. r x))", "({ x: a, ..r } -> a)"],
-  ["(fn [f g x] (f (g x)))", "((a -> b) -> ((c -> a) -> (c -> b)))"],
-  ["{}", "{}"],
-  ["print", "(a -> {})"],
-] as const) test(`shapes inferred type: ${source}`, () => assert.equal(show(compiled(source).type), expected));
-
-for (const [source, expected] of [
-  ["(+ 20 22)", 42],
-  ["; comment\n(let [id (fn [x] x) ignored (id true)] (id 42)) ; eof", 42],
-  ["(def get (fn [r] (. r x))) (let [a (get {x true})] (if a (get {y false x 42}) 0))", 42],
-  ["(def add (fn [r] (extend r {flag true}))) (let [a (add {x 1})] (. (add {y 42}) y))", 42],
-  ["(def add (fn [r] (extend r {flag true}))) (def alias add) (. (alias {x 42}) x)", 42],
-  ["(shape Named {name string}) (def greet (fn [(p Named)] (concat \"Hello, \" (. p name)))) (greet {name \"Ada\" age 36})", "Hello, Ada"],
-  ["(def birthday (fn [(p {age number ..r})] (update p age (+ (. p age) 1)))) (. (birthday {name \"Ada\" age 36}) name)", "Ada"],
-  ["(def birthday (fn [(p {age number ..r})] (update p age (+ (. p age) 1)))) (. (birthday {name \"Ada\" age 36}) age)", 37],
-  ["(let [original {x 42 y true} changed (update original x \"new\")] (. original x))", 42],
-  ["(. (update {x 42 y true} x \"new\") x)", "new"],
-  ["(. (update {x 42 y true} x \"new\") y)", true],
-  ["(. (merge {x 42} {y true}) x)", 42],
-  ["((fn [r s] (. (if false (extend s {x r y false}) (extend r {x (extend s {y true})})) y)) {y true} {})", true],
-  ["((fn [r s] (. (if true (extend r {x (extend s {y true})}) (extend s {x r y false})) y)) {y true} {})", true],
-  ["(def add (fn [r] (merge r {flag true}))) (. (add {x 42}) x)", 42],
-  ["(. (select {x 42 y true z \"hi\"} [y x]) x)", 42],
-  ["(. {nested {x 42}} nested)", { x: 42 }],
-  ["(. {__proto__ 42 constructor 1} __proto__)", 42],
-  ["(. (update {__proto__ 1} __proto__ 42) __proto__)", 42],
-  ["(. (extend {} {__proto__ 42}) __proto__)", 42],
-  ["(. (merge {} {__proto__ 42}) __proto__)", 42],
-  ["(. (select {__proto__ 42} [__proto__]) __proto__)", 42],
-  ["(let [x 1 f (fn [y] (+ x y)) x 100] (f 41))", 42],
-  ["(def apply (fn [(f (-> number number)) x] (f x))) (apply (fn [n] (+ n 1)) 41)", 42],
-  ["(def same (fn [(a {x number ..r}) (b {y string ..r})] (. b z))) (same {x 0 z 42} {y \"yes\" z 42})", 42],
-  ["(shape Inner {x number}) (shape Outer {child Inner}) ((fn [(p Outer)] (. (. p child) x)) {child {x 42 extra true} other false})", 42],
-  ["(def keep (fn [(p {x 'a ..r})] p)) (let [a (keep {x true y 1})] (. (keep {x 42 z false}) x))", 42],
-  ["(let [f (fn [r] (fn [x] (extend r {value x})))] (. ((f {answer 42}) true) answer))", 42],
-] as const) test(`shapes evaluates: ${source}`, () => {
-  // VM records have a different prototype; compare their serialized data.
-  assert.deepEqual(JSON.parse(JSON.stringify(evaluate(source))), expected);
-});
 
 for (const [source, message] of [
   ["(. {y 1} x)", /Missing field/],

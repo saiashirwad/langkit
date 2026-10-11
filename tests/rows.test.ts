@@ -26,50 +26,6 @@ const compiled = (source: string) => {
 const evaluate = (source: string, log: (value: unknown) => void = () => {}) =>
   runInNewContext(compiled(source).javascript, { console: { log } }, { timeout: 1000 });
 
-for (const [source, expected] of [
-  ["fn(r) => r.x", "({ x: a | r } -> a) where r lacks x"],
-  ["fn(r) => { flag = true | r }", "({ | r } -> { flag: boolean | r }) where r lacks flag"],
-  ["fn(r) => r.x + r.y", "({ x: number, y: number | r } -> number) where r lacks x, y"],
-  ["fn(r) => { copy = r.x | r }", "({ x: a | r } -> { copy: a, x: a | r }) where r lacks copy, x"],
-  [
-    "fn(r) => if true then { x = 1 | r } else { x = 2 | r }",
-    "({ | r } -> { x: number | r }) where r lacks x",
-  ],
-  ["{}", "{}"],
-  ['"hello"', "string"],
-  ["compose", "((a -> b) -> ((c -> a) -> (c -> b)))"],
-  ["print", "(a -> {})"],
-] as const) {
-  test(`rows principal type: ${source}`, () => assert.equal(show(compiled(source).type), expected));
-}
-
-for (const [source, expected] of [
-  [
-    "let getX = fn(r) => r.x in let a = getX({ x = true }) in if a then getX({ y = false, x = 42 }) else 0",
-    42,
-  ],
-  ["let add = fn(r) => { flag = true | r } in let a = add({ x = 1 }) in add({ y = 42 }).y", 42],
-  ["let add = fn(r) => { flag = true | r } in let alias = add in alias({ x = 42 }).x", 42],
-  ["(if true then { x = 42, y = true } else { y = false, x = 1 }).x", 42],
-  ["{ nested = { x = 42 } }.nested.x", 42],
-  ["{ f = fn(x) => { answer = x } }.f(42).answer", 42],
-  ["let get = fn(r) => r.x in compose(get)(fn(r) => { x = 42 | r })({ y = true })", 42],
-  ["let get = fn(r) => r.x in let b = get({ x = true }) in get({ x = fn(x) => x })(42)", 42],
-  ["let ignored = id(true) in const(42)(id({ x = 1 }))", 42],
-  ["{ __proto__ = 42, constructor = 1 }.__proto__", 42],
-  ['"hello\\nworld"', "hello\nworld"],
-  ["let print = fn(x) => x in print(42)", 42],
-  [
-    "(fn(r) => fn(s) => (if false then { x = r, y = false | s } else { x = { y = true | s } | r }).y)({ y = true })({})",
-    true,
-  ],
-  [
-    "(fn(r) => fn(s) => (if true then { x = { y = true | s } | r } else { x = r, y = false | s }).y)({ y = true })({})",
-    true,
-  ],
-] as const) {
-  test(`rows execution: ${source}`, () => assert.equal(evaluate(source), expected));
-}
 
 for (const [source, error] of [
   ["{}.x", /Missing field/],

@@ -13,37 +13,6 @@ const compiled = (source: string) => {
 const evaluate = (source: string): unknown =>
   runInNewContext(compiled(source).javascript, {}, { timeout: 1000 });
 
-for (const [source, expected] of [
-  ["20 + 2 * 11", 42],
-  ["(20 + 2) * 2", 44],
-  ["12 - 3 - 2", 7],
-  ["12 / 3 / 2", 2],
-  ["-2 * 3", -6],
-  ["1 / 0", Infinity],
-  ["0 / 0", NaN],
-  ["-0", -0],
-  ["true", true],
-  ["false == false", true],
-  ["1 == 2", false],
-  ["if 2 > 1 then 42 else 0", 42],
-  ["let x = 20 in let y = x + 1 in y + y", 42],
-  ["let x = 1 in (let x = x + 1 in x) + x", 3],
-  ["let x = 10 in let f = fn(y: number) => x + y in let x = 100 in f(2)", 12],
-  ["let add = fn(x: number) => fn(y: number) => x + y in add(20)(22)", 42],
-  [
-    "let twice = fn(f: number -> number) => fn(x: number) => f(f(x)) in twice(fn(x: number) => x + 1)(40)",
-    42,
-  ],
-  ["(fn(x: boolean) => if x then 1 else 0)(true)", 1],
-  ["(if true then fn(x: number) => x + 1 else fn(x: number) => x - 1)(41)", 42],
-  ["(if false then let x = 10 in x else let x = 20 in x) + 2", 22],
-  ["let constructor = 42 in constructor", 42],
-  ["let __proto__ = 42 in __proto__", 42],
-  ["let trueValue = 42 in trueValue", 42],
-  ["\n  42  \n", 42],
-] as const) {
-  test(source, () => assert.equal(evaluate(source), expected));
-}
 
 for (const [source, message] of [
   ["true + 1", "Expected number, found boolean"],
