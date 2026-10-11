@@ -1,7 +1,6 @@
-import { add, assign, pruneLink } from "langkit/inference";
-import { check, fail, type Check } from "langkit";
+import { add, assign, pruneLink } from "../inference.ts";
+import { check, fail, type Check } from "../check.ts";
 
-// Inference belongs to this language, not the IR or the checking runner.
 export type Type =
   | { readonly kind: "number" | "boolean" | "string" }
   | { readonly kind: "function"; readonly param: Type; readonly result: Type }
@@ -45,7 +44,7 @@ export type RowVariable = {
 
 export type Row = { readonly fields: ReadonlyMap<string, Type>; readonly tail: RowVariable | null };
 
-type FreeVariable = Variable | RowVariable;
+export type FreeVariable = Variable | RowVariable;
 
 export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<FreeVariable> };
 
@@ -143,8 +142,6 @@ export const free = (type: Type, found = new Set<FreeVariable>()): Set<FreeVaria
   return found;
 };
 
-// Every row tail excludes its explicit fields. Extension adds absence constraints;
-// solving a row variable checks and propagates them, including through aliases.
 export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
   check(function* () {
     const { fields, tail } = flatten(input);
@@ -153,6 +150,22 @@ export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
       if (tail) yield* add(tail.lacks, label);
     }
   }).atomic();
+
+const constrain = (input: Type): Check<void> =>
+  check(function* () {
+    const type = prune(input);
+    if (type.kind === "function") {
+      yield* constrain(type.param);
+      yield* constrain(type.result);
+    } else if (type.kind === "record") {
+      yield* exclude(row(new Map(), type.row.tail), type.row.fields.keys());
+      const flat = flatten(type.row);
+      for (const field of flat.fields.values()) yield* constrain(field);
+      if (flat.tail) yield* exclude(row(new Map(), flat.tail), flat.fields.keys());
+    } else if (type.kind === "data") {
+      for (const arg of type.args) yield* constrain(arg);
+    } else if (type.kind === "forall") yield* constrain(type.body);
+  });
 
 const solveRow = (variable: RowVariable, input: Row): Check<void> =>
   check(function* () {
@@ -179,8 +192,6 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
         yield* unify(type, b.fields.get(label)!);
         unified.add(label);
       }
-      // A field's type may share variables with either tail. Solving it can
-      // expose more common fields, whose types must agree before solving tails.
       a = flatten(left);
       b = flatten(right);
     }
@@ -203,6 +214,8 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
 
 export const unify = (left: Type, right: Type): Check<void> =>
   check(function* () {
+    yield* constrain(left);
+    yield* constrain(right);
     const a = prune(left);
     const b = prune(right);
     if (a === b) return;
@@ -226,7 +239,6 @@ export const unify = (left: Type, right: Type): Check<void> =>
       b.kind === "forall" &&
       a.variables.length === b.variables.length
     ) {
-      // Alpha-equivalence uses fresh rigid witnesses outside every existing meta's scope.
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
       const witnesses = a.variables.map((v) => skolem(v.name, level));
       yield* unify(
@@ -243,6 +255,7 @@ export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
 export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> =>
   check(function* () {
+    yield* constrain(type);
     const variables = free(type);
     for (const scheme of environment) {
       for (const variable of free(scheme.type)) {
@@ -250,7 +263,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Sch
       }
     }
     return { type, variables };
-  });
+  }).atomic();
 
 export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
   check(function* () {
@@ -278,9 +291,6 @@ export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
     return visit(scheme.type);
   });
 
-// Levels are lexical skolem scopes, not let-generalization levels. Connecting an
-// outer meta to an inner structure lowers every reachable unsolved meta, including
-// row tails, so a later assignment cannot smuggle a rigid type out of its scope.
 const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set()): Check<void> =>
   check(function* () {
     type = prune(type);
@@ -334,7 +344,6 @@ const maxLevel = (type: Type): number => {
   }
 };
 
-/** Capture-avoiding substitution of explicitly bound ordinary type parameters. */
 
 export const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type => {
   type = prune(type);
@@ -399,7 +408,6 @@ export const skolemize = (input: Type, level: number): Check<Type> =>
     return type;
   });
 
-/** Predicative subsumption; expected polymorphism is checked using rigid witnesses. */
 
 export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
   check(function* () {
@@ -413,4 +421,27 @@ export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
       yield* subsume(target.param, source.param, level);
       yield* subsume(source.result, target.result, level);
     } else yield* unify(source, target);
+  }).atomic();
+
+export const expectFunction = (
+  input: Type,
+  level = 0,
+): Check<Extract<Type, { kind: "function" }>> =>
+  check(function* () {
+    const type = prune(yield* instantiateForall(input, level));
+    if (type.kind === "function") return type;
+    const param = yield* fresh(level);
+    const result = yield* fresh(level);
+    yield* unify(type, fn(param, result));
+    return { kind: "function" as const, param, result };
+  }).atomic();
+
+export const withRigidScope = <A>(
+  expected: Type,
+  level: number,
+  body: (rigid: Type, level: number) => Check<A>,
+): Check<A> =>
+  check(function* () {
+    const inner = level + 1;
+    return yield* body(yield* skolemize(expected, inner), inner);
   }).atomic();

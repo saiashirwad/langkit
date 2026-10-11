@@ -55,6 +55,7 @@ import {
   generalize,
   instantiate,
   instantiateForall,
+  expectFunction,
   skolemize,
   generic,
   forall,
@@ -63,10 +64,10 @@ import {
   type Type,
   type Scheme,
   type TypeConstructor,
-} from "./advanced-types.ts";
+} from "../../src/types/higher-rank.ts";
 
 export { program } from "./advanced-syntax.ts";
-export { show, type Type } from "./advanced-types.ts";
+export { show, type Type } from "../../src/types/higher-rank.ts";
 export type { Expr } from "./advanced-syntax.ts";
 
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
@@ -407,16 +408,9 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         }
         case "call": {
           const callee = yield* elaborate(expr.fn);
-          let type = prune(yield* instantiateForall(callee.type, current));
-          if (type.kind !== "function") {
-            const param = yield* fresh(current);
-            const result = yield* fresh(current);
-            yield* unify(type, fn(param, result)).at(expr.fn.span);
-            type = fn(param, result);
-          }
+          const type = yield* expectFunction(callee.type, current).at(expr.fn.span);
           // The expected parameter type reaches the argument before its inference,
           // which is what makes explicitly higher-rank arguments checkable.
-          if (type.kind !== "function") throw new Error("Expected function after unification");
           const arg = yield* checkExpr(expr.arg, type.param);
           return code.call(type.result, callee, arg);
         }

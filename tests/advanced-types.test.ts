@@ -28,7 +28,7 @@ import {
   subsume,
   type Type,
   type TypeConstructor,
-} from "../examples/advanced/advanced-types.ts";
+} from "../src/types/higher-rank.ts";
 
 const value = <A>(body: Check<A>): A => {
   const result = run(body);
@@ -38,8 +38,8 @@ const value = <A>(body: Check<A>): A => {
 
 const fresh = (level = 0) => value(freshCheck(level));
 const freshRow = (lacks: Iterable<string> = [], level = 0) => value(freshRowCheck(lacks, level));
-const generalize = (type: Type, environment: Iterable<import("../examples/advanced/advanced-types.ts").Scheme>) => value(generalizeCheck(type, environment));
-const instantiate = (scheme: import("../examples/advanced/advanced-types.ts").Scheme, level = 0) => value(instantiateCheck(scheme, level));
+const generalize = (type: Type, environment: Iterable<import("../src/types/higher-rank.ts").Scheme>) => value(generalizeCheck(type, environment));
+const instantiate = (scheme: import("../src/types/higher-rank.ts").Scheme, level = 0) => value(instantiateCheck(scheme, level));
 const instantiateForall = (type: Type, level = 0) => value(instantiateForallCheck(type, level));
 const skolemize = (type: Type, level: number) => value(skolemizeCheck(type, level));
 
