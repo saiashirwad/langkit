@@ -1,10 +1,11 @@
-import { bind, check, get, lookup, scoped, type Check } from "./check.ts";
+import { bind, check, get, lookup, scoped, type Check, type Scoped } from "./check.ts";
 import type { DefinitionKind } from "./analysis.ts";
 import type { Span } from "./diagnostic.ts";
 import type { Synthesized } from "./judgments.ts";
 
 export interface BindingEntry<Handle, Scheme> { readonly binding: Handle; readonly scheme: Scheme }
-export interface BindingPolicy<Type, Term, Handle extends { readonly id: symbol; readonly name: string }, Scheme> {
+export interface BindingIdentity { readonly id: symbol; readonly name: string }
+export interface BindingPolicy<Type, Term, Handle extends BindingIdentity, Scheme> {
   readonly monomorphic: (type: Type) => Scheme;
   readonly instantiate: (scheme: Scheme) => Check<Type>;
   readonly generalize: (type: Type, outer: readonly Scheme[]) => Check<Scheme>;
@@ -14,7 +15,14 @@ export interface BindingPolicy<Type, Term, Handle extends { readonly id: symbol;
   readonly define?: (handle: Handle, type: Type, span: Span, kind: DefinitionKind) => Check<void>;
   readonly use?: (handle: Handle, type: Type, span: Span) => Check<void>;
 }
-export const createBindings = <T, E, H extends { readonly id: symbol; readonly name: string }, S>(policy: BindingPolicy<T, E, H, S>) => {
+export interface Bindings<Type, Term, Handle extends BindingIdentity, Scheme> {
+  readonly environment: Scoped<ReadonlyMap<string, BindingEntry<Handle, Scheme>>>;
+  scope<A>(entries: Iterable<readonly [string, BindingEntry<Handle, Scheme>]>, body: Check<A>): Check<A>;
+  reference(name: string, span: Span): Check<Synthesized<Type, Term>>;
+  parameter<A>(name: string, type: Type, span: Span, body: (handle: Handle) => Check<A>): Check<A>;
+  let<A>(name: string, span: Span, initializer: Check<Synthesized<Type, Term>>, body: (handle: Handle, value: Synthesized<Type, Term>) => Check<A>): Check<A>;
+}
+export const createBindings = <T, E, H extends BindingIdentity, S>(policy: BindingPolicy<T, E, H, S>): Bindings<T, E, H, S> => {
   const environment = scoped<ReadonlyMap<string, BindingEntry<H, S>>>(new Map());
   const scope = <A>(entries: Iterable<readonly [string, BindingEntry<H, S>]>, body: Check<A>): Check<A> => bind(environment, entries, body);
   return {

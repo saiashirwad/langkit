@@ -47,3 +47,14 @@ test("speculation rolls back observations without reusing retained diagnostic id
   assert.equal(result.status, "recovered");
   assert.deepEqual(result.facts.map((event) => event.rule), ["retained"]);
 });
+test("atomic rollback never lets a retained diagnostic name a later unrelated constraint", () => {
+  const trace = createTrace<string, void>((x) => x, (x) => x);
+  const result = runDetailed(check(function* () {
+    yield* trace.constrain("equal", ["a", "b"], "discarded", fail("bad")).atomic().recover();
+    yield* trace.constrain("equal", ["c", "c"], "retained", pure(undefined));
+    return yield* trace.snapshot();
+  }));
+  assert(result.status === "completed");
+  assert.equal(result.value.length, 1);
+  assert.notEqual(result.diagnostics[0]!.reasons![0], result.value[0]!.id);
+});

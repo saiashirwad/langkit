@@ -50,6 +50,46 @@ test("void terms do not force an expression representation", () => {
   assert.deepEqual(run(j.check({ kind: "literal", value: 1 }, "number")), { success: true, value: undefined });
   assert.equal(run(j.synth({ kind: "nested", child: { kind: "only" } })).success, false);
 });
+test("uncollected dispatch still gives diagnostics execution-local rule identities", () => {
+  const j = createJudgments(rules, { modes: { enter: (t, body) => body(t), accept: (a) => pure(a.term) } });
+  const node: Node = { kind: "nested", child: { kind: "only" } };
+  const first = run(j.synth(node)), second = run(j.synth(node));
+  assert(!first.success && !second.success);
+  assert.equal(first.errors[0]!.rule, "only.synth");
+  assert(first.errors[0]!.parentInvocation);
+  assert.notEqual(first.errors[0]!.invocation, second.errors[0]!.invocation);
+});
+test("successful finally yields remain legal inside ordinary judgment rules", () => {
+  const j = createJudgments<Node, string, number>({ ...rules, literal: { mode: "synth", check: "fromSynth", *synth(n) {
+    try { return { type: "number", term: n.value }; } finally { yield* pure(undefined); }
+  } } }, { modes: { enter: (t, body) => body(t), accept: (a) => pure(a.term) } });
+  assert.deepEqual(run(j.synth({ kind: "literal", value: 1 })), { success: true, value: { type: "number", term: 1 } });
+});
+test("configured rule callbacks are snapshotted at registry construction", () => {
+  const mutable = { ...rules, literal: { ...rules.literal } };
+  const j = createJudgments<Node, string, number>(mutable, { modes: { enter: (t, body) => body(t), accept: (a) => pure(a.term) } });
+  Object.assign(mutable.literal, { *synth() { return { type: "changed", term: 99 }; } });
+  assert.deepEqual(run(j.synth({ kind: "literal", value: 1 })), { success: true, value: { type: "number", term: 1 } });
+});
+test("publication applies supplied snapshots and retains explicit predecessor links", () => {
+  const trace = createTrace<{ cell: number }, number, number, number>((type) => type.cell, (term) => term);
+  const type = { cell: 1 };
+  const result = run(check(function* () {
+    yield* trace.invocation({ rule: "snapshot", expected: type }, (id) => check(function* () {
+      yield* trace.constrain("equal", [type], "explicit reason", pure(undefined), [id]);
+      yield* trace.result(id, type, 3);
+    }));
+    const snapshot = yield* trace.snapshot();
+    type.cell = 2;
+    return snapshot;
+  }));
+  assert(result.success);
+  assert.equal(result.value[0]!.expected, 1);
+  assert.deepEqual(result.value[1]!.operands, [1]);
+  assert.deepEqual(result.value[1]!.causedBy, [result.value[0]!.id]);
+  assert.equal(Object.isFrozen(result.value), true);
+  assert.equal(Object.isFrozen(result.value[1]!.operands), true);
+});
 test("trace constraints have actual invocation and source; abandoned attempts disappear", () => {
   const trace = createTrace<string, number>((x) => x, (x) => x);
   const j = createJudgments<Node, string, number>({ ...rules, literal: { mode: "synth", check: "fromSynth", *synth(n) {
@@ -62,7 +102,7 @@ test("trace constraints have actual invocation and source; abandoned attempts di
     return yield* trace.snapshot();
   }));
   assert.equal(result.status, "completed");
-  if (result.status === "completed") assert.deepEqual(result.value.map((event) => event.rule), ["only.check"]);
+  if (result.status === "completed") assert.deepEqual(result.value.flatMap((event) => event.rule ? [event.rule] : []), ["only.check"]);
   const successful = runDetailed(check(function* () {
     yield* j.synth({ kind: "literal", value: 1 }).recover(pure({ type: "error", term: 0 }));
     return yield* trace.snapshot();

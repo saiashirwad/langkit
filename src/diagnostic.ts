@@ -10,6 +10,8 @@ export type RelatedDiagnostic = {
 export type Diagnostic = {
   readonly code?: string;
   readonly invocation?: symbol;
+  readonly parentInvocation?: symbol;
+  readonly rule?: string;
   readonly reasons?: readonly symbol[];
   readonly message: string;
   readonly context: readonly string[];
