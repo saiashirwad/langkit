@@ -81,7 +81,8 @@ For language authors adding an operation, keep the descriptor responsible for ch
 
 ```ts
 import { create, type OperationNode, type Value } from "langkit/ir";
-import { defineOperation, traversalOf } from "langkit/operations/descriptor";
+import { defineOperation } from "langkit/operations/descriptor";
+import { defineDialect } from "langkit/operations/dialect";
 
 type Type = "number";
 type Twice = OperationNode & { readonly kind: "twice"; readonly value: Value<Type> };
@@ -92,7 +93,7 @@ const twice = defineOperation<Type, Twice>("twice", {
   map: (node, mapValue) => ({ ...node, value: mapValue(node.value) }),
 });
 const code = create<Type>().use({
-  operations: [traversalOf(twice)],
+  ...defineDialect({ twice }),
   methods: {
     twice: (type: Type, value: Value<Type>) => twice.make(type, { kind: "twice", value }),
   },
@@ -157,7 +158,8 @@ Python's printing operation uses native Python representation rather than JavaSc
 
 - **Parsing:** `langkit/parse` re-exports parserator parsers, generators, precedence, cuts, and source locations.
 - **Checking and diagnostics:** `langkit` provides synchronous `Check` computations, checkpointable run-local `State`, readonly scoped environments, atomic/attempt/choice rollback, recoverable independent diagnostics, and structured nonempty `Result.errors`. `Check.inDocument(uri)` optionally attaches a document identity to failures for module routing while preserving nested source origins; human-readable `context` labels are not machine source locations.
-- **Inference:** `langkit/inference` contains reusable inference primitives, but selecting or integrating an inference strategy is the language author's choice. Several examples implement their own inference.
+- **Inference:** `langkit/types/hm`, `langkit/types/rows`, and `langkit/types/higher-rank` provide reusable theories. `langkit/inference` provides journaled mutation for other theories. [Inference theory contracts](docs/inference-theories.md) define the grammars and limits.
+- **Syntax:** `langkit/syntax` derives recursive AST types, constructors, immutable mappers, and explicit binder-aware traversal. It does not define a parser or typing rules. [Syntax declarations](docs/syntax.md) describe the optional schema.
 - **Modules:** `langkit/modules` provides a local-file module graph/loader for languages that want imports; it is optional. Analyses can include transitive dependency URIs and source snapshots.
 - **Analysis and editor support:** `langkit/analysis` optionally collects UTF-16 source ranges for types, definitions, references, lexical tokens, and diagnostics. `langkit/lsp` serves language-provided analysis over LSP, including dependency-aware re-analysis when imported documents change. Diagnostics retain structured source locations and related information for imported-source errors.
 - **JavaScript:** `langkit/javascript` validates and emits an expression using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder. Emission is not a source-map generator.

@@ -1,6 +1,6 @@
 # Hindley–Milner (HM)
 
-HM is a second, self-contained language example showing how ordinary Hindley–Milner inference can be implemented in a language compiler. It keeps Toy's expression syntax but removes parameter annotations: [`hm.ts`](./hm.ts) contains the compiler, and [`main.hm`](./main.hm) is its default program. Inference is implemented by this example, rather than being a built-in langkit type system.
+HM is an expression language using Langkit's reusable [Hindley–Milner theory](../../docs/inference-theories.md). It keeps Toy's expression syntax but removes parameter annotations. [`hm.ts`](./hm.ts) contains the language rules and compiler, and [`main.hm`](./main.hm) is its default program.
 
 ## Run it
 

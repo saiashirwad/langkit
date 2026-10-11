@@ -25,7 +25,7 @@ let ignored = print(answer) in
 answer
 ```
 
-Imports are local file imports resolved relative to the importing source. The shared loader ([`examples/modules.ts`](../modules.ts)) reads modules without evaluating them, strips import directives while retaining source offsets, and detects invalid/cyclic module graphs. Nothing is imported implicitly; write an import explicitly.
+Imports are local file imports resolved relative to the importing source. The [module loader](../../docs/module-loading.md) reads modules without evaluating them, masks import directives while retaining source offsets, and rejects invalid or cyclic graphs. Rows explicitly selects the optional prefix import parser. Nothing is imported implicitly.
 
 ## Syntax and type model
 
@@ -33,7 +33,7 @@ Rows retains HM's non-recursive `let`, inferred one-argument functions (`fn(x) =
 
 `{ x = 1, flag = true }` constructs a closed record; `{}` is the empty record. `{ flag = true | record }` extends a record. Extension is not overwrite: the new label must be absent from the base record. Its fields are evaluated left-to-right, followed by the base, each exactly once.
 
-Types include ordinary HM type variables and row variables. A row variable represents the still-unknown remainder of a record, with explicit lacks constraints. For example `getX` infers a function requiring an `x` field and returning its value; `extend` preserves the input row while adding a boolean `flag` field, with the constraint that `flag` was absent. Both ordinary and row variables generalize at `let`; captured variables and function parameters are monomorphic. Row unification rejects missing or duplicate fields and infinite rows/types; field order does not affect type equality. The type printer displays field-absence constraints.
+The reusable [row theory](../../docs/inference-theories.md) provides ordinary HM variables and row variables. A row variable represents the unknown remainder of a record and carries label-absence constraints. `getX` requires an `x` field and returns its value. `extend` preserves the input row and adds a Boolean `flag`, provided that label was absent. Both ordinary and row variables generalize at `let`; captured variables and parameters remain monomorphic. Unification rejects missing or duplicate fields and infinite types or rows. Field order does not affect type equality.
 
 This remains a pure expression language: there is no statement syntax or effect system. `print` is an intrinsic with type `a -> {}`: it prints one value and returns the empty record. Sequence it with `let ignored = print(value) in ...`. The source-defined `id`, `const`, and `compose` are ordinary polymorphic functions, not special typing rules. `const(x)(y)` keeps `x`, but both calls still evaluate their arguments. These names may be shadowed.
 

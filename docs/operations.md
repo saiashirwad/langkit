@@ -11,11 +11,29 @@ An `OperationDescriptor` supplies four structural contracts:
 
 `validate(node)` is an optional operation-local structural hook. Generic validation invokes it for a value after resolving that value by its exact descriptor identity, before traversing the descriptor-reported references, children, and scoped bodies. Use it for invariants internal to an operation representation (for example, duplicate case tags); it does not make type checking mandatory.
 
-`defineOperation` adds the descriptor identity, `make(type, node)` constructor, and identity-sensitive `is(value)` predicate. A feature packages descriptors (`operations`) with its typed builder methods (`methods`); `language.use(feature)` explicitly selects and composes them.
+`defineOperation` adds the descriptor identity, `make(type, node)` constructor, and identity-sensitive `is(value)` predicate. A feature packages named `descriptors`, their derived runtime traversal list `operations`, and typed builder `methods`. `language.use(feature)` selects and composes them.
+
+`defineDialect(record)` retains each literal key and descriptor type. `composeDialects(left, right)` rejects duplicate keys and identities. Backend tables derive callback node types and required handler keys from that record:
+
+```ts
+import { defineDialect } from "langkit/operations/dialect";
+import { defineJavaScriptBackend } from "langkit/javascript/operations";
+
+const dialect = defineDialect({ twice });
+const handlers = defineJavaScriptBackend(dialect, {
+	twice: (node, context) => `(${context.expr(node.value, context.depth)} * 2)`,
+});
+```
+
+`definePythonBackend` supplies the Python context. For another output format, `defineBackend<Context, Output>()` accepts a dialect and its complete handler table. Runtime composition still rejects handler identity collisions.
+
+Selecting a descriptor freezes its configuration object. Traversal entries capture its callbacks and are frozen. Later changes to a mutable structural descriptor alias are rejected. Callback implementations still own the semantics and any data they capture.
 
 ## Structural validation and mapping
 
-`Body<T>` is a scoped fragment: declarations plus a result, without a traversal registry or core function identity. `Program<T>` pairs a body with the builder's selected readonly traversal registry and optional core function identity. `language.program(body)` borrows those configured values without cloning or snapshotting them; configure the builder before creating programs and retain the operation descriptor identities used by their values. `language.validate(body)` is a builder convenience. Standalone `validate(program)` and JavaScript `emit(program, handlers?)` consume the same portable program; the `program` carries traversal configuration, so no separate `operations` or `coreFunctionId` options object is passed to `emit`. `createJavaScriptEmitter(...handlerSets).emit(program)` is the composable emitter form. Python uses the analogous `createPythonEmitter(...handlerSets).emit(program)` API.
+`Body<T>` is a scoped fragment containing declarations and a result. `Program<T>` adds the selected traversal registry and optional core function identity. `language.program(body)` snapshots the registry. Installing another feature later does not modify an existing program. Descriptor instances remain shared identities.
+
+`language.validate(body)` is a builder convenience. Standalone `validate(program)` and JavaScript `emit(program, handlers?)` use the program's registry. `createJavaScriptEmitter(...handlerSets).emit(program)` composes handler sets. Python provides the same emitter form.
 
 Validation is structural, not a proof of language typing. It does not check that a value's `type` agrees with a literal, operator, field, or result. Each language owns its typing rules; the core IR deliberately permits language-specific descriptors and does not require a type checker.
 
@@ -52,7 +70,9 @@ Raw `declare(name, initial)` and `declareRecursive(binding, functionValue)` rema
 
 ## Checker and inference composition
 
-`elaboration(builder)` is an adapter around an already configured pure builder. Its mixed factories yield checks and, within an enclosing adapter body, declaration objects; pure `declare` and `declareRecursive` generators are still the only declaration protocol. `code.program(body)` performs structural validation when called, so construct it only after checking succeeds. The generated portable program borrows the configured operation registry and preserves descriptor identity and lexical binding links. Pure builder `body`, `fn`, `conditional`, `block`, and `scope` remain independent of `Check` and accept a body or pure body factory.
+`elaboration(builder)` adapts an already configured pure builder. Its mixed factories yield checks and declaration objects. Declaration yields require an enclosing adapter body. Pure `declare` and `declareRecursive` generators remain the declaration protocol. Each checked body execution has a fresh collector and publishes a copied declaration array.
+
+`code.program(body)` validates structure and snapshots the registry. Descriptor identities and lexical binding links remain intact. Pure builder methods stay independent of `Check`.
 
 `State<T>` from `state(init, checkpoint)` is mutable, run-local storage; `checkpoint(value)` must return a restore callback. `Scoped<T>` from `scoped(initial)` is an immutable environment binding. `get` reads either; `within(scopedKey, update, body)` derives a temporary binding by invoking only the updater callback, and `bind` extends readonly map environments. Every `run` gets fresh storage. `recover()` accumulates a diagnostic and continues only for void checks; even if later work succeeds, `run` returns failure with `errors: readonly [Diagnostic, ...Diagnostic[]]` whenever any diagnostic was recovered. Do not emit a program on that result. `atomic()` restores mutable run-local state on terminal failure or throw; `attempt(check)` additionally removes diagnostics recovered inside it and rolls back; `choice(...checks)` isolates alternatives and uses the first success, or first failure when all fail; `sequence(tuple)` returns values in a tuple preserving the checks' input order. Implementation exceptions propagate.
 
