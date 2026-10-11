@@ -1,0 +1,80 @@
+{
+  "compilerVersion": "7.0.2",
+  "observations": {
+    "contextual-record-node": {
+      "text": "```typescript\n(parameter) recordNode: RecordNode<rows.Type>\n```"
+    },
+    "contextual-literal-node": {
+      "text": "```typescript\n(parameter) literalNode: Literal<rows.Type>\n```"
+    },
+    "contextual-backend-context": {
+      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<rows.Type>\n```"
+    },
+    "yield-literal": {
+      "text": "```typescript\nconst yielded: \"ready\"\n```"
+    },
+    "sequence-tuple": {
+      "text": "```typescript\nconst tuple: [\"label\", 42, true]\n```"
+    },
+    "named-value": {
+      "text": "```typescript\nconst namedValue: Value<rows.Type>\n```"
+    },
+    "named-check": {
+      "text": "```typescript\nconst namedCheck: Check<Value<rows.Type>>\n```"
+    },
+    "record-fields": {
+      "text": "```typescript\n(property) fields: readonly RecordField<rows.Type>[]\n```"
+    },
+    "record-field-name": {
+      "text": "```typescript\n(property) name: string\n```"
+    },
+    "record-field-value": {
+      "text": "```typescript\n(property) value: Value<rows.Type>\n```"
+    },
+    "literal-value": {
+      "text": "```typescript\n(property) value: string | number | boolean\n```"
+    },
+    "record-members": {
+      "text": "base\nfields\nkind",
+      "labels": [
+        "base",
+        "fields",
+        "kind"
+      ]
+    },
+    "literal-members": {
+      "text": "kind\nvalue",
+      "labels": [
+        "kind",
+        "value"
+      ]
+    },
+    "record-field-members": {
+      "text": "name\nvalue",
+      "labels": [
+        "name",
+        "value"
+      ]
+    },
+    "literal-keys": {
+      "text": "binary\nblock\ncall\nconditional\nfn\nliteral\nref",
+      "labels": [
+        "binary",
+        "block",
+        "call",
+        "conditional",
+        "fn",
+        "literal",
+        "ref"
+      ]
+    },
+    "backend-signature": {
+      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, handlers: BackendHandlers<NoInfer<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, JavaScriptContext<...>, string>): readonly DispatcherHandler<JavaScriptContext<rows.Type>>[]",
+      "activeParameter": 1
+    },
+    "literal-signature": {
+      "text": "literal(type: rows.Type, value: number | boolean | string): OperationValue<rows.Type, Literal<rows.Type>>",
+      "activeParameter": 1
+    }
+  }
+}
