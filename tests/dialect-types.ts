@@ -8,6 +8,7 @@ import { defineJavaScriptBackend } from "../src/javascript/operations.ts";
 import { definePythonBackend } from "../src/python/operations.ts";
 import type { JavaScriptContext } from "../src/javascript.ts";
 import type { PythonContext } from "../src/python.ts";
+import { elaboration } from "../src/ir/check.ts";
 
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type IsAny<T> = 0 extends 1 & T ? true : false;
@@ -58,6 +59,21 @@ definePythonBackend(dialect, {
 const recordFeature = records<"number">();
 const builder = create<"number">().use(recordFeature);
 expect<Equal<keyof typeof builder.descriptors, "literal" | "ref" | "binary" | "call" | "fn" | "conditional" | "block" | "record" | "merge" | "field">>(true);
+const checked = elaboration(builder);
+expect<Equal<keyof typeof checked.descriptors, keyof typeof builder.descriptors>>(true);
+expect<Equal<keyof ReturnType<typeof checked.dialect>["descriptors"], keyof typeof builder.descriptors>>(true);
+// @ts-expect-error Checked builders retain exact selected handler coverage.
+defineJavaScriptBackend(checked.dialect(), {});
+// @ts-expect-error Checked builder dialects cannot narrow to the supplied partial table.
+definePythonBackend(checked.dialect(), { literal: node => String(node.value) });
+defineJavaScriptBackend(defineDialect({ projection: checked.descriptors.field }), {
+  projection: (node, context) => {
+    expect<Equal<typeof node.record, Value<"number">>>(true);
+    expect<Equal<IsAny<typeof node>, false>>(true);
+    expect<Equal<typeof context, JavaScriptContext<"number">>>(true);
+    return context.expr(node.record, context.depth) + node.name;
+  },
+});
 defineJavaScriptBackend(defineDialect({ chosenField: builder.descriptors.field }), {
   chosenField: (node, context) => {
     expect<Equal<typeof node.record, Value<"number">>>(true);

@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { create } from "../src/ir.ts";
-import { defineOperation } from "../src/operations/descriptor.ts";
+import { defineOperation, traversalOf } from "../src/operations/descriptor.ts";
 import { composeDialects, defineDialect } from "../src/operations/dialect.ts";
 import { records } from "../src/operations/records.ts";
 import { variants } from "../src/operations/variants.ts";
@@ -71,6 +71,30 @@ test("programs snapshot registries before later feature installation", () => {
   assert.equal(dialect.operations.length, count);
   assert.equal(Object.hasOwn(dialect.descriptors, "record"), false);
   assert.equal(builder.operationTraversals().length, count + 3);
+});
+
+test("selected descriptors reject alias mutation after dialect publication", () => {
+  const descriptor = { ...custom() };
+  const dialect = defineDialect({ custom: descriptor });
+  const builder = create<string>().use({ ...dialect, methods: {} });
+  const value = descriptor.make("number", { kind: "shared", count: 42 });
+  const program = builder.program({ declarations: [], result: value });
+  assert.throws(() => { descriptor.id = Symbol("replacement"); }, TypeError);
+  assert.throws(() => { descriptor.children = () => [builder.literal("number", 0)]; }, TypeError);
+  assert.throws(() => { descriptor.references = () => [builder.binding("escaped", "number")]; }, TypeError);
+  assert.equal(program.operations.at(-1)!.id, value.operationId);
+  const handlers = defineJavaScriptBackend(dialect, { custom: node => String(node.count) });
+  assert.equal(Function(`return ${emitJavaScript(program, handlers)}`)(), 42);
+});
+
+test("standalone traversals capture callbacks and publish immutable entries", () => {
+  const descriptor = { ...custom() };
+  const selected = traversalOf(descriptor);
+  descriptor.children = () => [{ type: "number", operationId: Symbol(), node: { kind: "unknown" } }];
+  descriptor.references = () => [{ id: Symbol(), name: "escaped", type: "number" }];
+  assert.deepEqual(selected.children({ kind: "shared" }), []);
+  assert.deepEqual(selected.references({ kind: "shared" }), []);
+  assert.equal(Reflect.set(selected, "id", Symbol("replacement")), false);
 });
 
 test("named feature records derive registry order and reject composition collisions", () => {
