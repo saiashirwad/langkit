@@ -64,10 +64,10 @@ import {
   type Type,
   type Scheme,
   type TypeConstructor,
-} from "../../src/types/higher-rank.ts";
+} from "langkit/types/higher-rank";
 
 export { program } from "./advanced-syntax.ts";
-export { show, type Type } from "../../src/types/higher-rank.ts";
+export { show, type Type } from "langkit/types/higher-rank";
 export type { Expr } from "./advanced-syntax.ts";
 
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };

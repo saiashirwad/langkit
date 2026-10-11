@@ -68,8 +68,8 @@ import {
   type Type,
   type Scheme,
   type Row,
-} from "../../src/types/rows.ts";
-export { show, type Type } from "../../src/types/rows.ts";
+} from "langkit/types/rows";
+export { show, type Type } from "langkit/types/rows";
 
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
 

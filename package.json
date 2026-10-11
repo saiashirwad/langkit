@@ -15,6 +15,7 @@
     "./operations/*": "./src/operations/*.ts",
     "./javascript/*": "./src/javascript/*.ts",
     "./inference": "./src/inference.ts",
+    "./types/*": "./src/types/*.ts",
     "./modules": "./src/modules.ts",
     "./modules/imports": "./src/modules/imports.ts",
     "./analysis": "./src/analysis.ts",

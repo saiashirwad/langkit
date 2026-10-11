@@ -49,8 +49,8 @@ import {
   instantiate,
   type Type,
   type Scheme,
-} from "../../src/types/hm.ts";
-export { show, type Type } from "../../src/types/hm.ts";
+} from "langkit/types/hm";
+export { show, type Type } from "langkit/types/hm";
 
 type Entry = { readonly binding: Binding<Type>; readonly scheme: Scheme };
 

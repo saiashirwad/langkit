@@ -28,10 +28,10 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [x] Checkpoint: give every writable worker a separate worktree; serialize integration here.
 - [ ] Checkpoint: use the smallest unit that can be verified, then integrate it before building dependents.
 - [x] Harden the runtime. Add failing tests, trace their cause, implement the machine, and rerun the original probes.
-- [ ] Preserve descriptor types and migrate backend definitions to derived handler types.
-- [ ] Extract HM and rows; remove the migrated examples' duplicate solver machinery.
+- [x] Preserve descriptor types and migrate backend definitions to derived handler types.
+- [x] Extract HM and rows; remove the migrated examples' duplicate solver machinery.
 - [ ] Introduce judgments and binder combinators; migrate representative rules.
-- [ ] Establish reusable higher-rank checking and document its grammar, annotation policy, and limitations.
+- [x] Establish reusable higher-rank checking. Its conformance tests pass; publish its grammar, annotation policy, and limitations with the authoring guide.
 - [ ] Add partial/finalized elaboration and structured rule/constraint evidence.
 - [x] Separate module graph management from import parsing through a language-supplied parser.
 - [ ] Add the shared-syntax language demonstration and the supported TS Macros adapter.
