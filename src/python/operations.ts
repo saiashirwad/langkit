@@ -1,4 +1,6 @@
-import type { OperationNode, OperationTraversal } from "../ir.ts";
+import type { OperationNode } from "../ir.ts";
+import type { PythonContext } from "../python.ts";
+import { defineBackend, type BackendHandlers, type DescriptorRecord, type Dialect, type DialectType } from "../operations/dialect.ts";
 import type { OperationDescriptor, OperationHandler } from "../operations/descriptor.ts";
 
 export type PythonHandler<T, Node extends OperationNode, Context> = {
@@ -17,18 +19,10 @@ export const definePythonHandler = <T, Node extends OperationNode, Context>(
   emit: OperationHandler<Node, Context, string>,
 ): PythonHandler<T, Node, Context> => ({ operationId: operation.id, kind: operation.kind, emit });
 
-/** Define a typed handler from a selected traversal identity when descriptors are exposed structurally. */
-export const definePythonOperationHandler = <Node extends OperationNode, Context>(
-  operationId: symbol,
-  kind: Node["kind"],
-  emit: OperationHandler<Node, Context, string>,
-): DispatcherHandler<Context> => ({ operationId, kind, emit: (node, context) => emit(node as Node, context) });
-
-export const operationIdFor = <T>(operations: readonly OperationTraversal<T>[], kind: string): symbol => {
-  const matches = operations.filter((operation) => operation.kind === kind);
-  if (matches.length !== 1) throw new Error(`Expected one selected IR operation named ${kind}; found ${matches.length}`);
-  return matches[0]!.id;
-};
+export const definePythonBackend = <const D extends DescriptorRecord>(
+  dialect: Dialect<D>,
+  handlers: BackendHandlers<NoInfer<D>, PythonContext<DialectType<D>>, string>,
+): readonly DispatcherHandler<PythonContext<DialectType<D>>>[] => defineBackend<PythonContext<DialectType<D>>>()(dialect, handlers);
 
 export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
   handler: PythonHandler<T, Node, Context>,

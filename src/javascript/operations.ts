@@ -1,4 +1,6 @@
-import type { OperationNode, OperationTraversal } from "../ir.ts";
+import type { OperationNode } from "../ir.ts";
+import type { JavaScriptContext } from "../javascript.ts";
+import { defineBackend, type BackendHandlers, type DescriptorRecord, type Dialect, type DialectType } from "../operations/dialect.ts";
 import type { OperationDescriptor, OperationHandler } from "../operations/descriptor.ts";
 
 export type JavaScriptHandler<T, Node extends OperationNode, Context> = {
@@ -17,19 +19,10 @@ export const defineJavaScriptHandler = <T, Node extends OperationNode, Context>(
   emit: OperationHandler<Node, Context, string>,
 ): JavaScriptHandler<T, Node, Context> => ({ operationId: operation.id, kind: operation.kind, emit });
 
-/** Use when a feature exposes its structural descriptors instead of typed descriptor objects. */
-export const defineJavaScriptOperationHandler = <Node extends OperationNode, Context>(
-  operationId: symbol,
-  kind: Node["kind"],
-  emit: OperationHandler<Node, Context, string>,
-): DispatcherHandler<Context> => ({ operationId, kind, emit: (node, context) => emit(node as Node, context) });
-
-/** Resolve a backend handler against the exact IR feature instances selected by the caller. */
-export const operationIdFor = <T>(operations: readonly OperationTraversal<T>[], kind: string): symbol => {
-  const matches = operations.filter((operation) => operation.kind === kind);
-  if (matches.length !== 1) throw new Error(`Expected one selected IR operation named ${kind}; found ${matches.length}`);
-  return matches[0]!.id;
-};
+export const defineJavaScriptBackend = <const D extends DescriptorRecord>(
+  dialect: Dialect<D>,
+  handlers: BackendHandlers<NoInfer<D>, JavaScriptContext<DialectType<D>>, string>,
+): readonly DispatcherHandler<JavaScriptContext<DialectType<D>>>[] => defineBackend<JavaScriptContext<DialectType<D>>>()(dialect, handlers);
 
 /** Narrow internal erasure at the heterogeneous backend handler-list boundary. */
 export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
