@@ -20,10 +20,10 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [x] Capture the baseline on this branch: `npm test` passes 1,214 tests; `npm run typecheck` passes.
 - [x] Reproduce both reported runtime defects directly.
 - [x] Ground the runtime, descriptors, inference, and historical constraints through read-only exploration.
-- [ ] Sketch two distinct authoring designs in isolated locations.
-- [ ] Cross-judge the sketches, choose a base, and record the signatures and rationale.
-- [ ] Agree: automatic continuation, as the user requested autonomous implementation.
-- [ ] Checkpoint: run blocking architecture and baseline gates before implementation fan-out.
+- [x] Sketch two distinct authoring designs in isolated locations.
+- [x] Cross-judge the sketches, choose a base, and record the signatures and rationale.
+- [x] Agree: automatic continuation, as the user requested autonomous implementation.
+- [x] Checkpoint: run blocking architecture and baseline gates before authoring implementation fan-out.
 - [x] Checkpoint: assign the grounded runtime, descriptor, solver, and module-loader workstreams. Judgment and tooling work wait for the authoring design.
 - [x] Checkpoint: give every writable worker a separate worktree; serialize integration here.
 - [ ] Checkpoint: use the smallest unit that can be verified, then integrate it before building dependents.
