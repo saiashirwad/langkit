@@ -1,32 +1,22 @@
 import assert from "node:assert/strict";
-import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import * as IR from "../src/ir.ts";
 import { records } from "../src/operations/records.ts";
-import { createTSMacrosAdapter } from "../src/adapters/ts-macros.ts";
+import { createStagingAdapter } from "../src/adapters/staging.ts";
+import * as target from "../src/staging.ts";
+import * as js from "../src/staging/javascript.ts";
 
-const [publicPath, jsPath] = process.argv.slice(2);
-if (!publicPath || !jsPath) throw new Error("Usage: node tools/macros-integration.ts <ts-macros/src/index.ts> <ts-macros/targets/js.ts>");
-const target = await import(pathToFileURL(publicPath).href);
-const js = await import(pathToFileURL(jsPath).href);
 const feature = records<string>();
 const ir = IR.create<string>().use(feature);
 const { conditional, ...coreDescriptors } = ir.coreDescriptors;
 const core = { ...coreDescriptors, if: conditional };
 const { record, field } = feature.descriptors;
 const selectedRecords = { record, field };
-const adapter = createTSMacrosAdapter(target, { core, records: selectedRecords }, (_guest: string) => target.Unknown);
+const adapter = createStagingAdapter<string>({ core, records: selectedRecords });
 let checks = 0;
 const check = (body: IR.Body<string>, expected: unknown) => {
   const lowered = adapter.lower({ body, operations: ir.operationTraversals() });
-  // build validates the adapter's output again, including the final observation.
-  const observed = target.build(function* () {
-    yield* lowered.program.statements;
-    yield target.do(target.call(target.external("observe", undefined), lowered.program.result));
-  });
-  let actual: unknown;
-  const code = js.emitProgram(observed);
-  runInNewContext(code, { observe: (value: unknown) => { actual = value; } });
+  const actual: unknown = runInNewContext(js.emitProgram(lowered.program));
   assert.deepEqual(actual, expected);
   checks++;
 };
@@ -51,21 +41,28 @@ check({ declarations: [], result: ir.block("number", ir.body(function* () {
   const x = yield* ir.declare("x", lit(5)); return ir.binary("number", "*", x, lit(3));
 })) }, 15);
 check({ declarations: [], result: ir.field("number", ir.record("record", [{ name: "__proto__", value: lit(11) }]), "__proto__") }, 11);
-// Instrument host constructors to observe runtime (not construction) order.
-const ordered = { ...target, number: (n: number) => target.call(target.external("tick", undefined), target.number(n)) };
-const orderAdapter = createTSMacrosAdapter(ordered, { core, records: selectedRecords }, (_guest: string) => target.Unknown);
-const orderBody = { declarations: [], result: ir.record("record", [{ name: "z", value: lit(1) }, { name: "a", value: lit(2) }]) };
-const orderedProgram = orderAdapter.lower(ir.program(orderBody)).program;
+const tick = ir.binding("tick", "host-callback");
+const invokeTick = (n: number) => ir.call("number", ir.ref(tick), lit(n));
+const callbackProgram = (result: IR.Value<string>) => adapter.lower(ir.program({ declarations: [], result: ir.fn("entry", tick, { declarations: [], result }) })).program;
+const orderedProgram = callbackProgram(ir.record("record", [{ name: "z", value: invokeTick(1) }, { name: "a", value: invokeTick(2) }]));
 const order: number[] = [];
-runInNewContext(js.emitProgram(orderedProgram), { tick: (n: number) => { order.push(n); return n; } });
+const runCallback = (program: target.Program<unknown>) => {
+  const entry = runInNewContext(js.emitProgram(program)) as (tick: (n: number) => number) => unknown;
+  return entry((n) => { order.push(n); return n; });
+};
+runCallback(orderedProgram);
 assert.deepEqual(order, [1, 2]); checks++;
-const lazyProgram = orderAdapter.lower(ir.program({ declarations: [], result: ir.conditional("number", ir.literal("boolean", false),
-  { declarations: [], result: lit(1) }, { declarations: [], result: lit(2) }) })).program;
+const lazyProgram = callbackProgram(ir.conditional("number", ir.literal("boolean", false), { declarations: [], result: invokeTick(1) }, { declarations: [], result: invokeTick(2) }));
 order.length = 0;
-runInNewContext(js.emitProgram(lazyProgram), { tick: (n: number) => { order.push(n); return n; } });
+runCallback(lazyProgram);
 assert.deepEqual(order, [2]); checks++;
 assert.throws(() => adapter.lower(ir.program({ declarations: [], result: ir.record("record", [{ name: "not-a-name", value: lit(1) }]) })), /identifier field/); checks++;
 let deep: IR.Value<string> = lit(0);
 for (let index = 0; index < 12000; index++) deep = ir.binary("number", "+", deep, lit(1));
 check({ declarations: [], result: deep }, 12000);
-console.log(`Real TS Macros integration: ${checks} checks passed`);
+const host = target.build(function* () {
+  const fn = yield* target.const("add", target.arrow({ params: [target.param("x", target.Number)], body: function* ([x]) { return target.binary("+", x, target.number(1)); } }));
+  return target.call(fn, target.number(41));
+});
+assert.equal(runInNewContext(js.emitProgram(host)), 42); checks++;
+console.log(`Local staging integration: ${checks} checks passed`);
