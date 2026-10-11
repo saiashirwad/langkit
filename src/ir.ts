@@ -19,10 +19,6 @@ export type Program<T> = {
 export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T> };
 export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T> };
 
-/**
- * Descriptors own child order, scoped bindings, references and immutable reconstruction.
- * Core enforces recursive initialization separately by its own function descriptor identity.
- */
 export type OperationTraversal<T> = {
   readonly id: symbol;
   readonly kind: string;
@@ -48,11 +44,9 @@ export type LanguageBuilder<T, Methods extends object, Descriptors extends Descr
   program(body: Body<T>): Program<T>;
   validate(root: Body<T>): void;
 };
-/** Narrow only values created by the given core reference descriptor instance. */
 export const isReference = <T>(value: Value<T>, referenceOperationId: symbol): value is Reference<T> =>
   value.operationId === referenceOperationId && value.node.kind === "ref";
 
-/** Core convenience builder includes only primitives; all richer operations are opt-in sets. */
 export const create = <T>() => {
   const coreFeature = coreOperations<T>();
   const operations = [...coreFeature.operations];
@@ -134,7 +128,6 @@ export const create = <T>() => {
     },
   }) as unknown as LanguageBuilder<T, typeof core, CoreDescriptors<T>>;
 };
-/** Scope validation is descriptor-driven; recursive declarations require this core function id. */
 export const validate = <T>(program: Program<T>): void =>
   validateBody(program.body, program.operations, program.coreFunctionId);
 
@@ -179,7 +172,6 @@ const validateBody = <T>(root: Body<T>, operations: readonly OperationTraversal<
   visitBody(root, new Set());
 };
 
-/** Reconstructs recursively and allows bottom-up replacement after descriptor mapping. */
 export const mapBody = <T>(
   root: Body<T>,
   operations: readonly OperationTraversal<T>[],

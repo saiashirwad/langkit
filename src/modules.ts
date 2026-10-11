@@ -12,7 +12,6 @@ export type ModuleSource = {
   readonly imports: readonly { readonly uri: string; readonly span: Span }[];
 };
 
-/** Loaded local-file dependency graph; modules are ordered dependencies-first. */
 export class ModuleGraph {
   readonly root: string;
   readonly modules: readonly ModuleSource[];
@@ -40,7 +39,6 @@ export class ModuleGraph {
     };
     return visit(from);
   }
-  /** Route a diagnostic through root imports, preserving the failure origin and full chain. */
   routeDiagnostic(diagnostic: Diagnostic): Diagnostic {
     const origin = diagnostic.origin ?? diagnostic.location ?? (diagnostic.span === undefined ? undefined : { uri: this.root, span: diagnostic.span });
     if (!origin || origin.uri === this.root) return diagnostic;
@@ -63,7 +61,6 @@ export class ModuleGraph {
   }
 }
 
-/** Local file imports only. No code is evaluated; offsets survive directive stripping. */
 export const loadModules = (source: string, options: ModuleOptions, language: ModuleLanguage): Result<ModuleGraph> => {
   const { extension } = language;
   const diagnostic = (message: string, uri: string, span: Span = { start: 0, end: 0 }): Diagnostic =>

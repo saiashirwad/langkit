@@ -2,11 +2,6 @@ import type { Binding, Body, OperationNode, OperationValue, OperationTraversal, 
 
 export type OperationHandler<Node extends OperationNode, Context, Output> = (node: Node, context: Context) => Output;
 
-/**
- * Typed descriptor contract: child order is evaluation order; scoped bodies declare bindings;
- * references expose uses; map reconstructs immutable inspectable data. Recursion policy remains
- * in core and cannot be opted into by an arbitrary extension operation.
- */
 export type ScopedBody<B, Bnd> = { readonly body: B; readonly bindings: readonly Bnd[] };
 export type OperationDescriptor<T, Node extends OperationNode> = {
   readonly id: symbol;

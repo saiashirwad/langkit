@@ -12,7 +12,6 @@ export type RecordMethods<T> = {
   field(type: T, record: Value<T>, name: string): Value<T>;
 };
 
-/** Record evaluation is source-ordered fields followed by the optional base. */
 export type RecordDescriptors<T> = { readonly record: OperationDescriptor<T, RecordNode<T>>; readonly merge: OperationDescriptor<T, MergeNode<T>>; readonly field: OperationDescriptor<T, FieldNode<T>> };
 export const records = <T>(): OperationFeature<T, RecordMethods<T>, RecordDescriptors<T>> => {
   const record = defineOperation<T, RecordNode<T>>("record", {

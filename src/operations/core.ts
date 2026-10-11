@@ -31,7 +31,6 @@ export type CoreDescriptors<T> = {
 };
 export type CoreFeature<T> = OperationFeature<T, CoreMethods<T>, CoreDescriptors<T>> & { readonly functionId: symbol; readonly refId: symbol };
 
-/** Small primitive operation set: binding identity is data and all traversal is descriptor-owned. */
 export const coreOperations = <T>(): CoreFeature<T> => {
   const literal = defineOperation<T, Literal<T>>("literal", {
     children: () => [], scopedBodies: () => [], references: () => [], map: (node) => node,

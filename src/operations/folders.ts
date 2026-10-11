@@ -9,7 +9,6 @@ export type FolderMethods<T> = {
   recordFold(type: T, order: Value<T>, metadata: Value<T>, record: Value<T>, initial: Value<T>, step: Value<T>): Value<T>;
 };
 
-/** Folds traverse explicit order, metadata, record, initial, and step left-to-right. */
 export type FolderDescriptors<T> = { readonly fieldOrder: OperationDescriptor<T, OrderNode>; readonly recordFold: OperationDescriptor<T, FoldNode<T>> };
 export const folders = <T>(): OperationFeature<T, FolderMethods<T>, FolderDescriptors<T>> => {
   const order = defineOperation<T, OrderNode>("field-order", {

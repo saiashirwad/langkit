@@ -32,7 +32,6 @@ export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
   emit: (node, context) => handler.emit(node as Node, context),
 });
 
-/** Backend dispatch is descriptor-identity-only; kind collisions never select a handler. */
 export const createJavaScriptDispatcher = <Context>(...handlers: readonly DispatcherHandler<Context>[]) => {
   const byId = new Map<symbol, DispatcherHandler<Context>>();
   for (const handler of handlers) {

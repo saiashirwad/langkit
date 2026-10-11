@@ -9,7 +9,6 @@ export type VariantMethods<T> = {
   match(type: T, matched: Value<T>, cases: readonly MatchCase<T>[], fallback?: MatchFallback<T>): Value<T>;
 };
 
-/** Branch descriptors make pattern bindings visible only in their branch bodies. */
 export type VariantDescriptors<T> = { readonly variant: OperationDescriptor<T, VariantNode<T>>; readonly match: OperationDescriptor<T, MatchNode<T>> };
 export const variants = <T>(): OperationFeature<T, VariantMethods<T>, VariantDescriptors<T>> => {
   const variant = defineOperation<T, VariantNode<T>>("variant", {

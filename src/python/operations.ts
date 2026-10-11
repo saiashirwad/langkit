@@ -32,7 +32,6 @@ export const asDispatcherHandler = <T, Node extends OperationNode, Context>(
   emit: (node, context) => handler.emit(node as Node, context),
 });
 
-/** Dispatch is descriptor-identity-only; operation-kind collisions never select a handler. */
 export const createPythonDispatcher = <Context>(...handlers: readonly DispatcherHandler<Context>[]) => {
   const byId = new Map<symbol, DispatcherHandler<Context>>();
   for (const handler of handlers) {

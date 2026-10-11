@@ -261,7 +261,6 @@ const judgments = createJudgments(rules, {
 });
 const elaborate = (expr: Expr): Check<Value<Type>> => judgments.synth(expr).map(({ term }) => code.at(term, expr.span));
 
-/** Reusable HM body factory; every run allocates fresh inference variables. */
 export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
   code.body(function* () { return yield* elaborate(expr); });
 
