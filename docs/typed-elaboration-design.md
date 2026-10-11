@@ -37,7 +37,7 @@ Bindings have declaration identities independent of spelling. Schemes belong to 
 
 Binding helpers own identity allocation, lexical scope entry and restoration, definition facts, reference facts, and fresh instantiation. A nonrecursive-let helper checks the initializer outside the new binding and delegates generalization to an explicit policy. Pure HM generalization is not an implicit policy for mutable references or Strict's dictionary evidence.
 
-Small theory-specific form helpers return ordinary rule entries. They remove repeated reference, parameter, application, and pure-let coordination without becoming a second semantic language. Custom rules remain ordinary generators.
+Rules compose binding helpers with the chosen theory's operations. They keep parameter and pure-let coordination in the binding handle without turning typing rules into a second semantic language. Custom rules remain ordinary generators.
 
 ## Execution and publication
 
@@ -63,7 +63,8 @@ Raw staged IR remains independently constructible and emit-able after structural
 | Compiler recipe | Fresh configuration and one source-to-outcome operation |
 | `src/syntax.ts` | Optional explicit structure, constructors, traversal, and binder-aware scopes |
 | `src/operations/dialect.ts` | Exact descriptor records and derived exhaustive backend tables |
-| `src/adapters/ts-macros.ts` | A defined staged subset and binding-identity translation |
+| `src/staging.ts` | Host-known typed construction and generator declarations |
+| `src/adapters/staging.ts` | Dynamic guest lowering into the local target and binding-identity translation |
 
 Typed descriptors remain the static source of handler shapes. Runtime symbols remain the dispatch authority. Two factory calls can produce identical TypeScript types and different operation identities. Programs snapshot their selected registry at publication.
 

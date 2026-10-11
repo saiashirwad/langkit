@@ -29,6 +29,8 @@ const handlers = defineJavaScriptBackend(dialect, {
 
 Selecting a descriptor freezes its configuration object. Traversal entries capture its callbacks and are frozen. Later changes to a mutable structural descriptor alias are rejected. Callback implementations still own the semantics and any data they capture.
 
+Descriptor records require own enumerable string keys. Backend factories require an own callable handler for every selected key and capture those callbacks at creation. Explicit keys such as `toString`, `constructor`, and `valueOf` are legal; inherited `Object.prototype` methods cannot supply handlers. TypeScript checks inferred key coverage, while runtime validation remains authoritative for interfaces and index signatures that cannot express property ownership.
+
 ## Structural validation and mapping
 
 `Body<T>` is a scoped fragment containing declarations and a result. `Program<T>` adds the selected traversal registry and optional core function identity. `language.program(body)` snapshots the registry. Installing another feature later does not modify an existing program. Descriptor instances remain shared identities.

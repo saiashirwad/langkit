@@ -11,6 +11,20 @@ pnpm typecheck
 pnpm test
 ```
 
+## Author typing rules
+
+`createJudgments` dispatches exhaustive synthesis and checking rules over your own AST. `createBindings` coordinates declaration identity, lexical scopes, generalization, and reference instantiation. `createCompiler` publishes an emit-ready artifact only after clean finalization; failed or recovered work still exposes editor facts.
+
+[Build a compiler with typed judgments](docs/compiler-authoring.md) has a complete caller example. The shared-syntax language runs polymorphic identity, row-polymorphic projection, and an explicitly annotated higher-rank parameter:
+
+```sh
+npm run mini -- hm 'let id = fn x => x; (id(1), id(true))'
+npm run mini -- hm 'let getX = fn r => r.x; (getX({ x: 1, y: true }), getX({ x: true }))'
+npm run mini -- higher-rank '(fn (f: forall a. a -> a) => (f(1), f(true)))(fn x => x)'
+```
+
+For host-known types, [host-typed staging](docs/staging.md) provides `Expr<A>`, typed functions and calls, declarations, and a local JavaScript emitter. Dynamic IR lowering uses `langkit/adapters/staging` and returns `Program<unknown>`. Both paths are self-contained.
+
 ## Compose an IR and backend
 
 The IR is extensible and descriptor-driven. `create<T>()` supplies the small core; optional operation sets add methods and descriptors explicitly. A value carries the language's own type descriptor and the exact identity of its operation descriptor. The framework does not define the language's type system.
@@ -166,6 +180,8 @@ Python's printing operation uses native Python representation rather than JavaSc
 - **Python:** `langkit/python` emits executable Python source using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder.
 
 The core IR's scope validation and the language's type checker have different responsibilities. Constructors trust the language's typing rules; neither runtime validation nor TypeScript provides a general type proof.
+
+[Verification contracts](docs/verification.md) cover runtime tests, compiler fixtures, real TypeScript editor probes, isolated `any` and `never` controls, and compiler-cost measurements.
 
 ## Example languages and capabilities
 

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { compile, isolatedProject, root } from "../tools/type-contracts.ts";
 
-for (const document of ["README.md", "docs/inference-theories.md", "docs/syntax.md"]) {
+for (const document of ["README.md", "docs/inference-theories.md", "docs/syntax.md", "docs/compiler-authoring.md", "docs/staging.md"]) {
   const source = readFileSync(join(root, document), "utf8");
   const examples = [...source.matchAll(/```ts\r?\n([\s\S]*?)\r?\n```/g)];
   assert.ok(examples.length > 0, `${document} requires a TypeScript example`);

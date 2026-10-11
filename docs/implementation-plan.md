@@ -26,24 +26,26 @@ The target is a reusable language-authoring layer between `Check` and a complete
 - [x] Checkpoint: run blocking architecture and baseline gates before authoring implementation fan-out.
 - [x] Checkpoint: assign the grounded runtime, descriptor, solver, and module-loader workstreams. Judgment and tooling work wait for the authoring design.
 - [x] Checkpoint: give every writable worker a separate worktree; serialize integration here.
-- [ ] Checkpoint: use the smallest unit that can be verified, then integrate it before building dependents.
+- [x] Checkpoint: use the smallest unit that can be verified, then integrate it before building dependents.
 - [x] Harden the runtime. Add failing tests, trace their cause, implement the machine, and rerun the original probes.
 - [x] Preserve descriptor types and migrate backend definitions to derived handler types.
 - [x] Extract HM and rows; remove the migrated examples' duplicate solver machinery.
-- [ ] Introduce judgments and binder combinators; migrate representative rules.
+- [x] Introduce judgments and binder combinators; migrate representative rules.
 - [x] Establish reusable higher-rank checking. Its conformance tests pass; publish its grammar, annotation policy, and limitations with the authoring guide.
-- [ ] Add partial/finalized elaboration and structured rule/constraint evidence.
+- [x] Add partial/finalized elaboration and structured rule/constraint evidence.
 - [x] Separate module graph management from import parsing through a language-supplied parser.
-- [ ] Add the shared-syntax language demonstration and the supported TS Macros adapter.
+- [x] Add the shared-syntax language demonstration and a supported staged-construction adapter.
 - [x] Verify optional syntax declarations and the constructor adapter against the actual TS Macros reference.
-- [ ] Make staged construction, lowering, and execution self-contained. The user clarified that TS Macros is not an npm dependency.
-- [ ] Add compile-time, editor, mutation-control, and compiler-cost checks.
-- [ ] Scrap and redesign a unit if its implementation requires repeated workarounds.
+- [x] Make staged construction, lowering, and execution self-contained. The user clarified that TS Macros is not an npm dependency.
+- [x] Add compile-time, editor, mutation-control, and compiler-cost checks.
+- [x] Replace the injected external target with local constructors, witnesses, and emission; delete the old entrypoints.
 - [ ] Inspect the scoped diff with `no-comments`; retain only comments for external constraints and compiler test directives.
 - [ ] Review the complete artifacts and decision trail with an independent read-only reviewer. Foundation review reproduced two descriptor defects; both now have passing regressions.
 - [ ] Run the full completion gates on this branch and record exact outcomes.
-- [ ] Prepare ordered local commits and hand back the branch.
-- [ ] Opening a PR: skipped because the user authorized local implementation, not a push or PR.
+- [ ] Prune duplicate legacy tests and retain representative source-to-compilation programs, as the user requested.
+- [ ] Format all code with pinned dprint, then rerun the completion gates.
+- [ ] Commit and push this branch, as the user explicitly requested during integration.
+- [x] Opening a PR: skipped because the user requested a push, not a PR.
 
 ## Phase ownership and checks
 
@@ -56,7 +58,7 @@ The target is a reusable language-authoring layer between `Check` and a complete
 | Tooling | Finalization, trace/evidence, module parser boundary, `tools`, editor corpus, adapter | Stable judgment and dialect contracts | One observable capability per test, then editor checks | Recovered artifacts become emit-ready or checks miss their negative controls |
 | Integration | Exports, scripts, guides, decision trail | Verified workstream commits | `npm test`, `npm run typecheck`, editor checks, controls, and showcase execution | Any gate fails or cannot observe the promised behavior |
 
-No remote changes are part of this task. Langkit remains the owner of the checking runtime in this repository. Typerator is a semantic reference, not a second implementation to update here.
+The user authorized committing and pushing `feat/composable-language-tools` to its existing origin. No PR, merge, or deployment is requested. Langkit remains the owner of the checking runtime in this repository. Typerator is a semantic reference, not a second implementation to update here.
 
 API compatibility is not a goal. The user confirmed that this is greenfield. Existing languages are semantic conformance cases, not a reason to retain an obsolete authoring interface.
 
