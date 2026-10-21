@@ -5,7 +5,7 @@
       "text": "```typescript\n(parameter) recordNode: RecordNode<hm.Type>\n```"
     },
     "contextual-literal-node": {
-      "text": "```typescript\n(parameter) literalNode: Literal<hm.Type>\n```"
+      "text": "```typescript\n(parameter) literalNode: Literal\n```"
     },
     "contextual-backend-context": {
       "text": "```typescript\n(parameter) recordContext: JavaScriptContext<hm.Type>\n```"
@@ -72,11 +72,11 @@
       ]
     },
     "backend-signature": {
-      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<hm.Type, Literal<hm.Type>>; record: OperationDescriptor<hm.Type, RecordNode<hm.Type>>; }>, handlers: { readonly literal: (literalNode: Literal<hm.Type>) => string; readonly record: (recordNode: RecordNode<hm.Type>, recordContext: JavaScriptContext<hm.Type>) => string; }): readonly DispatcherHandler<JavaScriptContext<hm.Type>>[]",
+      "text": "defineJavaScriptBackend(descriptors: { literal: OperationDescriptor<hm.Type, Literal>; record: OperationDescriptor<hm.Type, RecordNode<hm.Type>>; }, handlers: { readonly literal: (literalNode: Literal) => string; readonly record: (recordNode: RecordNode<hm.Type>, recordContext: JavaScriptContext<hm.Type>) => string; }): readonly JavaScriptHandler<hm.Type>[]",
       "activeParameter": 1
     },
     "literal-signature": {
-      "text": "literal(type: hm.Type, value: number | boolean | string): OperationValue<hm.Type, Literal<hm.Type>>",
+      "text": "literal(type: hm.Type, value: number | boolean | string): OperationValue<hm.Type, Literal>",
       "activeParameter": 1
     },
     "judgment-rule-node": {

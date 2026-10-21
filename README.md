@@ -71,18 +71,14 @@ For language authors adding an operation, keep the descriptor responsible for ch
 ```ts
 import { create, type OperationNode, type Value } from "langkit/ir";
 import { defineOperation } from "langkit/operations/descriptor";
-import { defineDialect } from "langkit/operations/dialect";
 
 type Type = "number";
 type Twice = OperationNode & { readonly kind: "twice"; readonly value: Value<Type>; };
 const twice = defineOperation<Type, Twice>("twice", {
   children: (node) => [node.value],
-  scopedBodies: () => [],
-  references: () => [],
-  map: (node, mapValue) => ({ ...node, value: mapValue(node.value) }),
 });
 const code = create<Type>().use({
-  ...defineDialect({ twice }),
+  descriptors: { twice },
   methods: {
     twice: (type: Type, value: Value<Type>) => twice.make(type, { kind: "twice", value }),
   },

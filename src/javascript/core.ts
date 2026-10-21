@@ -1,6 +1,5 @@
+import { defineJavaScriptBackend } from "../javascript.ts";
 import type { CoreDescriptors } from "../operations/core.ts";
-import { defineDialect } from "../operations/dialect.ts";
-import { defineJavaScriptBackend } from "./operations.ts";
 
 const literal = (value: number | boolean | string): string => {
   if (typeof value === "string") return JSON.stringify(value);
@@ -13,7 +12,7 @@ const literal = (value: number | boolean | string): string => {
 };
 
 export const coreJavaScript = <T>(descriptors: CoreDescriptors<T>) =>
-  defineJavaScriptBackend(defineDialect(descriptors), {
+  defineJavaScriptBackend(descriptors, {
     literal: (node) => literal(node.value),
     ref: (node, context) => context.name(node.binding),
     binary: (node, context) =>

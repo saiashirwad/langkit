@@ -1,6 +1,5 @@
 import type { OperationFeature, OperationNode, Value } from "../ir.ts";
 import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
-import { defineDialect } from "./dialect.ts";
 
 type RecordField<T> = { readonly name: string; readonly value: Value<T>; };
 type RecordNode<T> = OperationNode & {
@@ -21,31 +20,15 @@ export type RecordDescriptors<T> = {
   readonly merge: OperationDescriptor<T, MergeNode<T>>;
   readonly field: OperationDescriptor<T, FieldNode<T>>;
 };
+
 export const records = <T>(): OperationFeature<T, RecordMethods<T>, RecordDescriptors<T>> => {
   const record = defineOperation<T, RecordNode<T>>("record", {
     children: (node) => [...node.fields.map(({ value }) => value), ...(node.base ? [node.base] : [])],
-    scopedBodies: () => [],
-    references: () => [],
-    map: (node, mapValue) => ({
-      ...node,
-      fields: node.fields.map((field) => ({ ...field, value: mapValue(field.value) })),
-      ...(node.base ? { base: mapValue(node.base) } : {}),
-    }),
   });
-  const merge = defineOperation<T, MergeNode<T>>("merge", {
-    children: (node) => [node.left, node.right],
-    scopedBodies: () => [],
-    references: () => [],
-    map: (node, mapValue) => ({ ...node, left: mapValue(node.left), right: mapValue(node.right) }),
-  });
-  const field = defineOperation<T, FieldNode<T>>("field", {
-    children: (node) => [node.record],
-    scopedBodies: () => [],
-    references: () => [],
-    map: (node, mapValue) => ({ ...node, record: mapValue(node.record) }),
-  });
+  const merge = defineOperation<T, MergeNode<T>>("merge", { children: (node) => [node.left, node.right] });
+  const field = defineOperation<T, FieldNode<T>>("field", { children: (node) => [node.record] });
   return {
-    ...defineDialect({ record, merge, field }),
+    descriptors: { record, merge, field },
     methods: {
       record: (type, fields, base) =>
         record.make(type, base ? { kind: "record", fields, base } : { kind: "record", fields }),

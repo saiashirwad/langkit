@@ -1,4 +1,4 @@
-import type { Result } from "langkit/check";
+import type { Result } from "langkit";
 import type { Program, Value } from "langkit/ir";
 import assert from "node:assert/strict";
 import { test } from "node:test";

@@ -2,13 +2,12 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { run } from "../src/check.ts";
-import { type Body, create, mapBody, type OperationNode, validate, type Value } from "../src/ir.ts";
+import { type Body, create, type OperationNode, validate, type Value } from "../src/ir.ts";
 import { elaboration } from "../src/ir/check.ts";
-import { createJavaScriptEmitter, emit, type JavaScriptContext } from "../src/javascript.ts";
+import { createJavaScriptEmitter, defineJavaScriptBackend } from "../src/javascript.ts";
 import { coreJavaScript } from "../src/javascript/core.ts";
-import { asDispatcherHandler, defineJavaScriptHandler } from "../src/javascript/operations.ts";
 import { printingJavaScript } from "../src/javascript/printing.ts";
-import { defineOperation, traversalOf } from "../src/operations/descriptor.ts";
+import { defineOperation } from "../src/operations/descriptor.ts";
 import { printing } from "../src/operations/printing.ts";
 import { records } from "../src/operations/records.ts";
 test("language builders compose explicitly selected feature methods", () => {
@@ -16,9 +15,9 @@ test("language builders compose explicitly selected feature methods", () => {
   const language = create<string>().use(recordSet).use(printing<string>());
   const record = language.record("record", [{ name: "n", value: language.literal("number", 1) }]);
   const selected = language.field("number", record, "n");
-  assert.equal(selected.operationId, recordSet.operations.find((operation) => operation.kind === "field")?.id);
+  assert.equal(selected.operationId, recordSet.descriptors.field.id);
   assert.throws(
-    () => create<string>().use({ methods: { program: () => undefined }, descriptors: {}, operations: [] }),
+    () => create<string>().use({ methods: { program: () => undefined }, descriptors: {} }),
     /Duplicate language feature method: program/,
   );
 });
@@ -32,31 +31,27 @@ test("custom operation traversal rejects a binding that escapes its scope", () =
   const descriptor = defineOperation<string, ScopeNode>("scope-test", {
     children: (node) => [node.child],
     scopedBodies: (node) => [{ body: node.body, bindings: [] }],
-    references: () => [],
-    map: (node, value, body) => ({ ...node, child: value(node.child), body: body(node.body) }),
   });
   const base = create<string>();
   const escaped = base.binding("escaped", "number");
   const language = base.use({
     methods: { scopeTest: (type: string, node: ScopeNode) => descriptor.make(type, node) },
     descriptors: { scopeTest: descriptor },
-    operations: [traversalOf(descriptor)],
   });
   const custom = language.scopeTest("number", {
     kind: "scope-test",
     child: base.ref(escaped),
     body: { declarations: [], result: language.literal("number", 0) },
   });
-  assert.throws(() => language.validate({ declarations: [], result: custom }), /Out-of-scope binding: escaped/);
+  assert.throws(
+    () => language.program({ declarations: [], result: custom }),
+    /Out-of-scope binding: escaped/,
+  );
 });
 
 test("custom operation structural validation runs through generic validation", () => {
   type MetadataNode = OperationNode & { readonly kind: "metadata-test"; readonly entries: readonly string[]; };
   const descriptor = defineOperation<string, MetadataNode>("metadata-test", {
-    children: () => [],
-    scopedBodies: () => [],
-    references: () => [],
-    map: (node) => node,
     validate: (node) => {
       if (new Set(node.entries).size !== node.entries.length) throw new Error("Duplicate metadata entry");
     },
@@ -65,48 +60,32 @@ test("custom operation structural validation runs through generic validation", (
   const language = base.use({
     methods: { metadataTest: (type: string, node: MetadataNode) => descriptor.make(type, node) },
     descriptors: { metadataTest: descriptor },
-    operations: [traversalOf(descriptor)],
   });
   const malformed = language.metadataTest("test", { kind: "metadata-test", entries: ["same", "same"] });
-  assert.throws(() => language.validate({ declarations: [], result: malformed }), /Duplicate metadata entry/);
+  assert.throws(() => language.program({ declarations: [], result: malformed }), /Duplicate metadata entry/);
 });
 
 test("custom JavaScript dispatch rejects missing handlers and supports explicit composition", () => {
   type CustomNode = OperationNode & { readonly kind: "custom-text"; readonly text: string; };
-  const descriptor = defineOperation<string, CustomNode>("custom-text", {
-    children: () => [],
-    scopedBodies: () => [],
-    references: () => [],
-    map: (node) => node,
-  });
+  const descriptor = defineOperation<string, CustomNode>("custom-text");
   const value = descriptor.make("string", { kind: "custom-text", text: "custom" });
   const root: Body<string> = { declarations: [], result: value };
   const base = create<string>();
   const language = base.use({
     methods: {},
     descriptors: { customText: descriptor },
-    operations: [traversalOf(descriptor)],
   });
   const program = language.program(root);
-  assert.throws(() => emit(program), /Missing JavaScript handler for operation: custom-text/);
-
-  const handler = asDispatcherHandler(defineJavaScriptHandler<string, CustomNode, JavaScriptContext<string>>(
-    descriptor,
-    (node) => JSON.stringify(node.text),
-  ));
-  assert.throws(() => createJavaScriptEmitter([handler], [handler]), /Duplicate JavaScript handler: custom-text/);
-  const transformed = mapBody(
-    program.body,
-    program.operations,
-    undefined,
-    (original, mapped) =>
-      original.operationId === descriptor.id
-        ? { ...mapped, node: { ...(mapped.node as CustomNode), text: "transformed" } }
-        : mapped,
+  assert.throws(
+    () => createJavaScriptEmitter<string>().emit(program),
+    /Missing JavaScript handler for operation: custom-text/,
   );
-  const transformedProgram = { ...program, body: transformed };
-  validate(transformedProgram);
-  assert.equal(runInNewContext(emit(transformedProgram, [handler])), "transformed");
+
+  const handlers = defineJavaScriptBackend({ customText: descriptor }, {
+    customText: (node) => JSON.stringify(node.text),
+  });
+  assert.throws(() => createJavaScriptEmitter(handlers, handlers), /Duplicate JavaScript handler: custom-text/);
+  assert.equal(runInNewContext(createJavaScriptEmitter(handlers).emit(program)), "custom");
 });
 
 test("composed operations preserve left-to-right evaluation order", () => {

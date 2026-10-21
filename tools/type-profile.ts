@@ -40,19 +40,18 @@ export function scalingConsumer(count: number): string {
     "import { createJudgments, type Synthesized } from \"langkit/judgments\";",
     "import type { Value } from \"langkit/ir\";",
     "import { defineOperation } from \"langkit/operations/descriptor\";",
-    "import { defineDialect } from \"langkit/operations/dialect\";",
-    "import { defineJavaScriptBackend } from \"langkit/javascript/operations\";",
+    "import { defineJavaScriptBackend } from \"langkit/javascript\";",
     "import type { Type } from \"langkit/types/hm\";",
     "type Field = { readonly name: string; readonly value: Value<Type> };",
     "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;",
     "const prove = <T extends true>(): T => true as T;",
     ...cases.flatMap((name) => [
       `type ${name}Node = { readonly kind: "${name}"; readonly fields: readonly Field[] };`,
-      `const ${name} = defineOperation<Type, ${name}Node>("${name}", { children: node => node.fields.map(field => field.value), scopedBodies: () => [], references: () => [], map: (node, value) => ({ ...node, fields: node.fields.map(field => ({ ...field, value: value(field.value) })) }) });`,
+      `const ${name} = defineOperation<Type, ${name}Node>("${name}", { children: node => node.fields.map(field => field.value) });`,
     ]),
     `const descriptors = { ${cases.join(", ")} };`,
     `prove<Equal<keyof typeof descriptors, ${cases.map((name) => JSON.stringify(name)).join(" | ")}>>();`,
-    "export const backend = defineJavaScriptBackend(defineDialect(descriptors), {",
+    "export const backend = defineJavaScriptBackend(descriptors, {",
     ...cases.map((name) =>
       `  ${name}: (node, context) => { prove<Equal<typeof node, ${name}Node>>(); return node.fields.map(field => context.expr(field.value, context.depth)).join(", "); },`
     ),

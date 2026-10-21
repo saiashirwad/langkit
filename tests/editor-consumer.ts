@@ -1,9 +1,8 @@
 import { type Check, check, pure } from "langkit";
 import { create, type Value } from "langkit/ir";
-import type { JavaScriptContext } from "langkit/javascript";
-import { defineJavaScriptBackend } from "langkit/javascript/operations";
+import { defineJavaScriptBackend, type JavaScriptContext } from "langkit/javascript";
 import { createJudgments, type Synthesized } from "langkit/judgments";
-import { defineDialect, type DescriptorNode } from "langkit/operations/dialect";
+import type { DescriptorNode } from "langkit/operations/descriptor";
 import { records } from "langkit/operations/records";
 import * as rank from "langkit/types/higher-rank";
 import * as hm from "langkit/types/hm";
@@ -22,7 +21,7 @@ export type RecordNode = DescriptorNode<typeof descriptors.record>;
 export type LiteralNode = DescriptorNode<typeof descriptors.literal>;
 prove<Equal<keyof typeof descriptors, "literal" | "record">>();
 
-export const backend = defineJavaScriptBackend(defineDialect(descriptors), {
+export const backend = defineJavaScriptBackend(descriptors, {
   literal: (literalNode) => {
     prove<Equal<typeof literalNode, LiteralNode>>();
     prove<Equal<typeof literalNode.value, number | boolean | string>>();

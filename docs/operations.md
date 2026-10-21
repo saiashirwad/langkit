@@ -2,46 +2,37 @@
 
 Langkit's IR is extensible data, not a closed node union. Each `Value<T>` stores a language-owned type descriptor, an opaque `OperationNode`, and the exact `operationId` symbol of the descriptor instance that created it. Descriptor identity—not `kind`—selects both traversals and backend handlers. Kinds are descriptive labels and need not be globally unique.
 
-An `OperationDescriptor` supplies four structural contracts:
+An `OperationDescriptor` supplies three structural contracts. Each defaults to none:
 
 - `children(node)` returns value children in **evaluation order**.
 - `scopedBodies(node)` returns nested bodies, each paired with the bindings visible there.
 - `references(node)` reports binding uses not represented as ordinary children.
-- `map(node, mapValue, mapBody, mapBinding)` immutably rebuilds the node and all its IR-bearing parts.
 
 `validate(node)` is an optional operation-local structural hook. Generic validation invokes it for a value after resolving that value by its exact descriptor identity, before traversing the descriptor-reported references, children, and scoped bodies. Use it for invariants internal to an operation representation (for example, duplicate case tags); it does not make type checking mandatory.
 
-`defineOperation` adds the descriptor identity, `make(type, node)` constructor, and identity-sensitive `is(value)` predicate. A feature packages named `descriptors`, their derived runtime traversal list `operations`, and typed builder `methods`. `language.use(feature)` selects and composes them.
+`defineOperation` adds the descriptor identity, `make(type, node)` constructor, and identity-sensitive `is(value)` predicate. A feature packages named `descriptors` and typed builder `methods`. `language.use(feature)` selects them and rejects duplicate method names and descriptor identities.
 
-`defineDialect(record)` retains each literal key and descriptor type. `composeDialects(left, right)` rejects duplicate keys and identities. Backend tables derive callback node types and required handler keys from that record:
+A JavaScript backend table derives callback node types and required handler keys from the same descriptor record:
 
 ```ts
-import { defineJavaScriptBackend } from "langkit/javascript/operations";
-import { defineDialect } from "langkit/operations/dialect";
+import { defineJavaScriptBackend } from "langkit/javascript";
 
-const dialect = defineDialect({ twice });
-const handlers = defineJavaScriptBackend(dialect, {
+const handlers = defineJavaScriptBackend({ twice }, {
   twice: (node, context) => `(${context.expr(node.value, context.depth)} * 2)`,
 });
 ```
 
-For another output format, `defineBackend<Context, Output>()` accepts a dialect and its complete handler table. Runtime composition still rejects handler identity collisions.
+`createJavaScriptEmitter` rejects two handlers for the same descriptor identity.
 
-Selecting a descriptor freezes its configuration object. Traversal entries capture its callbacks and are frozen. Later changes to a mutable structural descriptor alias are rejected. Callback implementations still own the semantics and any data they capture.
+## Structural validation
 
-Descriptor records require own enumerable string keys. Backend factories require an own callable handler for every selected key and capture those callbacks at creation. Explicit keys such as `toString`, `constructor`, and `valueOf` are legal; inherited `Object.prototype` methods cannot supply handlers. TypeScript checks inferred key coverage, while runtime validation remains authoritative for interfaces and index signatures that cannot express property ownership.
+`Body<T>` is a scoped fragment containing declarations and a result. `Program<T>` adds the selected descriptor registry and the core function identity. `language.program(body)` snapshots the registry. Installing another feature later does not modify an existing program. Descriptor instances remain shared identities.
 
-## Structural validation and mapping
-
-`Body<T>` is a scoped fragment containing declarations and a result. `Program<T>` adds the selected traversal registry and optional core function identity. `language.program(body)` snapshots the registry. Installing another feature later does not modify an existing program. Descriptor instances remain shared identities.
-
-`language.validate(body)` is a builder convenience. Standalone `validate(program)` and JavaScript `emit(program, handlers?)` use the program's registry. `createJavaScriptEmitter(...handlerSets).emit(program)` composes handler sets. Python provides the same emitter form.
+`validate(program)` and `createJavaScriptEmitter(...handlerSets).emit(program)` use the program's registry.
 
 Validation is structural, not a proof of language typing. It does not check that a value's `type` agrees with a literal, operator, field, or result. Each language owns its typing rules; the core IR deliberately permits language-specific descriptors and does not require a type checker.
 
-`mapBody(body, operations, mapBinding?, transformValue?)` maps a scoped fragment using exact descriptor identities. For a portable program, use `mapBody(program.body, program.operations, ...)` to preserve the registry associated with its values. Mapper arguments default to identity. `transformValue(original, mapped)` runs bottom-up after the descriptor has mapped that value's children; it can replace the reconstructed value. The descriptor map must preserve every child, body, scoped binding, and reference-bearing structure in its node, or deliberately transform it. `mapBody` does not revalidate the transformed result or prove type preservation; transformations that alter language-level invariants must maintain or recheck them. Missing descriptors throw rather than guessing from `kind`.
-
-References are descriptor-reported uses. Core references are narrowable with `isReference(value, language.coreReferenceId())`; checking `node.kind === "ref"` alone is not identity-safe in an extensible IR.
+References are descriptor-reported uses. Core references are narrowable with `language.coreDescriptors.ref.is(value)`; checking `node.kind === "ref"` alone is not identity-safe in an extensible IR.
 
 ## Core operations and generator construction
 
@@ -76,9 +67,9 @@ Raw `declare(name, initial)` and `declareRecursive(binding, functionValue)` rema
 
 `code.program(body)` validates structure and snapshots the registry. Descriptor identities and lexical binding links remain intact. Pure builder methods stay independent of `Check`.
 
-`State<T>` from `state(init, checkpoint)` is mutable, run-local storage; `checkpoint(value)` must return a restore callback. `Scoped<T>` from `scoped(initial)` is an immutable environment binding. `get` reads either; `within(scopedKey, update, body)` derives a temporary binding by invoking only the updater callback, and `bind` extends readonly map environments. Every `run` gets fresh storage. `recover()` accumulates a diagnostic and continues only for void checks; even if later work succeeds, `run` returns failure with `errors: readonly [Diagnostic, ...Diagnostic[]]` whenever any diagnostic was recovered. Do not emit a program on that result. `atomic()` restores mutable run-local state on terminal failure or throw; `attempt(check)` additionally removes diagnostics recovered inside it and rolls back; `choice(...checks)` isolates alternatives and uses the first success, or first failure when all fail; `sequence(tuple)` returns values in a tuple preserving the checks' input order. Implementation exceptions propagate.
+`State<T>` from `state(init, checkpoint)` is mutable, run-local storage; `checkpoint(value)` must return a restore callback. `Scoped<T>` from `scoped(initial)` is an immutable environment binding. `get` reads either; `within(scopedKey, update, body)` derives a temporary binding by invoking only the updater callback, and `bind` extends readonly map environments. Every `run` gets fresh storage. `recover()` accumulates a diagnostic and continues only for void checks; even if later work succeeds, `run` returns failure with `errors: readonly [Diagnostic, ...Diagnostic[]]` whenever any diagnostic was recovered. Do not emit a program on that result. `atomic()` restores mutable run-local state on terminal failure or throw. Implementation exceptions propagate.
 
-Fresh inference allocation, instantiation, and generalization are checks composed with `yield*`, `map`, or `flatMap` inside the caller's run; inference helpers do not invoke nested runs. Journaled `assign`, `add`, `put`, and `append` undo object-property, set, map, and array writes during rollback without deep snapshots on each solver step. `pruneLink(value, variable, instance)` traverses links read-only and never compresses them. This compositional transactional checker/inference model is informed by typerator state/recovery and ts-macros-inspired generator IR, but does not import their JavaScript/TypeScript syntax assumptions or impose any source-language type ontology.
+Fresh inference allocation, instantiation, and generalization are checks composed with `yield*`, `map`, or `flatMap` inside the caller's run; inference helpers do not invoke nested runs. Journaled `assign` and `add` undo object-property and set writes during rollback without deep snapshots on each solver step. `pruneLink(value, variable, instance)` traverses links read-only and never compresses them. This compositional transactional checker/inference model is informed by typerator state/recovery and ts-macros-inspired generator IR, but does not import their JavaScript/TypeScript syntax assumptions or impose any source-language type ontology.
 
 | Operation | Children, left to right | Scoped bodies and structural role                                                                                              |
 | --------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
@@ -108,7 +99,7 @@ Select `printing<T>()` for `print` and the backend's corresponding handler (`pri
 
 ## Authoring custom operations
 
-A custom descriptor must expose every value child in runtime evaluation order and every nested body with exactly the bindings valid there. Put binding uses in `references` when they are not modeled as child values. `map` must rebuild all of this IR data, including scoped bindings, so validation and transformations see the same structure as execution. Omitting a child, nested body, or reference makes generic validation/mapping incomplete. A descriptor cannot claim recursive declaration privileges; only the selected core function descriptor is accepted as a recursive initializer.
+A custom descriptor must expose every value child in runtime evaluation order and every nested body with exactly the bindings valid there. Put binding uses in `references` when they are not modeled as child values. Omitting a child, nested body, or reference makes generic validation incomplete. A descriptor cannot claim recursive declaration privileges; only the selected core function descriptor is accepted as a recursive initializer.
 
 For JavaScript, define a handler tied to that exact descriptor, then include it in a `createJavaScriptEmitter` handler set. Core and feature handler factories must receive the same selected descriptor instances used to build IR. The emitter validates the `Program` registry; an unselected IR value fails validation, and a selected operation with no identity-matched handler throws `Missing JavaScript handler for operation: <kind>`. A same-kind handler from another descriptor instance does not match.
 

@@ -1,9 +1,8 @@
-import { defineDialect } from "../operations/dialect.ts";
+import { defineJavaScriptBackend } from "../javascript.ts";
 import type { RecordDescriptors } from "../operations/records.ts";
-import { defineJavaScriptBackend } from "./operations.ts";
 
 export const recordsJavaScript = <T>(descriptors: RecordDescriptors<T>) =>
-  defineJavaScriptBackend(defineDialect(descriptors), {
+  defineJavaScriptBackend(descriptors, {
     record: (node, context) => {
       const params = node.fields.map((_, index) => `_field${index}`);
       const args = node.fields.map((field) => context.expr(field.value, context.depth));

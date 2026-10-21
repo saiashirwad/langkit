@@ -1,6 +1,8 @@
-import type { MatchCase, MatchFallback, OperationFeature, OperationNode, Value } from "../ir.ts";
+import type { Binding, Body, OperationFeature, OperationNode, Value } from "../ir.ts";
 import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
-import { defineDialect } from "./dialect.ts";
+
+export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T>; };
+export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T>; };
 
 type VariantNode<T> = OperationNode & {
   readonly kind: "variant";
@@ -22,12 +24,10 @@ export type VariantDescriptors<T> = {
   readonly variant: OperationDescriptor<T, VariantNode<T>>;
   readonly match: OperationDescriptor<T, MatchNode<T>>;
 };
+
 export const variants = <T>(): OperationFeature<T, VariantMethods<T>, VariantDescriptors<T>> => {
   const variant = defineOperation<T, VariantNode<T>>("variant", {
     children: (node) => node.fields,
-    scopedBodies: () => [],
-    references: () => [],
-    map: (node, mapValue) => ({ ...node, fields: node.fields.map(mapValue) }),
   });
   const match = defineOperation<T, MatchNode<T>>("match", {
     children: (node) => [node.value],
@@ -37,25 +37,6 @@ export const variants = <T>(): OperationFeature<T, VariantMethods<T>, VariantDes
         ? [{ body: node.fallback.body, bindings: node.fallback.binding ? [node.fallback.binding] : [] }]
         : []),
     ],
-    references: () => [],
-    map: (node, mapValue, mapBody, mapBinding) => ({
-      ...node,
-      value: mapValue(node.value),
-      cases: node.cases.map((branch) => ({
-        ...branch,
-        bindings: branch.bindings.map(mapBinding),
-        body: mapBody(branch.body),
-      })),
-      ...(node.fallback
-        ? {
-          fallback: {
-            ...node.fallback,
-            ...(node.fallback.binding ? { binding: mapBinding(node.fallback.binding) } : {}),
-            body: mapBody(node.fallback.body),
-          },
-        }
-        : {}),
-    }),
     validate: (node) => {
       const tags = new Set<string>();
       for (const branch of node.cases) {
@@ -65,7 +46,7 @@ export const variants = <T>(): OperationFeature<T, VariantMethods<T>, VariantDes
     },
   });
   return {
-    ...defineDialect({ variant, match }),
+    descriptors: { variant, match },
     methods: {
       variant: (type, tag, fields) => variant.make(type, { kind: "variant", tag, fields }),
       match: (type, matched, cases, fallback) =>

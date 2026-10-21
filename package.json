@@ -6,13 +6,8 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./check": "./src/check.ts",
-    "./diagnostic": "./src/diagnostic.ts",
     "./judgments": "./src/judgments.ts",
     "./bindings": "./src/bindings.ts",
-    "./trace": "./src/trace.ts",
-    "./elaboration": "./src/elaboration.ts",
-    "./language": "./src/language.ts",
     "./parse": "./src/parse.ts",
     "./ir": "./src/ir.ts",
     "./ir/check": "./src/ir/check.ts",

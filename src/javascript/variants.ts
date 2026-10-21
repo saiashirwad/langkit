@@ -1,10 +1,9 @@
-import { defineDialect } from "../operations/dialect.ts";
+import { defineJavaScriptBackend } from "../javascript.ts";
 import type { VariantDescriptors } from "../operations/variants.ts";
-import { defineJavaScriptBackend } from "./operations.ts";
 
 export const variantsJavaScript = <T>(descriptors: VariantDescriptors<T>) => {
   let matchIndex = 0;
-  return defineJavaScriptBackend(defineDialect(descriptors), {
+  return defineJavaScriptBackend(descriptors, {
     variant: (node, context) =>
       `({ __proto__: null, tag: ${JSON.stringify(node.tag)}, fields: [${
         node.fields.map((field) => context.expr(field, context.depth)).join(", ")

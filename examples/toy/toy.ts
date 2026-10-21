@@ -1,6 +1,6 @@
 import { bind, type Check, fail, lookup, pure, render, type Result, run, scoped, type Span } from "langkit";
 import { type Analysis, create as createAnalysis, highlight, type TokenRule } from "langkit/analysis";
-import { type Binding, type Body, create, isReference, type Operator, type Program, type Value } from "langkit/ir";
+import { type Binding, type Body, create, type Operator, type Program, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
@@ -280,7 +280,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
     }
   }).flatMap((value) =>
     code.check(function*() {
-      if (isReference(value, code.coreReferenceId())) yield* facts.reference(value.node.binding, expr.span);
+      if (code.coreDescriptors.ref.is(value)) yield* facts.reference(value.node.binding, expr.span);
       yield* facts.typed(value.type, expr.span);
       return code.at(value, expr.span);
     })

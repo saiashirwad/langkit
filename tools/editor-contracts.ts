@@ -26,7 +26,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "literal: (literalNode)",
     offset: 14,
-    require: ["Literal<hm.Type>"],
+    require: ["literalNode: Literal"],
     maxLength: 180,
   },
   {
@@ -148,9 +148,9 @@ export const probes: readonly Probe[] = [
     target: "{",
     offset: 1,
     require: [
-      "dialect:",
+      "descriptors:",
       "handlers:",
-      "literalNode: Literal<hm.Type>",
+      "literalNode: Literal",
       "recordNode: RecordNode<hm.Type>",
       "recordContext: JavaScriptContext<hm.Type>",
     ],

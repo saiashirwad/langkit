@@ -1,55 +1,43 @@
-import { Check, check, get, type Scoped, scoped, type State, state, within } from "../check.ts";
+import { Check, check, get, scoped, type State, state, within } from "../check.ts";
 import type { Body, Declaration, LanguageBuilder, Value } from "../ir.ts";
-import type { DescriptorRecord } from "../operations/dialect.ts";
 
 type MixedGenerator<T, A> = () => Generator<Check<unknown> | Declaration<T>, A, unknown>;
-type PureMethods<T, Methods extends object, Descriptors extends DescriptorRecord> = Omit<
-  LanguageBuilder<T, Methods, Descriptors>,
-  "use" | "body" | "scope" | "declare" | "declareRecursive"
->;
 
-export type Elaboration<T, Methods extends object, Descriptors extends DescriptorRecord> =
-  & PureMethods<T, Methods, Descriptors>
-  & {
-    readonly check: <A>(factory: MixedGenerator<T, A>) => Check<A>;
-    readonly body: <A extends Value<T>>(factory: MixedGenerator<T, A>) => Check<Body<T>>;
-    readonly scope: <A extends Value<T>>(factory: MixedGenerator<T, A>) => Check<Value<T>>;
-    readonly declare: LanguageBuilder<T, Methods, Descriptors>["declare"];
-    readonly declareRecursive: LanguageBuilder<T, Methods, Descriptors>["declareRecursive"];
-  };
+export type Elaboration<T, Methods extends object> = Omit<LanguageBuilder<T, Methods>, "use" | "body" | "scope"> & {
+  readonly check: <A>(factory: MixedGenerator<T, A>) => Check<A>;
+  readonly body: <A extends Value<T>>(factory: MixedGenerator<T, A>) => Check<Body<T>>;
+  readonly scope: <A extends Value<T>>(factory: MixedGenerator<T, A>) => Check<Value<T>>;
+};
 
-const runMixed = <T, A>(factory: MixedGenerator<T, A>, active: Scoped<State<Declaration<T>[]> | undefined>): Check<A> =>
-  check(function*() {
-    const iterator = factory();
-    let done = false;
-    try {
-      let step = iterator.next();
-      while (!step.done) {
-        if (step.value instanceof Check) {
-          step = iterator.next(yield* step.value);
-        } else {
+/** Lets IR body generators also yield checks, so diagnostics and declarations share one generator. */
+export const elaboration = <T, Methods extends object>(
+  builder: LanguageBuilder<T, Methods>,
+): Elaboration<T, Methods> => {
+  const active = scoped<State<Declaration<T>[]> | undefined>(undefined);
+  const mixed = <A>(factory: MixedGenerator<T, A>): Check<A> =>
+    check(function*() {
+      const iterator = factory();
+      let done = false;
+      try {
+        let step = iterator.next();
+        while (!step.done) {
+          if (step.value instanceof Check) {
+            step = iterator.next(yield* step.value);
+            continue;
+          }
           const collection = yield* get(active);
           if (collection === undefined) throw new Error("IR declarations need an enclosing body");
-          const declaration = step.value as Declaration<T>;
-          const declarations = yield* get(collection);
-          declarations.push(declaration);
+          (yield* get(collection)).push(step.value);
           step = iterator.next(undefined);
         }
+        done = true;
+        return step.value;
+      } finally {
+        if (!done && !iterator.return(undefined as A).done) {
+          throw new TypeError("IR elaboration cleanup cannot yield values");
+        }
       }
-      done = true;
-      return step.value;
-    } finally {
-      if (!done && !iterator.return(undefined as A).done) {
-        throw new TypeError("IR elaboration cleanup cannot yield values");
-      }
-    }
-  });
-
-export const elaboration = <T, Methods extends object, Descriptors extends DescriptorRecord>(
-  builder: LanguageBuilder<T, Methods, Descriptors>,
-): Elaboration<T, Methods, Descriptors> => {
-  const active = scoped<State<Declaration<T>[]> | undefined>(undefined);
-  const checkFactory = <A>(factory: MixedGenerator<T, A>): Check<A> => runMixed(factory, active);
+    });
   const body = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Body<T>> =>
     check(function*() {
       const collection = state<Declaration<T>[]>(() => [], (current) => {
@@ -58,27 +46,14 @@ export const elaboration = <T, Methods extends object, Descriptors extends Descr
           current.length = length;
         };
       });
-      const computation = check(function*() {
-        const result = yield* runMixed(factory, active);
-        const declarations = yield* get(collection);
-        return builder.body({ declarations: [...declarations], result });
-      });
-      return yield* within(active, () => collection, computation);
+      const result = yield* within(active, () => collection, mixed(factory));
+      return builder.body({ declarations: [...yield* get(collection)], result });
     });
-  const scope = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Value<T>> =>
-    body(factory).map((built) => builder.block(built.result.type, built));
-  const api = { ...builder } as PureMethods<T, Methods, Descriptors> & Record<string, unknown>;
-  delete api.use;
-  delete api.body;
-  delete api.scope;
-  delete api.declare;
-  delete api.declareRecursive;
-  Object.assign(api, {
-    check: checkFactory,
+  const { use: _, ...pure } = builder;
+  return {
+    ...pure,
+    check: mixed,
     body,
-    scope,
-    declare: builder.declare,
-    declareRecursive: builder.declareRecursive,
-  });
-  return api as Elaboration<T, Methods, Descriptors>;
+    scope: (factory) => body(factory).map((built) => builder.block(built.result.type, built)),
+  } as Elaboration<T, Methods>;
 };
