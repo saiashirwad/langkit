@@ -160,7 +160,7 @@ All four have CLI and stdio language-server commands:
 
 | Language | CLI                    | Language server     | Neovim file extensions |
 | -------- | ---------------------- | ------------------- | ---------------------- |
-| Toy      | `pnpm toy [file]`      | `pnpm toy:lsp`      | `.toy`, `.tpy`         |
+| Toy      | `pnpm toy [file]`      | `pnpm toy:lsp`      | `.toy`                 |
 | HM       | `pnpm hm [file]`       | `pnpm hm:lsp`       | `.hm`                  |
 | Advanced | `pnpm advanced [file]` | `pnpm advanced:lsp` | `.advanced`            |
 | Schema   | `pnpm schema [file]`   | `pnpm schema:lsp`   | `.schema`              |

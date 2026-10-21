@@ -7,17 +7,14 @@ type RecordNode<T> = OperationNode & {
   readonly fields: readonly RecordField<T>[];
   readonly base?: Value<T>;
 };
-type MergeNode<T> = OperationNode & { readonly kind: "merge"; readonly left: Value<T>; readonly right: Value<T>; };
 type FieldNode<T> = OperationNode & { readonly kind: "field"; readonly record: Value<T>; readonly name: string; };
 export type RecordMethods<T> = {
   record(type: T, fields: readonly RecordField<T>[], base?: Value<T>): Value<T>;
-  merge(type: T, left: Value<T>, right: Value<T>): Value<T>;
   field(type: T, record: Value<T>, name: string): Value<T>;
 };
 
 export type RecordDescriptors<T> = {
   readonly record: OperationDescriptor<T, RecordNode<T>>;
-  readonly merge: OperationDescriptor<T, MergeNode<T>>;
   readonly field: OperationDescriptor<T, FieldNode<T>>;
 };
 
@@ -25,14 +22,12 @@ export const records = <T>(): OperationFeature<T, RecordMethods<T>, RecordDescri
   const record = defineOperation<T, RecordNode<T>>("record", {
     children: (node) => [...node.fields.map(({ value }) => value), ...(node.base ? [node.base] : [])],
   });
-  const merge = defineOperation<T, MergeNode<T>>("merge", { children: (node) => [node.left, node.right] });
   const field = defineOperation<T, FieldNode<T>>("field", { children: (node) => [node.record] });
   return {
-    descriptors: { record, merge, field },
+    descriptors: { record, field },
     methods: {
       record: (type, fields, base) =>
         record.make(type, base ? { kind: "record", fields, base } : { kind: "record", fields }),
-      merge: (type, left, right) => merge.make(type, { kind: "merge", left, right }),
       field: (type, recordValue, name) => field.make(type, { kind: "field", record: recordValue, name }),
     },
   };

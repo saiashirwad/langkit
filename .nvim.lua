@@ -5,7 +5,6 @@ local root = vim.fs.dirname(vim.fn.fnamemodify(source, ":p"))
 vim.filetype.add({
   pattern = {
     [vim.pesc(root) .. "/.*%.toy"] = "toy",
-    [vim.pesc(root) .. "/.*%.tpy"] = "toy",
     [vim.pesc(root) .. "/.*%.hm"] = "hm",
     [vim.pesc(root) .. "/.*%.advanced"] = "advanced",
     [vim.pesc(root) .. "/.*%.schema"] = "schema",

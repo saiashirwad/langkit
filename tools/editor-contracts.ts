@@ -139,7 +139,7 @@ export const probes: readonly Probe[] = [
     anchor: "language.coreDescriptors.literal",
     offset: 25,
     require: ["literal", "ref", "binary", "call", "fn", "conditional", "block"],
-    forbid: ["record", "merge", "field"],
+    forbid: ["record", "field"],
   },
   {
     id: "backend-signature",

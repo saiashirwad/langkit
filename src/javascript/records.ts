@@ -16,7 +16,5 @@ export const recordsJavaScript = <T>(descriptors: RecordDescriptors<T>) =>
         args.join(", ")
       })`;
     },
-    merge: (node, context) =>
-      `({ __proto__: null, ...(${context.expr(node.left)}), ...(${context.expr(node.right)}) })`,
     field: (node, context) => `(${context.expr(node.record)})[${JSON.stringify(node.name)}]`,
   });

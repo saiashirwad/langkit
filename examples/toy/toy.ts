@@ -217,7 +217,7 @@ const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
 const expect = (value: Value<Type>, type: Type): Check<void> =>
   same(value.type, type)
     ? pure(undefined)
-    : fail(`Expected ${show(type)}, found ${show(value.type)}`).at(value.span).atomic().recover();
+    : fail(`Expected ${show(type)}, found ${show(value.type)}`).at(value.span).recover();
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
   code.check(function*() {

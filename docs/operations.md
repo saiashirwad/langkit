@@ -81,9 +81,9 @@ Fresh inference allocation, instantiation, and generalization are checks compose
 | `if`      | condition               | Then body followed by else body, both structurally traversed; at runtime only the selected branch executes.                    |
 | `block`   | none                    | Its body is a nested scope.                                                                                                    |
 
-## Records and merge
+## Records
 
-Select `records<T>()` for `record`, `merge`, and `field` operations. A record evaluates its field values in source order, then its optional base; handlers preserve that order and evaluate each value once. The base is spread first and explicit fields override same-named base fields. `merge` evaluates left then right and right-side fields override left-side fields. A field selection evaluates its record expression once, then reads the named property. These operations describe runtime representation and order; they do not establish row typing, duplicate-field validity, or field existence. Those are language-owned checks.
+Select `records<T>()` for `record` and `field` operations. A record evaluates its field values in source order, then its optional base; handlers preserve that order and evaluate each value once. The base is spread first and explicit fields override same-named base fields. A field selection evaluates its record expression once, then reads the named property. These operations describe runtime representation and order; they do not establish row typing, duplicate-field validity, or field existence. Those are language-owned checks.
 
 The JavaScript representation is a null-prototype object. The core does not require every backend to use it.
 
