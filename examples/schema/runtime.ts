@@ -15,8 +15,14 @@ type Params = Readonly<Record<string, SQLInputValue | boolean>>;
 
 type Row = Record<string, SQLOutputValue>;
 
-/** The runtime's own view; each schema's projection declares the precise members. */
-type Database = Readonly<Record<string, unknown>>;
+/** What every schema's database offers; each projection extends it with its queries. */
+export interface Connection<Database> {
+  transaction<T>(body: (tx: Database) => T): T;
+  init(): void;
+  close(): void;
+}
+
+interface Database extends Connection<Database>, Readonly<Record<string, unknown>> {}
 
 /** A 31-bit FNV-1a hash of the DDL, stored in PRAGMA user_version. Never 0, which marks a fresh file. */
 export const fingerprint = (ddl: string): number => {

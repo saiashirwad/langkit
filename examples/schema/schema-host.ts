@@ -256,11 +256,8 @@ const method = (query: Query): readonly Piece[] => [
 ];
 
 const database = (queries: readonly Query[]): readonly Piece[] => [
-  "export interface Database {\n",
+  "export interface Database extends $Connection<Database> {\n",
   ...queries.flatMap(method),
-  "  transaction<T>(body: (tx: Database) => T): T;\n",
-  "  init(): void;\n",
-  "  close(): void;\n",
   "}\n",
   "export declare function open(path: string): Database;\n",
   `export declare const statements: { ${queries.map((query) => `readonly ${query.name.name}: string; `).join("")}};\n`,
@@ -277,6 +274,7 @@ export const host: HostLanguage = {
     const valueOf = valuesOf(schema);
     return {
       declarations: [
+        `import type { Connection as $Connection } from ${JSON.stringify(specifier(uri, runtime))};\n`,
         ...schema.enums.flatMap(enumeration),
         ...schema.models.flatMap((model) => [
           ...identity(model, valueOf),
