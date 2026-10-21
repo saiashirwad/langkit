@@ -230,6 +230,7 @@ try {
       offset: 7,
       type: "main: <A, B>(x: (x: A) => B) => <C>(x: (x: C) => A) => (x: C) => B",
       guest: "examples/hm/compose.hm",
+      binder: "fn(f)",
     },
     {
       consumer: "examples/typescript/schema.ts",
@@ -237,6 +238,7 @@ try {
       offset: 5,
       type: "interface User",
       guest: "examples/schema/simple.schema",
+      binder: "User = {",
     },
     {
       consumer: "examples/typescript/schema.ts",
@@ -244,6 +246,7 @@ try {
       offset: 5,
       type: "type Role = \"Admin\" | \"Member\"",
       guest: "examples/schema/simple.schema",
+      binder: "Role = Member",
     },
   ];
   for (const { consumer, anchor, offset, type, guest, binder } of hosted) {
