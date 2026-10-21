@@ -73,8 +73,4 @@ test("type profile requires actual metrics and generates distinct typed descript
   assert.match(source, /prove<Equal<typeof node, case9Node>>/);
   assert.match(source, /yield\* sequence/);
   assert.match(source, /createJudgments<Source, ResultType, Term>/);
-  assert.match(source, /staged.Ref<number>/);
-  assert.match(source, /staged.Ref<string>/);
-  assert.match(source, /staged.Ref<boolean>/);
-  assert.match(source, /tag: "case9"/);
 });

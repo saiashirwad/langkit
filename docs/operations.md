@@ -25,7 +25,7 @@ const handlers = defineJavaScriptBackend(dialect, {
 });
 ```
 
-`definePythonBackend` supplies the Python context. For another output format, `defineBackend<Context, Output>()` accepts a dialect and its complete handler table. Runtime composition still rejects handler identity collisions.
+For another output format, `defineBackend<Context, Output>()` accepts a dialect and its complete handler table. Runtime composition still rejects handler identity collisions.
 
 Selecting a descriptor freezes its configuration object. Traversal entries capture its callbacks and are frozen. Later changes to a mutable structural descriptor alias are rejected. Callback implementations still own the semantics and any data they capture.
 
@@ -94,48 +94,17 @@ Fresh inference allocation, instantiation, and generalization are checks compose
 
 Select `records<T>()` for `record`, `merge`, and `field` operations. A record evaluates its field values in source order, then its optional base; handlers preserve that order and evaluate each value once. The base is spread first and explicit fields override same-named base fields. `merge` evaluates left then right and right-side fields override left-side fields. A field selection evaluates its record expression once, then reads the named property. These operations describe runtime representation and order; they do not establish row typing, duplicate-field validity, or field existence. Those are language-owned checks.
 
-The JavaScript representation is a null-prototype object. Python represents records with native dictionaries; the core does not require every backend to use either representation.
+The JavaScript representation is a null-prototype object. The core does not require every backend to use it.
 
 ## Variants and matches
 
-Select `variants<T>()` for `variant` and `match`. A variant evaluates payload fields left to right. JavaScript represents it as a null-prototype object with `tag` and `fields` properties; Python uses a native dictionary with the same keys and a list of payload values. A match evaluates its scrutinee once, then enters the matching branch body; branch bindings pair with payload entries by position and are visible only inside that branch. An optional fallback can bind the whole variant. Without a fallback, emitted code raises an internal non-exhaustive-match error if no branch matches.
+Select `variants<T>()` for `variant` and `match`. A variant evaluates payload fields left to right. JavaScript represents it as a null-prototype object with `tag` and `fields` properties. A match evaluates its scrutinee once, then enters the matching branch body; branch bindings pair with payload entries by position and are visible only inside that branch. An optional fallback can bind the whole variant. Without a fallback, emitted code raises an internal non-exhaustive-match error if no branch matches.
 
 Duplicate match case tags are rejected by the match descriptor structural hook. The validity of individual tags, constructor arity, exhaustiveness, branch result types, and compatibility between variant and match remain language-owned invariants; the structural hook does not perform those checks.
 
 ## Printing
 
-Select `printing<T>()` for `print` and the backend's corresponding handler (`printingJavaScript` or `printingPython`). The operation has one child, evaluated exactly once before the print effect, and returns the backend's empty-record representation. JavaScript calls `console.log` and returns a null-prototype empty object; Python calls built-in `print` and returns `{}`. Printed formatting is host-native: Python uses Python's `print`/`str` representation and is not intended to mimic JavaScript `console.log` formatting. Output typing and the meaning/availability of the host print facility belong to the language/backend environment.
-
-## Folder operations and fold order
-
-Select `folders<T>()` for `field-order` and `record-fold`. `field-order` has no IR value children; its ordered string list is metadata stored in the node. `record-fold` visits its five value children in this exact order: explicit field order, metadata, record, initial accumulator, and step function. Its handlers use that order to traverse requested fields and apply the step function while carrying the accumulator. The generic folder descriptor does not know what metadata means, whether the order matches record fields, or what types the step function accepts; those are language-owned constraints.
-
-## Python backend
-
-The Python backend is exported from `langkit/python` with feature handler sets from `langkit/python/*`. Compose only the handlers for the descriptors/features selected by a builder. A typical composition uses `corePython(code.coreDescriptors)`, plus `recordsPython(recordFeature.descriptors)`, `variantsPython(variantFeature.descriptors)`, `printingPython(printingFeature.descriptors)`, or `foldersPython(folderFeature.descriptors)` as needed:
-
-```ts
-const emitter = createPythonEmitter(
-  corePython(code.coreDescriptors),
-  recordsPython(recordFeature.descriptors),
-  variantsPython(variantFeature.descriptors),
-  printingPython(printingFeature.descriptors),
-  foldersPython(folderFeature.descriptors),
-);
-const source = emitter.emit(program);
-```
-
-`emit(program)` validates and returns executable Python source; it does not run the program, launch Python, or print the result automatically. The generated module assigns its final value to `result`, so an embedding host can inspect it or explicitly print it. The current backend requires Python 3.8 or newer and uses native lambdas, assignment expressions, floats, math helpers, dictionaries/tag-field variants, and reduction-based record folds.
-
-The numeric core targets JavaScript-like floating-point behavior: numeric literals are emitted as Python floats (including explicit signed zero, NaN, and infinities), division handles zero divisors as IEEE-style NaN/infinity rather than Python's zero-division exception, and strict equality treats numeric values by numeric value (including signed zeros), booleans separately from numbers, strings by value, and other objects by identity. Python print formatting is nevertheless native Python formatting, not JavaScript console formatting.
-
-Only type-correct arithmetic and field access are promised. The backend does not provide a cross-language contract for invalid operand types, mismatched record/variant shapes, or malformed fold inputs; those cases depend on language-owned typing and host behavior and should not be used as portable programs.
-
-### Custom Python handlers
-
-A custom Python handler must be selected by the exact descriptor identity of its operation, not merely its kind. `definePythonHandler(descriptor, emit)` binds a handler directly to a descriptor; use `asDispatcherHandler` to include it in an emitter handler set. Alternatively, `definePythonBackend(defineDialect(feature.descriptors), handlers)` defines a complete typed handler table for a feature's named descriptors. The handler receives the IR node plus `PythonContext<T>` (`expr`, `block`, `name`, and nesting depth) and returns Python expression source. A custom handler must preserve child evaluation order and scope/effect semantics just like a built-in backend handler.
-
-`createPythonEmitter(...handlerSets)` composes sets; duplicate descriptor IDs are rejected, as are missing handlers when emission reaches a selected operation with no implementation. Built-in Python feature sets and custom handlers can be composed together. Identity collisions in `kind` do not dispatch a handler, and a handler created for a different descriptor instance cannot implement this program's operation.
+Select `printing<T>()` for `print` and the backend's corresponding handler (`printingJavaScript`). The operation has one child, evaluated exactly once before the print effect, and returns the backend's empty-record representation. JavaScript calls `console.log` and returns a null-prototype empty object. Output typing and the meaning/availability of the host print facility belong to the language/backend environment.
 
 ## Authoring custom operations
 
@@ -145,4 +114,4 @@ For JavaScript, define a handler tied to that exact descriptor, then include it 
 
 ## Composition example
 
-The [README examples](../README.md#compose-an-ir-and-backend) run one generator-authored program on JavaScript and Python, then show how to add a typed custom operation. Their type labels belong to the example language; the framework does not infer or validate their meaning.
+The [README examples](../README.md#compose-an-ir-and-backend) run one generator-authored program on JavaScript, then show how to add a typed custom operation. Their type labels belong to the example language; the framework does not infer or validate their meaning.

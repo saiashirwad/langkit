@@ -22,6 +22,7 @@ export function compile(config: string, extra: string[] = []) {
     "false",
     "--incremental",
     "false",
+    "--runExternalCode",
     ...extra,
   ], { cwd: root, encoding: "utf8", timeout: 120_000 });
   if (result.error) throw result.error;
@@ -29,7 +30,9 @@ export function compile(config: string, extra: string[] = []) {
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
-export function isolatedProject(): { directory: string; config: string; dispose: () => void; } {
+export function isolatedProject(
+  files: readonly string[] = ["consumer.ts"],
+): { directory: string; config: string; dispose: () => void; } {
   const directory = mkdtempSync(join(root, ".tooling-contract-"));
   try {
     cpSync(join(root, "src"), join(directory, "src"), { recursive: true });
@@ -41,7 +44,7 @@ export function isolatedProject(): { directory: string; config: string; dispose:
       JSON.stringify({
         extends: join(root, "tsconfig.json"),
         compilerOptions: { composite: false, incremental: false },
-        files: ["consumer.ts"],
+        files,
         include: [],
         exclude: [],
       }),
@@ -76,10 +79,10 @@ export function runContracts(): void {
         proof: "prove<Equal<typeof synthesized, Synthesized<AuthorType, AuthorTerm>>>();",
       },
       {
-        name: "stagedOutput",
-        original: "staged.prop(stagedProgram.result, \"total\")",
-        replacement: (type: string) => `undefined as ${type}`,
-        proof: "prove<Equal<typeof stagedOutput, staged.Expr<number>>>();",
+        name: "variable",
+        original: "const variable = yield* hm.fresh()",
+        replacement: (type: string) => `const variable = undefined as ${type}`,
+        proof: "prove<Equal<typeof variable, hm.Variable>>();",
       },
     ];
     for (const control of controls) {

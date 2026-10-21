@@ -87,7 +87,7 @@ Use `bindings.reference(name, span)` at a use site. Use `bindings.parameter(name
 
 Connect the optional `define` and `use` callbacks to your analysis collector. Binding identity remains separate from spelling and from each reference's instantiated type. For an IR language, bridge `declare` to the enclosing checked body's declaration collector.
 
-The implementations in [`examples/hm/hm.ts`](../examples/hm/hm.ts) and [`examples/rows/rows.ts`](../examples/rows/rows.ts) use these helpers with `langkit/ir/check`. They keep source spans on the resulting IR, not only on checking diagnostics.
+The implementation in [`examples/hm/hm.ts`](../examples/hm/hm.ts) uses these helpers with `langkit/ir/check`. They keep source spans on the resulting IR, not only on checking diagnostics.
 
 ## Publish checked artifacts and editor facts
 
@@ -97,20 +97,4 @@ Supply a `snapshot` that detaches mutable semantic types from the partial result
 
 The finalizer owns your language's unresolved obligations and escape checks. Recovered diagnostics prevent finalization. Diagnostics produced during finalization prevent artifact publication. Only a `checked` outcome has an artifact accepted by `compiler.emit`; `recovered` retains the partial result, and `failed` retains facts without a partial result.
 
-The artifact brand enforces this phase boundary. It does not make arbitrary compiler rules sound or freeze every nested value. Raw IR and [host-typed staging](staging.md) remain usable without a source-language checking proof.
-
-## Run the shared-syntax language
-
-Run all three programs against the same parser:
-
-```sh
-npm run mini -- hm 'let id = fn x => x; (id(1), id(true))'
-npm run mini -- hm 'let getX = fn r => r.x; (getX({ x: 1, y: true }), getX({ x: true }))'
-npm run mini -- higher-rank '(fn (f: forall a. a -> a) => (f(1), f(true)))(fn x => x)'
-```
-
-Each program infers `{ _1: number, _2: boolean }` and executes to `{ _1: 1, _2: true }`. Pairs are records with the fixed labels `_1` and `_2`.
-
-HM mode rejects the `forall` parameter. Higher-rank mode requires explicit polymorphic annotations and uses the supported lexical-level predicative solver. Its limits are in [Inference theory contracts](inference-theories.md); it is not an implementation or proof of the Dunfield–Krishnaswami ordered-context calculus.
-
-The complete implementation is in [`examples/elaboration`](../examples/elaboration). `tests/mini.test.ts` exercises these source-to-execution paths, rejection, recovery, and editor facts.
+The artifact brand enforces this phase boundary. It does not make arbitrary compiler rules sound or freeze every nested value. Raw IR remains usable without a source-language checking proof.

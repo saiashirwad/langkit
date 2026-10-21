@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { type Check, check, choice, fail, pure, run } from "../src/check.ts";
 import * as rank from "../src/types/higher-rank.ts";
 import * as hm from "../src/types/hm.ts";
-import * as rows from "../src/types/rows.ts";
 
 const value = <A>(operation: Check<A>): A => {
   const result = run(operation);
@@ -85,101 +84,7 @@ const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
 };
 
 common("HM", hm);
-common<rows.Type, rows.Variable, rows.Scheme>("Rows", rows);
 common<rank.Type, rank.Variable, rank.Scheme>("Higher rank", rank);
-
-test("Rows: ordinary and row freshening share within one instance and copy lacks", () => {
-  value(check(function*() {
-    const a = yield* rows.fresh();
-    const tail = yield* rows.freshRow(["x"]);
-    const original = rows.record(rows.row(new Map([["x", a]]), tail));
-    const scheme = yield* rows.generalize(rows.fn(original, original), []);
-    const instantiate = rows.instantiate(scheme);
-    const first = yield* instantiate;
-    const second = yield* instantiate;
-    assert.equal(first.kind, "function");
-    assert.equal(second.kind, "function");
-    if (first.kind !== "function" || second.kind !== "function") throw new Error("Expected function");
-    assert.equal(first.param.kind, "record");
-    assert.equal(first.result.kind, "record");
-    assert.equal(second.param.kind, "record");
-    if (first.param.kind !== "record" || first.result.kind !== "record" || second.param.kind !== "record") {
-      throw new Error("Expected record");
-    }
-    assert.equal(first.param.row.tail, first.result.row.tail);
-    assert.equal(first.param.row.fields.get("x"), first.result.row.fields.get("x"));
-    assert.notEqual(first.param.row.tail, second.param.row.tail);
-    assert.notEqual(first.param.row.tail?.lacks, tail.lacks);
-    assert.deepEqual(first.param.row.tail?.lacks, new Set(["x"]));
-    yield* rows.exclude(rows.row(new Map(), first.param.row.tail), ["y"]);
-    assert.deepEqual(tail.lacks, new Set(["x"]));
-    assert.deepEqual(second.param.row.tail?.lacks, new Set(["x"]));
-  }));
-});
-
-test("Rows: compound failure restores links and propagated absence constraints", () => {
-  const result = run(check(function*() {
-    const left = yield* rows.freshRow(["x"]);
-    const right = yield* rows.freshRow();
-    const a = rows.record(rows.row(new Map(), left));
-    const b = rows.record(rows.row(new Map([["y", rows.number]]), right));
-    yield* rows.unify(rows.fn(a, rows.number), rows.fn(b, rows.boolean)).recover();
-    assert.equal(left.instance, undefined);
-    assert.equal(right.instance, undefined);
-    assert.deepEqual(left.lacks, new Set(["x"]));
-    assert.deepEqual(right.lacks, new Set());
-  }));
-  assert.equal(result.success, false);
-});
-
-for (const expected of [rows.number, rows.boolean]) {
-  test(`Rows: reflatten newly exposed common fields (${rows.show(expected)})`, () => {
-    const result = run(check(function*() {
-      const r = yield* rows.freshRow();
-      const s = yield* rows.freshRow(["x", "y"]);
-      const left = rows.record(rows.row(
-        new Map([
-          ["x", rows.record(rows.row(new Map(), r))],
-          ["y", expected],
-        ]),
-        s,
-      ));
-      const right = rows.record(rows.row(
-        new Map([
-          ["x", rows.record(rows.row(new Map([["y", rows.boolean]]), s))],
-        ]),
-        r,
-      ));
-      yield* rows.unify(left, right);
-    }));
-    assert.equal(result.success, expected === rows.boolean);
-    if (!result.success) assert.match(result.errors[0].message, /Cannot unify/);
-  });
-}
-
-test("Rows: occurs checks cross record fields and tails", () => {
-  const ordinary = value(rows.fresh());
-  assert.equal(run(rows.unify(ordinary, rows.record(rows.row(new Map([["x", ordinary]]))))).success, false);
-  const tail = value(rows.freshRow());
-  const recursive = rows.record(rows.row(new Map(), tail));
-  assert.equal(run(rows.unify(recursive, rows.record(rows.row(new Map([["self", recursive]]))))).success, false);
-});
-
-test("Rows: pure row construction acquires unique-label constraints when solved or generalized", () => {
-  value(check(function*() {
-    const tail = yield* rows.freshRow();
-    const record = rows.record(rows.row(new Map([["x", rows.number]]), tail));
-    yield* rows.unify(yield* rows.fresh(), record);
-    assert.deepEqual(tail.lacks, new Set(["x"]));
-    assert.equal(
-      run(rows.unifyRows(rows.row(new Map(), tail), rows.row(new Map([["x", rows.number]])))).success,
-      false,
-    );
-    const other = yield* rows.freshRow();
-    yield* rows.generalize(rows.record(rows.row(new Map([["y", rows.number]]), other)), []);
-    assert.deepEqual(other.lacks, new Set(["y"]));
-  }));
-});
 
 test("Higher rank: pure row construction acquires journaled unique-label constraints", () => {
   value(check(function*() {

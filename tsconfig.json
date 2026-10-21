@@ -11,6 +11,9 @@
     "allowImportingTsExtensions": true,
     "noEmit": true
   },
+  "contentMappers": [
+    { "package": "langkit-content-mapper", "extensions": [".toy", ".hm", ".schema", ".advanced"] }
+  ],
   "include": [
     "src",
     "examples",

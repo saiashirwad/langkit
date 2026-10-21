@@ -9,9 +9,7 @@ for (
   const document of [
     "README.md",
     "docs/inference-theories.md",
-    "docs/syntax.md",
     "docs/compiler-authoring.md",
-    "docs/staging.md",
   ]
 ) {
   const source = readFileSync(join(root, document), "utf8");

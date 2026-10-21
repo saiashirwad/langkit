@@ -5,16 +5,14 @@ import type { JavaScriptContext } from "langkit/javascript";
 import { defineJavaScriptBackend } from "langkit/javascript/operations";
 import { defineDialect, type DescriptorNode } from "langkit/operations/dialect";
 import { records } from "langkit/operations/records";
-import * as staged from "langkit/staging";
 import * as rank from "langkit/types/higher-rank";
 import * as hm from "langkit/types/hm";
-import * as rows from "langkit/types/rows";
 
 export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 export type IsAny<T> = 0 extends (1 & T) ? true : false;
 export type IsNever<T> = [T] extends [never] ? true : false;
 export const prove = <T extends true>(): T => true as T;
-export type Type = rows.Type;
+export type Type = hm.Type;
 export type RecordField = { readonly name: string; readonly value: Value<Type>; };
 
 const language = create<Type>();
@@ -58,17 +56,23 @@ export const inferred = check(function*() {
 });
 prove<Equal<typeof inferred, Check<["label", 42, true]>>>();
 
-export const theoryConsumer: Check<readonly [hm.Variable, rows.RowVariable, rank.Variable]> = check(function*() {
+export const theoryConsumer: Check<readonly [hm.Variable, rank.Variable]> = check(function*() {
   const hmVariable = yield* hm.fresh();
   prove<Equal<typeof hmVariable, hm.Variable>>();
-  const rowVariable = yield* rows.freshRow(["label"]);
-  prove<Equal<typeof rowVariable, rows.RowVariable>>();
   const rankVariable = yield* rank.fresh(1);
   prove<Equal<typeof rankVariable, rank.Variable>>();
-  return [hmVariable, rowVariable, rankVariable] as const;
+  return [hmVariable, rankVariable] as const;
 });
 
-export const namedValue: Value<Type> = language.literal(rows.number, 42);
+export const freshVariable = check(function*() {
+  const variable = yield* hm.fresh();
+  prove<Equal<typeof variable, hm.Variable>>();
+  prove<Equal<IsAny<typeof variable>, false>>();
+  prove<Equal<IsNever<typeof variable>, false>>();
+  return variable;
+});
+
+export const namedValue: Value<Type> = language.literal(hm.number, 42);
 export const namedCheck: Check<Value<Type>> = pure(namedValue);
 
 type AuthorNode = { readonly kind: "number"; readonly value: number; } | {
@@ -76,7 +80,7 @@ type AuthorNode = { readonly kind: "number"; readonly value: number; } | {
   readonly value: string;
 };
 type AuthorType = "number" | "text";
-type AuthorTerm = staged.Expr<number> | staged.Expr<string>;
+type AuthorTerm = number | string;
 export const judgments = createJudgments<AuthorNode, AuthorType, AuthorTerm>({
   number: {
     mode: "synth",
@@ -84,14 +88,14 @@ export const judgments = createJudgments<AuthorNode, AuthorType, AuthorTerm>({
       prove<Equal<typeof numberRuleNode, Extract<AuthorNode, { kind: "number"; }>>>();
       prove<Equal<IsAny<typeof numberRuleNode>, false>>();
       prove<Equal<IsNever<typeof numberRuleNode>, false>>();
-      return { type: "number", term: staged.number(numberRuleNode.value) };
+      return { type: "number", term: numberRuleNode.value };
     },
     check: "fromSynth",
   },
   text: {
     mode: "synth",
     *synth(node) {
-      return { type: "text", term: staged.string(node.value) };
+      return { type: "text", term: node.value };
     },
     check: "fromSynth",
   },
@@ -103,39 +107,3 @@ export const authorCheck = check(function*() {
   prove<Equal<IsNever<typeof synthesized>, false>>();
   return synthesized;
 });
-
-export const stagedArrow = staged.arrow({
-  params: [staged.param("amount", staged.Number), staged.param("label", staged.String)],
-  *body([amount, label]) {
-    prove<Equal<typeof amount, staged.Ref<number>>>();
-    prove<Equal<IsAny<typeof amount>, false>>();
-    prove<Equal<IsNever<typeof amount>, false>>();
-    const stagedRecord = staged.object({ total: staged.binary("+", amount, staged.number(1)), label });
-    prove<Equal<typeof stagedRecord, staged.Expr<{ total: number; label: string; }>>>();
-    prove<Equal<IsAny<typeof stagedRecord>, false>>();
-    prove<Equal<IsNever<typeof stagedRecord>, false>>();
-    return stagedRecord;
-  },
-});
-prove<
-  Equal<staged.Denotes<typeof stagedArrow>, (args_0: number, args_1: string) => { total: number; label: string; }>
->();
-prove<Equal<IsAny<typeof stagedArrow>, false>>();
-prove<Equal<IsNever<typeof stagedArrow>, false>>();
-export const stagedProgram = staged.build(function*() {
-  const resultHandle = yield* staged.const(
-    "result",
-    staged.call(stagedArrow, staged.number(41), staged.string("ready")),
-  );
-  prove<Equal<typeof resultHandle, staged.Ref<{ total: number; label: string; }>>>();
-  prove<Equal<IsAny<typeof resultHandle>, false>>();
-  prove<Equal<IsNever<typeof resultHandle>, false>>();
-  return resultHandle;
-});
-prove<Equal<typeof stagedProgram, staged.Program<{ total: number; label: string; }>>>();
-prove<Equal<IsAny<typeof stagedProgram>, false>>();
-prove<Equal<IsNever<typeof stagedProgram>, false>>();
-export const stagedOutput = staged.prop(stagedProgram.result, "total");
-prove<Equal<typeof stagedOutput, staged.Expr<number>>>();
-prove<Equal<IsAny<typeof stagedOutput>, false>>();
-prove<Equal<IsNever<typeof stagedOutput>, false>>();

@@ -7,13 +7,8 @@ import { createJavaScriptDispatcher, defineJavaScriptBackend } from "../src/java
 import { recordsJavaScript } from "../src/javascript/records.ts";
 import { defineOperation, traversalOf } from "../src/operations/descriptor.ts";
 import { composeDialects, defineBackend, defineDialect } from "../src/operations/dialect.ts";
-import { folders } from "../src/operations/folders.ts";
 import { records } from "../src/operations/records.ts";
 import { variants } from "../src/operations/variants.ts";
-import { emit as emitPython } from "../src/python.ts";
-import { corePython } from "../src/python/core.ts";
-import { createPythonDispatcher, definePythonBackend } from "../src/python/operations.ts";
-import { recordsPython } from "../src/python/records.ts";
 
 const custom = () =>
   defineOperation<string, { kind: "shared"; count: number; }>("shared", {
@@ -32,7 +27,6 @@ test("backend tables require own callable handlers even for prototype names", ()
     for (
       const backend of [
         (table: Table) => defineJavaScriptBackend(dialect, table),
-        (table: Table) => definePythonBackend(dialect, table),
         (table: Table) => defineBackend<typeof context>()(dialect, table),
       ]
     ) {
@@ -83,23 +77,13 @@ test("backend tables dispatch by identity even when kinds collide and keys diffe
     one: (node) => `first:${node.count}`,
     two: (node) => `second:${node.count}`,
   });
-  const py = definePythonBackend(dialect, {
-    one: (node) => `first:${node.count}`,
-    two: (node) => `second:${node.count}`,
-  });
   const jsDispatch = createJavaScriptDispatcher(...js);
-  const pyDispatch = createPythonDispatcher(...py);
   const context = { depth: 0, expr: () => "", block: () => "", name: () => "" };
   assert.equal(
     jsDispatch(first.id, { kind: "shared", count: 1 } as ReturnType<typeof first.make>["node"], context),
     "first:1",
   );
-  assert.equal(
-    pyDispatch(second.id, { kind: "shared", count: 2 } as ReturnType<typeof second.make>["node"], context),
-    "second:2",
-  );
   assert.throws(() => jsDispatch(custom().id, { kind: "shared" }, context), /Missing JavaScript handler/);
-  assert.throws(() => pyDispatch(custom().id, { kind: "shared" }, context), /Missing Python handler/);
   assert.throws(() => createJavaScriptDispatcher(...js, ...js), /Duplicate JavaScript handler/);
 });
 
@@ -121,10 +105,6 @@ test("builtin backend tables use builder and feature descriptor instances", () =
       }`,
     )(),
     42,
-  );
-  assert.match(
-    emitPython(program, [...corePython(builder.coreDescriptors), ...recordsPython(feature.descriptors)]),
-    /42\.0/,
   );
   assert.throws(
     () => emitJavaScript(program, coreJavaScript(create<string>().coreDescriptors)),
@@ -177,8 +157,7 @@ test("standalone traversals capture callbacks and publish immutable entries", ()
 test("named feature records derive registry order and reject composition collisions", () => {
   const recordFeature = records<string>();
   const variantFeature = variants<string>();
-  const folderFeature = folders<string>();
-  for (const feature of [recordFeature, variantFeature, folderFeature]) {
+  for (const feature of [recordFeature, variantFeature]) {
     assert.deepEqual(
       feature.operations.map((operation) => operation.id),
       Object.values(feature.descriptors).map((descriptor) => descriptor.id),

@@ -10,11 +10,11 @@ npm run typecheck
 npm run fmt:check
 ```
 
-The runtime suite includes representative source programs for the example languages and focused checking, scope, solver, source-analysis, and emission regressions. Duplicate legacy syntax and constructor assertions are not completion requirements. Python execution tests require `python3`.
+The runtime suite includes representative source programs for the example languages and focused checking, scope, solver, source-analysis, and emission regressions. Duplicate legacy syntax and constructor assertions are not completion requirements.
 
 TypeScript compiles source, examples, tools, and compile-time fixtures under the same strict configuration. Positive proofs assert exact types and reject `any` and `never`. `@ts-expect-error` marks calls that must remain invalid, including omitted backend handlers and incorrect callback nodes.
 
-`tests/documentation.test.ts` compiles and executes the complete TypeScript examples in the README and the inference, syntax, compiler-authoring, and staging guides. The examples run in temporary copies of the source package.
+`tests/documentation.test.ts` compiles and executes the complete TypeScript examples in the README and the inference and compiler-authoring guides. The examples run in temporary copies of the source package.
 
 `npm run fmt` formats code and documentation with the pinned `dprint` and plugin versions. Its configuration excludes `future.md` and dependency directories. `npm run fmt:check` checks the same files without changing them.
 
@@ -64,14 +64,6 @@ An optional JSON file retains raw diagnostics, compiler version, configuration, 
 ```sh
 npm run type:profile -- --samples 3 --output /path/to/profile.json
 ```
-
-## Self-contained staging
-
-```sh
-npm run staging:integration
-```
-
-The gate builds, lowers, emits, and executes local staged programs. It observes lexical capture, order, lazy branches, arbitrary string fields, deep construction, and a direct host-typed function. It does not load TS Macros or inspect a sibling repository.
 
 ## Verified integration
 

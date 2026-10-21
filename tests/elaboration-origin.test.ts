@@ -3,7 +3,6 @@ import type { Program, Value } from "langkit/ir";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { compile as compileHM } from "../examples/hm/hm.ts";
-import { compile as compileRows } from "../examples/rows/rows.ts";
 
 function initializers<T>(program: Program<T>): readonly Value<T>[] {
   const result: Value<T>[] = [];
@@ -39,4 +38,3 @@ function checkOrigins<T>(name: string, compile: (source: string) => Result<{ rea
 }
 
 checkOrigins("HM", compileHM);
-checkOrigins("Rows", compileRows);

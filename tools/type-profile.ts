@@ -37,12 +37,11 @@ export function scalingConsumer(count: number): string {
   const cases = Array.from({ length: count }, (_, index) => `case${index}`);
   return [
     "import { check, createJudgments, pure, sequence, type Synthesized } from \"langkit\";",
-    "import * as staged from \"langkit/staging\";",
     "import type { Value } from \"langkit/ir\";",
     "import { defineOperation } from \"langkit/operations/descriptor\";",
     "import { defineDialect } from \"langkit/operations/dialect\";",
     "import { defineJavaScriptBackend } from \"langkit/javascript/operations\";",
-    "import type { Type } from \"langkit/types/rows\";",
+    "import type { Type } from \"langkit/types/hm\";",
     "type Field = { readonly name: string; readonly value: Value<Type> };",
     "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;",
     "const prove = <T extends true>(): T => true as T;",
@@ -73,15 +72,15 @@ export function scalingConsumer(count: number): string {
     ),
     `type Source = ${cases.map((name) => `${name}Source`).join(" | ")};`,
     "type ResultType = \"number\" | \"text\" | \"record\";",
-    "type Term = staged.Expr<number> | staged.Expr<string> | staged.Expr<{ total: number; label: string }>;",
+    "type Term = number | string | { total: number; label: string };",
     "const judgments = createJudgments<Source, ResultType, Term>({",
     ...cases.map((name, index) =>
       `  ${name}: { mode: "synth", *synth(node) { prove<Equal<typeof node, ${name}Source>>(); return ${
         index % 3 === 0
-          ? "{ type: \"number\", term: staged.number(node.value) }"
+          ? "{ type: \"number\", term: node.value }"
           : index % 3 === 1
-          ? "{ type: \"text\", term: staged.string(node.value) }"
-          : "{ type: \"record\", term: staged.object({ total: staged.number(node.amount), label: staged.string(node.label) }) }"
+          ? "{ type: \"text\", term: node.value }"
+          : "{ type: \"record\", term: { total: node.amount, label: node.label } }"
       }; }, check: "fromSynth" },`
     ),
     "}, { modes: { enter: (expected, body) => body(expected), accept: (actual) => pure(actual.term) } });",
@@ -97,20 +96,6 @@ export function scalingConsumer(count: number): string {
     ),
     `  return [${cases.map((name) => `${name}Result`).join(", ")}] as const;`,
     "});",
-    ...cases.flatMap((name, index) => {
-      const hostType = ["number", "string", "boolean"][index % 3]!;
-      const witness = ["Number", "String", "Boolean"][index % 3]!;
-      const input = [
-        `staged.number(${index})`,
-        `staged.string("${name}")`,
-        `staged.boolean(${index % 2 === 0})`,
-      ][index % 3]!;
-      return [
-        `const ${name}Arrow = staged.arrow({ params: [staged.param("value", staged.${witness})], *body([value]) { prove<Equal<typeof value, staged.Ref<${hostType}>>>(); return staged.object({ value, tag: staged.string("${name}") }); } });`,
-        `export const ${name}Program = staged.build(function* () { const result = yield* staged.const("${name}", staged.call(${name}Arrow, ${input})); prove<Equal<typeof result, staged.Ref<{ value: ${hostType}; tag: "${name}" }>>>(); return result; });`,
-        `prove<Equal<typeof ${name}Program, staged.Program<{ value: ${hostType}; tag: "${name}" }>>>();`,
-      ];
-    }),
   ].join("\n");
 }
 
@@ -174,7 +159,7 @@ export function profile(): void {
       const source = size === 0 ? undefined : scalingConsumer(size);
       if (source !== undefined) writeFileSync(join(project.directory, "consumer.ts"), source);
       const workload: typeof report.workloads[number] = {
-        name: size === 0 ? "main" : `${size} descriptors + heterogeneous judgment rules + staged programs`,
+        name: size === 0 ? "main" : `${size} descriptors + heterogeneous judgment rules`,
         measurements: [],
         ...(source === undefined ? {} : { consumerHash: createHash("sha256").update(source).digest("hex") }),
       };

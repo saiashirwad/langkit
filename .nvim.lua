@@ -7,16 +7,12 @@ vim.filetype.add({
     [vim.pesc(root) .. "/.*%.toy"] = "toy",
     [vim.pesc(root) .. "/.*%.tpy"] = "toy",
     [vim.pesc(root) .. "/.*%.hm"] = "hm",
-    [vim.pesc(root) .. "/.*%.rows"] = "rows",
     [vim.pesc(root) .. "/.*%.advanced"] = "advanced",
-    [vim.pesc(root) .. "/.*%.strict"] = "strict",
     [vim.pesc(root) .. "/.*%.schema"] = "schema",
-    [vim.pesc(root) .. "/.*%.ur"] = "ur",
-    [vim.pesc(root) .. "/.*%.shapes"] = "shapes",
   },
 })
 
-for _, language in ipairs({ "toy", "hm", "rows", "advanced", "strict", "schema", "ur", "shapes" }) do
+for _, language in ipairs({ "toy", "hm", "advanced", "schema" }) do
   vim.lsp.config(language, {
     cmd = { "node", root .. "/examples/" .. language .. "/" .. language .. "-lsp.ts", "--stdio" },
     filetypes = { language },
@@ -29,3 +25,11 @@ for _, language in ipairs({ "toy", "hm", "rows", "advanced", "strict", "schema",
   })
   vim.lsp.enable(language)
 end
+
+vim.lsp.config("tsc", {
+  before_init = function(params, config)
+    if config.root_dir == root then
+      params.initializationOptions = vim.tbl_extend("force", params.initializationOptions or {}, { runExternalCode = true })
+    end
+  end,
+})
