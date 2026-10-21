@@ -15,15 +15,7 @@ pnpm test
 
 `createJudgments` dispatches exhaustive synthesis and checking rules over your own AST. `createBindings` coordinates declaration identity, lexical scopes, generalization, and reference instantiation. `createCompiler` publishes an emit-ready artifact only after clean finalization; failed or recovered work still exposes editor facts.
 
-[Build a compiler with typed judgments](docs/compiler-authoring.md) has a complete caller example. The shared-syntax language runs polymorphic identity, row-polymorphic projection, and an explicitly annotated higher-rank parameter:
-
-```sh
-npm run mini -- hm 'let id = fn x => x; (id(1), id(true))'
-npm run mini -- hm 'let getX = fn r => r.x; (getX({ x: 1, y: true }), getX({ x: true }))'
-npm run mini -- higher-rank '(fn (f: forall a. a -> a) => (f(1), f(true)))(fn x => x)'
-```
-
-For host-known types, [host-typed staging](docs/staging.md) provides `Expr<A>`, typed functions and calls, declarations, and a local JavaScript emitter. Dynamic IR lowering uses `langkit/adapters/staging` and returns `Program<unknown>`. Both paths are self-contained.
+[Build a compiler with typed judgments](docs/compiler-authoring.md) has a complete caller example.
 
 ## Compose an IR and backend
 
@@ -148,8 +140,7 @@ Inference computations allocate fresh variables, instantiate, and generalize ins
 
 - **Parsing:** `langkit/parse` re-exports parserator parsers, generators, precedence, cuts, and source locations.
 - **Checking and diagnostics:** `langkit` provides synchronous `Check` computations, checkpointable run-local `State`, readonly scoped environments, atomic/attempt/choice rollback, recoverable independent diagnostics, and structured nonempty `Result.errors`. `Check.inDocument(uri)` optionally attaches a document identity to failures for module routing while preserving nested source origins; human-readable `context` labels are not machine source locations.
-- **Inference:** `langkit/types/hm`, `langkit/types/rows`, and `langkit/types/higher-rank` provide reusable theories. `langkit/inference` provides journaled mutation for other theories. [Inference theory contracts](docs/inference-theories.md) define the grammars and limits.
-- **Syntax:** `langkit/syntax` derives recursive AST types, constructors, immutable mappers, and explicit binder-aware traversal. It does not define a parser or typing rules. [Syntax declarations](docs/syntax.md) describe the optional schema.
+- **Inference:** `langkit/types/hm` and `langkit/types/higher-rank` provide reusable theories. `langkit/inference` provides journaled mutation for other theories. [Inference theory contracts](docs/inference-theories.md) define the grammars and limits.
 - **Modules:** `langkit/modules` provides a local-file module graph/loader for languages that want imports; it is optional. Analyses can include transitive dependency URIs and source snapshots.
 - **Analysis and editor support:** `langkit/analysis` optionally collects UTF-16 source ranges for types, definitions, references, lexical tokens, and diagnostics. `langkit/lsp` serves language-provided analysis over LSP, including dependency-aware re-analysis when imported documents change. Diagnostics retain structured source locations and related information for imported-source errors.
 - **JavaScript:** `langkit/javascript` validates and emits an expression using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder. Emission is not a source-map generator. Executing the emitted code is the consumer's responsibility: a VM timeout is not a security sandbox for untrusted code.
@@ -162,28 +153,20 @@ The core IR's scope validation and the language's type checker have different re
 
 These are independent examples, not built-in modes of a single language. Their guides document syntax, limits, and commands.
 
-| Guide                                   | Demonstrated capabilities                                                                     |
-| --------------------------------------- | --------------------------------------------------------------------------------------------- |
-| [Toy](examples/toy/README.md)           | Annotated functions, closures, checking, and core expression IR.                              |
-| [HM](examples/hm/README.md)             | Hindley–Milner inference.                                                                     |
-| [Rows](examples/rows/README.md)         | HM with records, row polymorphism, strings, and local imports.                                |
-| [Advanced](examples/advanced/README.md) | Data types, pattern matching, recursion, and higher-rank polymorphism.                        |
-| [Strict](examples/strict/README.md)     | Strict evaluation, algebraic data, classes, instances, and higher-kinded types.               |
-| [Ur core](examples/ur/README.md)        | Explicit type/kind applications, disjoint records, and ordered folder traversal.              |
-| [Schema](examples/schema/README.md)     | A separate checked schema-to-SQL compiler; it does not target expression IR.                  |
-| [Shapes](examples/shapes/README.md)     | Typed Lisp, unique-label row inference, structural requirements, updates, and checked macros. |
+| Guide                                   | Demonstrated capabilities                                                    |
+| --------------------------------------- | ---------------------------------------------------------------------------- |
+| [Toy](examples/toy/README.md)           | Annotated functions, closures, checking, and core expression IR.             |
+| [HM](examples/hm/README.md)             | Hindley–Milner inference.                                                    |
+| [Advanced](examples/advanced/README.md) | Data types, pattern matching, recursion, and higher-rank polymorphism.       |
+| [Schema](examples/schema/README.md)     | A separate checked schema-to-SQL compiler; it does not target expression IR. |
 
-All eight have CLI and stdio language-server commands:
+All four have CLI and stdio language-server commands:
 
 | Language | CLI                    | Language server     | Neovim file extensions |
 | -------- | ---------------------- | ------------------- | ---------------------- |
 | Toy      | `pnpm toy [file]`      | `pnpm toy:lsp`      | `.toy`, `.tpy`         |
 | HM       | `pnpm hm [file]`       | `pnpm hm:lsp`       | `.hm`                  |
-| Rows     | `pnpm rows [file]`     | `pnpm rows:lsp`     | `.rows`                |
 | Advanced | `pnpm advanced [file]` | `pnpm advanced:lsp` | `.advanced`            |
-| Strict   | `pnpm strict [file]`   | `pnpm strict:lsp`   | `.strict`              |
-| Ur       | `pnpm ur [file]`       | `pnpm ur:lsp`       | `.ur`                  |
 | Schema   | `pnpm schema [file]`   | `pnpm schema:lsp`   | `.schema`              |
-| Shapes   | `pnpm shapes [file]`   | `pnpm shapes:lsp`   | `.shapes`              |
 
-The project-local [`.nvim.lua`](.nvim.lua) registers all eight filetypes, LSP commands, and root selection; Neovim must be configured to trust/load project-local `exrc` files. Run each command from the repository root. Detailed examples and language-specific limits are in each linked guide.
+The project-local [`.nvim.lua`](.nvim.lua) registers all four filetypes, LSP commands, and root selection; Neovim must be configured to trust/load project-local `exrc` files. Run each command from the repository root. Detailed examples and language-specific limits are in each linked guide.

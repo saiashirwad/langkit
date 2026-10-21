@@ -1,6 +1,6 @@
 # Advanced: higher-rank polymorphism and data types
 
-Advanced builds on HM and Rows with nominal algebraic data types, pattern matching, recursive functions, and annotated higher-rank polymorphism. It demonstrates bidirectional checking, not a production language. [`advanced-syntax.ts`](./advanced-syntax.ts) owns parsing. [`langkit/types/higher-rank`](../../src/types/higher-rank.ts) owns the reusable level-based solver. [`advanced.ts`](./advanced.ts) owns language rules, analysis, compilation, and execution. [`stdlib.advanced`](./stdlib.advanced) defines source datatypes and functions.
+Advanced builds on HM with nominal algebraic data types, pattern matching, recursive functions, and annotated higher-rank polymorphism. It demonstrates bidirectional checking, not a production language. [`advanced-syntax.ts`](./advanced-syntax.ts) owns parsing. [`langkit/types/higher-rank`](../../src/types/higher-rank.ts) owns the reusable level-based solver. [`advanced.ts`](./advanced.ts) owns language rules, analysis, compilation, and execution. [`stdlib.advanced`](./stdlib.advanced) defines source datatypes and functions.
 
 ## Run it
 
