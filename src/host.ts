@@ -63,6 +63,11 @@ export const esm = (expression: string, exports: readonly string[]): string =>
   [
     `const module = ${expression.trim()};`,
     "export default module;",
-    ...(exports.length ? [`export const { ${exports.join(", ")} } = module;`] : []),
+    ...(exports.length
+      ? [
+        `const { ${exports.map((name, index) => `${JSON.stringify(name)}: $${index}`).join(", ")} } = module;`,
+        `export { ${exports.map((name, index) => `$${index} as ${JSON.stringify(name)}`).join(", ")} };`,
+      ]
+      : []),
     "",
   ].join("\n");
