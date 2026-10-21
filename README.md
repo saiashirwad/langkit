@@ -96,7 +96,7 @@ Point TypeScript at the mapper with a package that declares it, and list your ex
 
 Content mappers run external code, so `tsc` and the editor need `--runExternalCode`. `tsc` doesn't emit JavaScript for mapped files, which is why the loader exists: run with `node --import ./register.ts`.
 
-When a guest file imports another one, project the import as real TypeScript. tsgo then rechecks dependents when a dependency changes, even before it's saved. The content mapper also watches every guest file, so a save re-transforms the project. [Advanced](examples/advanced/README.md) does both.
+When a guest file imports another one, project the import as real TypeScript. tsgo then rechecks dependents when a dependency changes, even before it's saved. The content mapper also watches every guest file, so a save re-transforms the project. [Advanced](examples/advanced) does both.
 
 ## The pieces
 
@@ -109,11 +109,11 @@ When a guest file imports another one, project the import as real TypeScript. ts
 
 ## Examples
 
-| Language                                | Shows                                                                      |
-| --------------------------------------- | -------------------------------------------------------------------------- |
-| [Schema](examples/schema/README.md)     | SQLite schemas and queries, with a runtime that TypeScript imports.        |
-| [Advanced](examples/advanced/README.md) | Data types, pattern matching, higher-rank types, and imports across files. |
-| [HM](examples/hm/README.md)             | Hindley–Milner inference.                                                  |
-| [Toy](examples/toy/README.md)           | The smallest end-to-end language.                                          |
+| Language                      | Shows                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------- |
+| [Schema](examples/schema)     | SQLite schemas and queries, with a runtime that TypeScript imports.        |
+| [Advanced](examples/advanced) | Data types, pattern matching, higher-rank types, and imports across files. |
+| [HM](examples/hm)             | Hindley–Milner inference.                                                  |
+| [Toy](examples/toy)           | The smallest end-to-end language.                                          |
 
 [`examples/typescript`](examples/typescript) imports all four. Each language also has a CLI (`pnpm toy [file]`) and a language server (`pnpm toy:lsp`). [`.nvim.lua`](.nvim.lua) wires them into Neovim.
