@@ -746,7 +746,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   };
 };
 
-export const checkModule = (source: string, options: ModuleOptions = {}): Result<Checked> => {
+export const checkSource = (source: string, options: ModuleOptions = {}): Result<Checked> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   if (!graph.success) return graph;
   let root: Root | undefined;
@@ -765,7 +765,7 @@ export const checkModule = (source: string, options: ModuleOptions = {}): Result
 export const emit = ({ body }: Checked): string => javascript.emit(code.program(body));
 
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
-  const checked = checkModule(source, options);
+  const checked = checkSource(source, options);
   if (!checked.success) return checked;
   const ir = code.program(checked.value.body);
   return { success: true, value: { ...checked.value, ir, javascript: javascript.emit(ir) } };
