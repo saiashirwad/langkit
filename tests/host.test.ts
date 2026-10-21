@@ -5,11 +5,14 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { compile, fragment, isolatedProject, root } from "../tools/type-contracts.ts";
 
+type Misuse = { readonly original: string; readonly replacement: string; readonly code: `TS${number}`; };
+
 type HostCase = {
   readonly language: string;
   readonly consumer: string;
   readonly output: string;
-  readonly misuse: { readonly original: string; readonly replacement: string; readonly code: `TS${number}`; };
+  readonly misuse: Misuse;
+  readonly controls?: readonly Misuse[];
   readonly guestError: {
     readonly file: string;
     readonly source: string;
@@ -33,6 +36,37 @@ const cases: readonly HostCase[] = [
       source: "let x = 1 in x + true\n",
       at: "true",
       message: "Expected number, found boolean",
+    },
+  },
+  {
+    language: "schema",
+    consumer: "examples/typescript/schema.ts",
+    output: "true 2 190\n2026-01-01 00:00:00 true\n"
+      + "{\"email\":\"sai@example.com\",\"role\":\"Admin\"} {\"title\":\"Hello\",\"authorId\":1}\n",
+    misuse: {
+      original: "const timestamp: string = author.updatedAt;",
+      replacement: "const timestamp: number = author.updatedAt;",
+      code: "TS2322",
+    },
+    controls: [
+      { original: "const role: Role = \"Admin\";", replacement: "const role: Role = \"Owner\";", code: "TS2322" },
+      {
+        original: "({ title: \"Hello\", authorId: by.id })",
+        replacement: "({ title: \"Hello\", authorId: 1 })",
+        code: "TS2322",
+      },
+      { original: "entry.authorId === by.id", replacement: "entry.id === by.id", code: "TS2367" },
+      {
+        original: "{ email: author.email, role }",
+        replacement: "{ id: author.id, email: author.email, role }",
+        code: "TS2353",
+      },
+    ],
+    guestError: {
+      file: "examples/schema/simple.schema",
+      source: "model User = { id : Int |> primaryKey, role : Missing }\n",
+      at: "Missing",
+      message: "Unknown field type: Missing",
     },
   },
 ];
@@ -75,23 +109,25 @@ const position = (source: string, index: number) => {
 for (const host of cases) {
   test(`${host.language}: tsc types the consumer through the content mapper`, () => {
     const consumer = readFileSync(join(root, host.consumer), "utf8");
-    const seed = fragment(consumer, host.misuse.original);
-    const misused = consumer.slice(0, seed.index) + host.misuse.replacement
-      + consumer.slice(seed.index + seed.text.length);
     project(host.consumer, {}, (directory) => {
       const clean = typecheck(directory);
       assert.equal(clean.status, 0, clean.output);
     });
-    project(host.consumer, { [host.consumer]: misused }, (directory) => {
-      const checked = typecheck(directory);
-      assert.notEqual(checked.status, 0, "misuse must fail");
-      assert.deepEqual(
-        checked.errors.map(({ file, line, source }) => ({ file, line, source })),
-        [{ file: join(directory, host.consumer), line: position(misused, seed.index).line, source: "TS" }],
-        checked.output,
-      );
-      assert.ok(checked.output.includes(`error ${host.misuse.code}:`), checked.output);
-    });
+    for (const misuse of [host.misuse, ...host.controls ?? []]) {
+      const seed = fragment(consumer, misuse.original);
+      const misused = consumer.slice(0, seed.index) + misuse.replacement
+        + consumer.slice(seed.index + seed.text.length);
+      project(host.consumer, { [host.consumer]: misused }, (directory) => {
+        const checked = typecheck(directory);
+        assert.notEqual(checked.status, 0, `${misuse.replacement} must fail`);
+        assert.deepEqual(
+          checked.errors.map(({ file, line, source }) => ({ file, line, source })),
+          [{ file: join(directory, host.consumer), line: position(misused, seed.index).line, source: "TS" }],
+          checked.output,
+        );
+        assert.ok(checked.output.includes(`error ${misuse.code}:`), checked.output);
+      });
+    }
   });
 
   test(`${host.language}: the loader runs the consumer`, () => {
