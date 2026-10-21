@@ -4,7 +4,16 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { version } from "typescript";
-import { editorFile, observe, position, probes, record, validate, validateResponse } from "./editor-contracts.ts";
+import {
+  editorFile,
+  observe,
+  position,
+  type Probe,
+  probes,
+  record,
+  validate,
+  validateResponse,
+} from "./editor-contracts.ts";
 import { compiler, fragment, root } from "./type-contracts.ts";
 
 const args = process.argv.slice(2);
@@ -197,6 +206,38 @@ try {
       observations[control.id],
       "restored hover must recover",
     );
+  }
+  const hosted = [
+    {
+      consumer: "examples/typescript/toy.ts",
+      anchor: "import main",
+      offset: 7,
+      type: "main: number",
+      guest: "examples/toy/main.toy",
+    },
+  ];
+  for (const { consumer, anchor, offset, type, guest } of hosted) {
+    const text = readFileSync(join(root, consumer), "utf8");
+    const textDocument = { uri: pathToFileURL(join(root, consumer)).href };
+    send({
+      method: "textDocument/didOpen",
+      params: { textDocument: { ...textDocument, languageId: "typescript", version: 1, text } },
+    });
+    const consumerDiagnostics = await request("textDocument/diagnostic", { textDocument });
+    record(consumerDiagnostics, "invalid diagnostics");
+    assert.deepEqual(consumerDiagnostics.items, [], `${consumer} must compile cleanly`);
+    const probe: Probe = { id: consumer, method: "hover", anchor, offset, require: [type] };
+    const at = position(text, probe);
+    const hover = observe(probe, await request("textDocument/hover", { textDocument, position: at }));
+    validate(probe, hover);
+    const definitions = await request("textDocument/definition", { textDocument, position: at });
+    assert.ok(Array.isArray(definitions), `${consumer}: invalid definition result`);
+    const targets = definitions.map((location: unknown) => {
+      record(location, `${consumer}: invalid definition location`);
+      return location.targetUri ?? location.uri;
+    });
+    assert.deepEqual(targets, [pathToFileURL(join(root, guest)).href], `${consumer}: definition must land in ${guest}`);
+    console.log(`Real LSP ${consumer}: hover ${JSON.stringify(hover.text)}, definition in ${guest}`);
   }
   const snapshot = { compilerVersion: version, observations };
   if (args.includes("--update")) writeFileSync(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`);
