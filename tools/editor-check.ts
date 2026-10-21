@@ -170,9 +170,9 @@ try {
       replacement: (type: string) => `pure<${type}>(undefined as ${type})`,
     },
     {
-      id: "staged-output",
-      original: "staged.prop(stagedProgram.result, \"total\")",
-      replacement: (type: string) => `undefined as ${type}`,
+      id: "fresh-variable",
+      original: "const variable = yield* hm.fresh()",
+      replacement: (type: string) => `const variable = undefined as ${type}`,
     },
   ];
   let documentVersion = 1;

@@ -1,5 +1,0 @@
-{
-  id = fn(x) => x,
-  const = fn(x) => fn(y) => x,
-  compose = fn(f) => fn(g) => fn(x) => f(g(x))
-}

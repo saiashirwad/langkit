@@ -79,10 +79,10 @@ export function runContracts(): void {
         proof: "prove<Equal<typeof synthesized, Synthesized<AuthorType, AuthorTerm>>>();",
       },
       {
-        name: "stagedOutput",
-        original: "staged.prop(stagedProgram.result, \"total\")",
-        replacement: (type: string) => `undefined as ${type}`,
-        proof: "prove<Equal<typeof stagedOutput, staged.Expr<number>>>();",
+        name: "variable",
+        original: "const variable = yield* hm.fresh()",
+        replacement: (type: string) => `const variable = undefined as ${type}`,
+        proof: "prove<Equal<typeof variable, hm.Variable>>();",
       },
     ];
     for (const control of controls) {

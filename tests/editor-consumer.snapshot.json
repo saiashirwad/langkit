@@ -2,13 +2,16 @@
   "compilerVersion": "7.1.0-beta",
   "observations": {
     "contextual-record-node": {
-      "text": "```typescript\n(parameter) recordNode: RecordNode<rows.Type>\n```"
+      "text": "```typescript\n(parameter) recordNode: RecordNode<hm.Type>\n```"
     },
     "contextual-literal-node": {
-      "text": "```typescript\n(parameter) literalNode: Literal<rows.Type>\n```"
+      "text": "```typescript\n(parameter) literalNode: Literal<hm.Type>\n```"
     },
     "contextual-backend-context": {
-      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<rows.Type>\n```"
+      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<hm.Type>\n```"
+    },
+    "fresh-variable": {
+      "text": "```typescript\nconst variable: hm.Variable\n```"
     },
     "yield-literal": {
       "text": "```typescript\nconst yielded: \"ready\"\n```"
@@ -17,19 +20,19 @@
       "text": "```typescript\nconst tuple: [\"label\", 42, true]\n```"
     },
     "named-value": {
-      "text": "```typescript\nconst namedValue: Value<rows.Type>\n```"
+      "text": "```typescript\nconst namedValue: Value<hm.Type>\n```"
     },
     "named-check": {
-      "text": "```typescript\nconst namedCheck: Check<Value<rows.Type>>\n```"
+      "text": "```typescript\nconst namedCheck: Check<Value<hm.Type>>\n```"
     },
     "record-fields": {
-      "text": "```typescript\n(property) fields: readonly RecordField<rows.Type>[]\n```"
+      "text": "```typescript\n(property) fields: readonly RecordField<hm.Type>[]\n```"
     },
     "record-field-name": {
       "text": "```typescript\n(property) name: string\n```"
     },
     "record-field-value": {
-      "text": "```typescript\n(property) value: Value<rows.Type>\n```"
+      "text": "```typescript\n(property) value: Value<hm.Type>\n```"
     },
     "literal-value": {
       "text": "```typescript\n(property) value: string | number | boolean\n```"
@@ -69,11 +72,11 @@
       ]
     },
     "backend-signature": {
-      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, handlers: { readonly literal: (literalNode: Literal<rows.Type>) => string; readonly record: (recordNode: RecordNode<rows.Type>, recordContext: JavaScriptContext<rows.Type>) => string; }): readonly DispatcherHandler<JavaScriptContext<rows.Type>>[]",
+      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<hm.Type, Literal<hm.Type>>; record: OperationDescriptor<hm.Type, RecordNode<hm.Type>>; }>, handlers: { readonly literal: (literalNode: Literal<hm.Type>) => string; readonly record: (recordNode: RecordNode<hm.Type>, recordContext: JavaScriptContext<hm.Type>) => string; }): readonly DispatcherHandler<JavaScriptContext<hm.Type>>[]",
       "activeParameter": 1
     },
     "literal-signature": {
-      "text": "literal(type: rows.Type, value: number | boolean | string): OperationValue<rows.Type, Literal<rows.Type>>",
+      "text": "literal(type: hm.Type, value: number | boolean | string): OperationValue<hm.Type, Literal<hm.Type>>",
       "activeParameter": 1
     },
     "judgment-rule-node": {
@@ -81,24 +84,6 @@
     },
     "judgment-synth-yield": {
       "text": "```typescript\nconst synthesized: Synthesized<AuthorType, AuthorTerm>\n```"
-    },
-    "staged-arrow-parameter": {
-      "text": "```typescript\n(parameter) amount: staged.Ref<number>\n```"
-    },
-    "staged-arrow-result": {
-      "text": "```typescript\nconst stagedArrow: staged.Expr<(args_0: number, args_1: string) => {\n    total: number;\n    label: string;\n}>\n```"
-    },
-    "staged-record": {
-      "text": "```typescript\nconst stagedRecord: staged.Expr<{\n    total: number;\n    label: string;\n}>\n```"
-    },
-    "staged-output": {
-      "text": "```typescript\nconst stagedOutput: staged.Expr<number>\n```"
-    },
-    "program-result-handle": {
-      "text": "```typescript\nconst resultHandle: staged.Ref<{\n    total: number;\n    label: string;\n}>\n```"
-    },
-    "staged-program": {
-      "text": "```typescript\nconst stagedProgram: staged.Program<{\n    total: number;\n    label: string;\n}>\n```"
     }
   }
 }
