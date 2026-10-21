@@ -8,7 +8,7 @@ import { place } from "./place.ts";
 
 const describe = (diagnostic: Diagnostic, url: string, source: string): string => {
   const site = place(diagnostic, url);
-  if (site.kind === "elsewhere") return `${fileURLToPath(site.location.uri)}: ${render(diagnostic)}`;
+  if (site.kind === "elsewhere") return `${site.location.uri}: ${render(diagnostic)}`;
   const file = fileURLToPath(url);
   return site.span
     ? `${file}: ${render({ ...diagnostic, span: site.span }, source)}`
