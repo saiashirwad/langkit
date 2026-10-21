@@ -544,7 +544,11 @@ export type Compiled = {
   readonly type: Type;
   readonly ir: Program<Type>;
   readonly javascript: string;
+  readonly syntax: Module;
+  readonly datatypes: ReadonlyMap<string, string>;
 };
+
+type Root = Pick<Compiled, "syntax" | "datatypes">;
 
 const parse = (source: string): Result<Module> => {
   const result = program.parse(source);
@@ -589,6 +593,7 @@ const exportOrigins = (expr: Expr): Map<string, Span> => {
 const buildModules = (
   graph: ModuleGraph,
   external: Map<symbol, Export>,
+  expose: (root: Root) => void = () => {},
 ): Check<Body<Type>> =>
   code.body(function*() {
     const param = code.binding("value", yield* fresh());
@@ -608,6 +613,7 @@ const buildModules = (
       scheme: yield* generalize(printed.type, []),
     };
     const completed = new Map<string, ModuleExports>();
+    const declaredIn = new Map<symbol, string>();
     for (const module of graph.modules) {
       const imported = new Map<string, Export>();
       const importedDefinitions = new Map<string, Definition>();
@@ -653,6 +659,15 @@ const buildModules = (
         );
       if (module.uri === graph.root) {
         for (const entry of imported.values()) external.set(entry.binding.id, entry);
+        expose({
+          syntax: parsed.value,
+          datatypes: new Map([
+            ...[...importedDefinitions].map(([name, definition]) =>
+              [name, declaredIn.get(definition.type.id)!] as const
+            ),
+            ...parsed.value.types.map((type) => [type.name, module.uri] as const),
+          ]),
+        });
         return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body))).inDocument(module.uri);
       }
       let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
@@ -717,6 +732,7 @@ const buildModules = (
         });
         constructorEntries.set(name, { ...original, binding });
       }
+      for (const type of parsed.value.types) declaredIn.set(moduleDefinitions.get(type.name)!.type.id, module.uri);
       const origins = exportOrigins(parsed.value.body);
       for (const [name, fieldType] of flatten(type.row).fields) {
         if (entries.has(name)) {
@@ -773,7 +789,8 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   if (!graph.success) return graph;
-  const built = run(buildModules(graph.value, new Map()));
+  let root: Root | undefined;
+  const built = run(buildModules(graph.value, new Map(), (exposed) => (root = exposed)));
   if (!built.success) {
     const errors: [Diagnostic, ...Diagnostic[]] = [graph.value.routeDiagnostic(built.errors[0])];
     for (let i = 1; i < built.errors.length; i++) {
@@ -781,6 +798,7 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
     }
     return { success: false, errors };
   }
+  if (!root) throw new Error("Module graph has no root");
   const ir = code.program(built.value);
   return {
     success: true,
@@ -788,6 +806,7 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
       type: built.value.result.type,
       ir,
       javascript: javascript.emit(ir),
+      ...root,
     },
   };
 };
