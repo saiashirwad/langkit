@@ -15,6 +15,11 @@ export type Metrics = {
   totalSeconds: number;
   memoryBytes: number;
 };
+type Workload = {
+  name: string;
+  consumerHash?: string;
+  measurements: { metrics: Metrics; elapsedSeconds: number; raw: string; }[];
+};
 export function parseMetrics(output: string): Metrics {
   const metric = (label: string, unit: string): number => {
     const match = output.match(new RegExp(`^${label}:\\s+([\\d.]+)${unit}\\s*$`, "m"));
@@ -125,11 +130,7 @@ export function profile(): void {
     units: Record<string, string>;
     flags: string[];
     bounds: { types: number; instantiations: number; };
-    workloads: {
-      name: string;
-      consumerHash?: string;
-      measurements: { metrics: Metrics; elapsedSeconds: number; raw: string; }[];
-    }[];
+    workloads: Workload[];
   } = {
     compilerVersion: version,
     nodeVersion: process.version,
@@ -160,7 +161,7 @@ export function profile(): void {
     for (const size of [0, 10, 50, 200]) {
       const source = size === 0 ? undefined : scalingConsumer(size);
       if (source !== undefined) writeFileSync(join(project.directory, "consumer.ts"), source);
-      const workload: typeof report.workloads[number] = {
+      const workload: Workload = {
         name: size === 0 ? "main" : `${size} descriptors + heterogeneous judgment rules`,
         measurements: [],
         ...(source === undefined ? {} : { consumerHash: createHash("sha256").update(source).digest("hex") }),
