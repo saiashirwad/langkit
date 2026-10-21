@@ -1,0 +1,20 @@
+import "./stdlib.advanced";
+type Tree(a) = Leaf(a) | Branch(Tree(a), Tree(a))
+
+let leaf = fn(value) => Leaf(value) in
+let rec sumTree = fn(tree) => match tree {
+  Leaf(value) => value,
+  Branch(left, right) => sumTree(left) + sumTree(right)
+} in
+let fromList = fn(first) => fn(rest) =>
+  foldList(fn(tree) => fn(value) => Branch(tree, Leaf(value)))(Leaf(first))(rest) in
+let both = fn(f: forall a. a -> a) => { value = f(20), flag = f(true) } in
+let getValue = fn(record) => record.value in
+
+{
+  leaf = leaf,
+  sumTree = sumTree,
+  fromList = fromList,
+  both = both,
+  getValue = getValue
+}
