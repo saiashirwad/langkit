@@ -1,14 +1,11 @@
 {
   "compilerVersion": "7.1.0-beta",
   "observations": {
-    "contextual-record-node": {
-      "text": "```typescript\n(parameter) recordNode: RecordNode<rank.Type>\n```"
+    "narrowed-record": {
+      "text": "```typescript\nconst recordValue: {\n    readonly type: rank.Type;\n    readonly span?: Span;\n} & {\n    readonly kind: \"record\";\n    readonly fields: readonly RecordField<rank.Type>[];\n    readonly base?: Value<rank.Type>;\n}\n```"
     },
-    "contextual-literal-node": {
-      "text": "```typescript\n(parameter) literalNode: Literal\n```"
-    },
-    "contextual-backend-context": {
-      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<rank.Type>\n```"
+    "narrowed-literal": {
+      "text": "```typescript\nconst literalValue: {\n    readonly type: rank.Type;\n    readonly span?: Span;\n} & {\n    readonly kind: \"literal\";\n    readonly value: number | boolean | string;\n}\n```"
     },
     "fresh-variable": {
       "text": "```typescript\nconst variable: rank.Variable\n```"
@@ -38,17 +35,21 @@
       "text": "```typescript\n(property) value: string | number | boolean\n```"
     },
     "record-members": {
-      "text": "base\nfields\nkind",
+      "text": "base\nfields\nkind\nspan\ntype",
       "labels": [
         "base",
         "fields",
-        "kind"
+        "kind",
+        "span",
+        "type"
       ]
     },
     "literal-members": {
-      "text": "kind\nvalue",
+      "text": "kind\nspan\ntype\nvalue",
       "labels": [
         "kind",
+        "span",
+        "type",
         "value"
       ]
     },
@@ -59,24 +60,8 @@
         "value"
       ]
     },
-    "literal-keys": {
-      "text": "binary\nblock\ncall\nconditional\nfn\nliteral\nref",
-      "labels": [
-        "binary",
-        "block",
-        "call",
-        "conditional",
-        "fn",
-        "literal",
-        "ref"
-      ]
-    },
-    "backend-signature": {
-      "text": "defineJavaScriptBackend(descriptors: { literal: OperationDescriptor<rank.Type, Literal>; record: OperationDescriptor<rank.Type, RecordNode<rank.Type>>; }, handlers: { readonly literal: (literalNode: Literal) => string; readonly record: (recordNode: RecordNode<rank.Type>, recordContext: JavaScriptContext<rank.Type>) => string; }): readonly JavaScriptHandler<rank.Type>[]",
-      "activeParameter": 1
-    },
     "literal-signature": {
-      "text": "literal(type: rank.Type, value: number | boolean | string): OperationValue<rank.Type, Literal>",
+      "text": "literal(type: rank.Type, value: number | boolean | string): Value<rank.Type>",
       "activeParameter": 1
     }
   }

@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { observe, position, type Probe, validate, validateResponse } from "../tools/editor-contracts.ts";
 import { fragment } from "../tools/type-contracts.ts";
-import { parseMetrics, scalingConsumer } from "../tools/type-profile.ts";
+import { parseMetrics } from "../tools/type-profile.ts";
 
 const hover: Probe = {
   id: "control",
@@ -62,14 +62,10 @@ test("hover and completion gates reject degraded, excessive and invalid member r
   assert.throws(() => validate(completion, { text: "binding", labels: ["binding"] }), /missing fields/);
 });
 
-test("type profile requires actual metrics and generates distinct typed descriptors", () => {
+test("type profile requires actual metrics", () => {
   assert.throws(() => parseMetrics("Types: 1"), /missing metric/);
   assert.deepEqual(
     parseMetrics("Types: 10\nInstantiations: 20\nCheck time: 0.01s\nTotal time: 0.02s\nMemory used: 30K\n"),
     { types: 10, instantiations: 20, checkSeconds: 0.01, totalSeconds: 0.02, memoryBytes: 30720 },
   );
-  const source = scalingConsumer(10);
-  assert.equal([...source.matchAll(/defineOperation<Type,/g)].length, 10);
-  assert.match(source, /prove<Equal<typeof node, case9Node>>/);
-  assert.match(source, /yield\* pure\(\[/);
 });

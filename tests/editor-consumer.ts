@@ -1,8 +1,5 @@
 import { type Check, check, pure } from "langkit";
-import { create, type Value } from "langkit/ir";
-import { defineJavaScriptBackend, type JavaScriptContext } from "langkit/javascript";
-import type { DescriptorNode } from "langkit/operations/descriptor";
-import { records } from "langkit/operations/records";
+import { create, type RecordField, type Value } from "langkit/ir";
 import * as rank from "langkit/types/higher-rank";
 
 export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
@@ -10,35 +7,34 @@ export type IsAny<T> = 0 extends (1 & T) ? true : false;
 export type IsNever<T> = [T] extends [never] ? true : false;
 export const prove = <T extends true>(): T => true as T;
 export type Type = rank.Type;
-export type RecordField = { readonly name: string; readonly value: Value<Type>; };
 
 const language = create<Type>();
-const recordFeature = records<Type>();
-const descriptors = { literal: language.coreDescriptors.literal, record: recordFeature.descriptors.record };
-export type RecordNode = DescriptorNode<typeof descriptors.record>;
-export type LiteralNode = DescriptorNode<typeof descriptors.literal>;
-prove<Equal<keyof typeof descriptors, "literal" | "record">>();
+export type RecordValue = Extract<Value<Type>, { readonly kind: "record"; }>;
+export type LiteralValue = Extract<Value<Type>, { readonly kind: "literal"; }>;
 
-export const backend = defineJavaScriptBackend(descriptors, {
-  literal: (literalNode) => {
-    prove<Equal<typeof literalNode, LiteralNode>>();
-    prove<Equal<typeof literalNode.value, number | boolean | string>>();
-    prove<Equal<IsAny<typeof literalNode>, false>>();
-    prove<Equal<IsNever<typeof literalNode>, false>>();
-    return JSON.stringify(literalNode.value);
-  },
-  record: (recordNode, recordContext) => {
-    prove<Equal<typeof recordContext, JavaScriptContext<Type>>>();
-    prove<Equal<IsAny<typeof recordContext>, false>>();
-    prove<Equal<IsNever<typeof recordContext>, false>>();
-    prove<Equal<typeof recordNode, RecordNode>>();
-    prove<Equal<typeof recordNode.fields, readonly RecordField[]>>();
-    prove<Equal<IsAny<typeof recordNode>, false>>();
-    prove<Equal<IsNever<typeof recordNode>, false>>();
-    return recordNode.fields.map((field) => `${field.name}: ${recordContext.expr(field.value)}`)
-      .join(", ");
-  },
-});
+export const describe = (value: Value<Type>): string => {
+  switch (value.kind) {
+    case "literal": {
+      const literalValue = value;
+      prove<Equal<typeof literalValue, LiteralValue>>();
+      prove<Equal<typeof literalValue.value, number | boolean | string>>();
+      prove<Equal<IsAny<typeof literalValue>, false>>();
+      prove<Equal<IsNever<typeof literalValue>, false>>();
+      return JSON.stringify(literalValue.value);
+    }
+    case "record": {
+      const recordValue = value;
+      prove<Equal<typeof recordValue, RecordValue>>();
+      prove<Equal<typeof recordValue.fields, readonly RecordField<Type>[]>>();
+      prove<Equal<IsAny<typeof recordValue>, false>>();
+      prove<Equal<IsNever<typeof recordValue>, false>>();
+      return recordValue.fields.map((field) => `${field.name}: ${describe(field.value)}`)
+        .join(", ");
+    }
+    default:
+      return value.kind;
+  }
+};
 
 export const inferred = check(function*() {
   const yielded = yield* pure("ready" as const);

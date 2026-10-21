@@ -2,7 +2,6 @@
 import { type Check, check, get, pure, scoped, within } from "langkit";
 import { type Body, create, type Declaration, type Reference, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
-import { records } from "langkit/operations/records";
 
 const number = scoped(0);
 const narrow = scoped<0>(0);
@@ -31,17 +30,13 @@ code.ref(binding, "string");
 const other: Value<"text"> = value;
 void other;
 
-const coreOnly = create<"number" | "boolean">();
-// @ts-expect-error Records are an opt-in operation feature, not part of the core builder.
-coreOnly.record("record", []);
-const recordFeature = records<"number" | "record">();
-const recordLanguage = create<"number" | "record">().use(recordFeature);
+const recordLanguage = create<"number" | "record">();
 const recordValue = recordLanguage.record("record", [{ name: "answer", value: recordLanguage.literal("number", 42) }]);
 const selected: Value<"number" | "record"> = recordLanguage.field("number", recordValue, "answer");
 void selected;
-// @ts-expect-error Feature payloads are checked against the selected language universe.
+// @ts-expect-error Record payloads are checked against the language universe.
 recordLanguage.record("text", []);
-// @ts-expect-error Custom feature values retain the language's payload universe.
+// @ts-expect-error Record values retain the language's payload universe.
 const otherRecord: Value<"text"> = recordValue;
 void otherRecord;
 
@@ -57,8 +52,7 @@ void pureBody;
 // @ts-expect-error The standalone generator body accepts Values, not Check computations.
 pureCode.body(pure(pureValue));
 
-const featureLanguage = create<"number" | "record">().use(records<"number" | "record">());
-const codeBuilder = elaboration(featureLanguage);
+const codeBuilder = elaboration(recordLanguage);
 const typedBinding = codeBuilder.binding("x", "number");
 const typedReference: Value<"number" | "record"> = codeBuilder.ref(typedBinding);
 const typedFeature: Value<"number" | "record"> = codeBuilder.field(
@@ -85,8 +79,6 @@ void rawDeclaration;
 void mixedBody;
 void checkedComputation;
 void checkedScope;
-// @ts-expect-error Feature composition happens before elaboration; use is not exposed.
-codeBuilder.use(records<"number" | "record">());
 const directBody: Check<Body<"number" | "record">> = codeBuilder.body(pure(typedReference));
 const directScope: Check<Value<"number" | "record">> = codeBuilder.scope(pure(typedFeature));
 void directBody;

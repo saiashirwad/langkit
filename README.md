@@ -15,83 +15,39 @@ pnpm test
 
 Write the checker as a `switch` over your own AST inside a `check` generator. `bind` and `lookup` manage lexical scopes, and the higher-rank theory supplies `generalize` and `instantiate`.
 
-## Compose an IR and backend
+## Build IR and emit JavaScript
 
-The IR is extensible and descriptor-driven. `create<T>()` supplies the small core; optional operation sets add methods and descriptors explicitly. A value carries the language's own type descriptor and the exact identity of its operation descriptor. The framework does not define the language's type system.
-
-The standalone IR API is a generator-authored DSL. Pass a body generator to `body`, function, branch, or block builders. A body generator **yields declarations** through the generator's yield channel and **returns its final value** through its return channel. `declare` and `declareRecursive` are generators: use `yield*` to collect a declaration in the current body and receive its reference as the delegated generator's return value. Helper generators compose naturally with `yield*`; nested function and body callbacks can themselves be generators. Pure expressions remain ordinary direct builder calls.
-
-This runnable TypeScript example builds one `Program`, emits JavaScript, and runs it in Node's VM as trusted demonstration code.
+The IR is a closed tagged union, `Value<T>`, where `T` is your language's type. `create<T>()` gives constructors for every node kind. A body generator yields declarations with `yield* code.declare(...)` and returns its result. `emit(body)` from `langkit/javascript` turns a `Body<T>` into one JavaScript expression.
 
 ```ts
 import { create } from "langkit/ir";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
-import { recordsJavaScript } from "langkit/javascript/records";
-import { records } from "langkit/operations/records";
+import { emit } from "langkit/javascript";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 
 type Type = "number" | "function";
-const recordFeature = records<Type>();
-const code = create<Type>().use(recordFeature);
-const jsEmitter = createJavaScriptEmitter(
-  coreJavaScript(code.coreDescriptors),
-  recordsJavaScript(recordFeature.descriptors),
-);
+const code = create<Type>();
 const number = (n: number) => code.literal("number", n);
-
-function* additions() {
-  const left = yield* code.declare("left", number(19));
-  const right = yield* code.declare("right", number(23));
-  return code.binary("number", "+", left, right);
-}
 
 const argument = code.binding("argument", "number");
 const increment = code.fn("function", argument, function*() {
   return code.binary("number", "+", code.ref(argument), number(1));
 });
-const program = code.program(code.body(function*() {
-  const sum = yield* additions();
+const body = code.body(function*() {
+  const left = yield* code.declare("left", number(19));
+  const right = yield* code.declare("right", number(23));
   const addOne = yield* code.declare("addOne", increment);
-  return code.call("number", addOne, sum);
-}));
+  return code.call("number", addOne, code.binary("number", "+", left, right));
+});
 
-const jsAnswer = runInNewContext(jsEmitter.emit(program));
-assert.equal(jsAnswer, 43);
-console.log(jsAnswer); // 43
+assert.equal(runInNewContext(emit(body)), 43);
 ```
 
-`conditional(type, condition, thenBody, elseBody)`, `block(type, body)`, and `scope(body)` likewise accept a `Body` or a generator callback. Function, branch, and block callbacks can capture their surrounding lexical bindings. A `Body<T>` is declarations plus a result value; declarations execute in order before the result. `declare` creates a fresh binding each time its generator runs. `declareRecursive(binding, functionValue)` keeps the supplied binding identity, yields a recursive declaration, and returns its reference; it accepts only a core function value.
-
-For language authors adding an operation, keep the descriptor responsible for child order, scoped bodies and bindings, and references. Here is the essential custom descriptor pattern; once the descriptor is installed on the builder, author expressions and bodies with the same generator DSL rather than assembling declaration arrays by hand:
-
-```ts
-import { create, type OperationNode, type Value } from "langkit/ir";
-import { defineOperation } from "langkit/operations/descriptor";
-
-type Type = "number";
-type Twice = OperationNode & { readonly kind: "twice"; readonly value: Value<Type>; };
-const twice = defineOperation<Type, Twice>("twice", {
-  children: (node) => [node.value],
-});
-const code = create<Type>().use({
-  descriptors: { twice },
-  methods: {
-    twice: (type: Type, value: Value<Type>) => twice.make(type, { kind: "twice", value }),
-  },
-});
-const program = code.program(code.body(function*() {
-  const input = yield* code.declare("input", code.literal("number", 21));
-  return code.twice("number", input);
-}));
-```
-
-Each selected descriptor owns child evaluation order, scoped bodies and bindings, and references. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the portable `Program<T>` and throws if a selected operation has no handler. A `Program<T>` supplies its body together with the builder's selected readonly operation registry and core function identity needed by standalone validation and backends. `validate(program)` checks structural scope and declaration invariants; it does not prove language-level typing.
+`declareRecursive(binding, fn)` keeps the binding you pass, so the function can call itself. The IR trusts your checker: it does not re-check scope or types.
 
 ### Integrating checking
 
-The core IR DSL remains pure and does not require `Check`. Configure selected operation features on that builder first, then pass it to `elaboration(builder)` from `langkit/ir/check`. The adapter adds generator-factory entrypoints: `code.check(factory)` composes yielded `Check` computations and raw `Declaration` yields, `code.body(factory)` collects declarations into a checked body, and `code.scope(factory)` builds a checked block value. Factories have the mixed yield channel `Check<unknown> | Declaration<T>` and return their ordinary result. Use these factories—not Check-argument overloads—to bridge diagnostics into IR. Raw `declare` and `declareRecursive` remain pure generators that yield one declaration and return its reference; declaration yields require an enclosing `code.body` (or another body factory using the same adapter). Pure builder methods such as `fn`, `conditional`, `block`, and `scope` remain Check-free and accept a `Body` or pure body factory. `program(body)` validates immediately. Values retain their exact selected operation-descriptor identities, and lexical binding/reference relationships are preserved.
+The core IR DSL remains pure and does not require `Check`. Pass the builder to `elaboration(builder)` from `langkit/ir/check`. The adapter adds generator-factory entrypoints: `code.check(factory)` composes yielded `Check` computations and raw `Declaration` yields, `code.body(factory)` collects declarations into a checked body, and `code.scope(factory)` builds a checked block value. Factories have the mixed yield channel `Check<unknown> | Declaration<T>` and return their ordinary result. Use these factories—not Check-argument overloads—to bridge diagnostics into IR. Raw `declare` and `declareRecursive` remain pure generators that yield one declaration and return its reference; declaration yields require an enclosing `code.body` (or another body factory using the same adapter). Pure builder methods such as `fn`, `conditional`, `block`, and `scope` remain Check-free and accept a `Body` or pure body factory.
 
 ```ts
 import { fail, run } from "langkit";
@@ -111,9 +67,8 @@ const bodyResult = run(code.body(function*() {
 }));
 
 if (bodyResult.success) {
-  const program = code.program(bodyResult.value); // validates now
   // Emit only this success branch; recovered diagnostics make run() fail.
-  void program;
+  void bodyResult.value;
 } else {
   console.error(bodyResult.errors); // nonempty structured diagnostics
 }
@@ -137,9 +92,7 @@ Inference computations allocate fresh variables, instantiate, and generalize ins
 - **Inference:** `langkit/types/higher-rank` provides a reusable theory, and `assign`, `add`, and `push` from `langkit` provide journaled mutation for others.
 - **Modules:** `langkit/modules` provides a local-file module graph/loader for languages that want imports; it is optional. Analyses can include transitive dependency URIs and source snapshots.
 - **Analysis and editor support:** `langkit/analysis` optionally collects UTF-16 source ranges for types, definitions, references, lexical tokens, and diagnostics. `langkit/lsp` serves language-provided analysis over LSP, including dependency-aware re-analysis when imported documents change. Diagnostics retain structured source locations and related information for imported-source errors.
-- **JavaScript:** `langkit/javascript` validates and emits an expression using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder. Emission is not a source-map generator. Executing the emitted code is the consumer's responsibility: a VM timeout is not a security sandbox for untrusted code.
-
-The core IR's scope validation and the language's type checker have different responsibilities. Constructors trust the language's typing rules; neither runtime validation nor TypeScript provides a general type proof.
+- **JavaScript:** `langkit/javascript` emits a body as one JavaScript expression. Emission is not a source-map generator. Executing the emitted code is the consumer's responsibility: a VM timeout is not a security sandbox for untrusted code.
 
 Verification covers runtime tests, compiler fixtures, real TypeScript editor probes, isolated `any` and `never` controls, and compiler-cost measurements.
 

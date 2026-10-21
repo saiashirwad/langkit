@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { version } from "typescript";
-import { compile, isolatedProject, root } from "./type-contracts.ts";
+import { compile, root } from "./type-contracts.ts";
 
 export type Metrics = {
   types: number;
@@ -17,7 +17,6 @@ export type Metrics = {
 };
 type Workload = {
   name: string;
-  consumerHash?: string;
   measurements: { metrics: Metrics; elapsedSeconds: number; raw: string; }[];
 };
 export function parseMetrics(output: string): Metrics {
@@ -37,39 +36,6 @@ export function parseMetrics(output: string): Metrics {
   };
 }
 
-export function scalingConsumer(count: number): string {
-  assert.ok(Number.isInteger(count) && count > 0, "positive descriptor count required");
-  const cases = Array.from({ length: count }, (_, index) => `case${index}`);
-  return [
-    "import { check, pure } from \"langkit\";",
-    "import type { Value } from \"langkit/ir\";",
-    "import { defineOperation } from \"langkit/operations/descriptor\";",
-    "import { defineJavaScriptBackend } from \"langkit/javascript\";",
-    "import type { Type } from \"langkit/types/higher-rank\";",
-    "type Field = { readonly name: string; readonly value: Value<Type> };",
-    "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;",
-    "const prove = <T extends true>(): T => true as T;",
-    ...cases.flatMap((name) => [
-      `type ${name}Node = { readonly kind: "${name}"; readonly fields: readonly Field[] };`,
-      `const ${name} = defineOperation<Type, ${name}Node>("${name}", { children: node => node.fields.map(field => field.value) });`,
-    ]),
-    `const descriptors = { ${cases.join(", ")} };`,
-    `prove<Equal<keyof typeof descriptors, ${cases.map((name) => JSON.stringify(name)).join(" | ")}>>();`,
-    "export const backend = defineJavaScriptBackend(descriptors, {",
-    ...cases.map((name) =>
-      `  ${name}: (node, context) => { prove<Equal<typeof node, ${name}Node>>(); return node.fields.map(field => context.expr(field.value)).join(", "); },`
-    ),
-    "});",
-    "export const consumer = check(function* () {",
-    `  const labels = yield* pure([${cases.map((name) => JSON.stringify(name)).join(", ")}] as [${
-      cases.map((name) => JSON.stringify(name)).join(", ")
-    }]);`,
-    `  prove<Equal<typeof labels, [${cases.map((name) => JSON.stringify(name)).join(", ")} ]>>();`,
-    "  return labels;",
-    "});",
-  ].join("\n");
-}
-
 export function profile(): void {
   const args = process.argv.slice(2);
   const options = new Map<string, string>();
@@ -81,7 +47,6 @@ export function profile(): void {
   }
   const samples = Number(options.get("--samples") ?? 3);
   assert.ok(Number.isInteger(samples) && samples >= 1 && samples <= 20, "samples must be 1..20");
-  const project = isolatedProject();
   const flags = ["--extendedDiagnostics", "--noEmit", "--composite", "false", "--declaration", "false"];
   const report: {
     compilerVersion: string;
@@ -121,53 +86,41 @@ export function profile(): void {
     bounds: { types: 500_000, instantiations: 2_000_000 },
     workloads: [],
   };
-  try {
-    for (const size of [0, 10, 50, 200]) {
-      const source = size === 0 ? undefined : scalingConsumer(size);
-      if (source !== undefined) writeFileSync(join(project.directory, "consumer.ts"), source);
-      const workload: Workload = {
-        name: size === 0 ? "main" : `${size} descriptors`,
-        measurements: [],
-        ...(source === undefined ? {} : { consumerHash: createHash("sha256").update(source).digest("hex") }),
-      };
-      for (let sample = 0; sample < samples; sample++) {
-        const start = performance.now();
-        const result = compile(size === 0 ? join(root, "tsconfig.json") : project.config, flags);
-        assert.equal(result.status, 0, `${workload.name} failed\n${result.output}`);
-        const metrics = parseMetrics(result.output);
-        assert.ok(metrics.types > 0 && metrics.instantiations > 0, "profile must measure checking work");
-        assert.ok(
-          metrics.types <= report.bounds.types && metrics.instantiations <= report.bounds.instantiations,
-          `${workload.name}: deterministic type cost exceeds bounds`,
-        );
-        workload.measurements.push({ metrics, elapsedSeconds: (performance.now() - start) / 1000, raw: result.output });
-      }
-      report.workloads.push(workload);
-      const median = (key: keyof Metrics): number => {
-        const values = workload.measurements.map((sample) => sample.metrics[key]).sort((a, b) => a - b);
-        return (values[Math.floor((values.length - 1) / 2)]! + values[Math.floor(values.length / 2)]!) / 2;
-      };
-      console.log(
-        `TS ${version} ${workload.name} (${samples} cold samples, medians): types=${median("types")} instantiations=${
-          median("instantiations")
-        } check=${median("checkSeconds").toFixed(3)}s total=${median("totalSeconds").toFixed(3)}s memory=${
-          median("memoryBytes")
-        } bytes`,
-      );
-    }
-    const output = options.get("--output");
-    if (output !== undefined) {
-      const file = resolve(output);
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
-      console.log(`Raw profile: ${file}`);
-    }
-    console.log(
-      `Type cost gate: <=${report.bounds.types} types and <=${report.bounds.instantiations} instantiations per workload. Timing/memory reported only; machine noise is not gated.`,
+  const workload: Workload = { name: "main", measurements: [] };
+  for (let sample = 0; sample < samples; sample++) {
+    const start = performance.now();
+    const result = compile(join(root, "tsconfig.json"), flags);
+    assert.equal(result.status, 0, `${workload.name} failed\n${result.output}`);
+    const metrics = parseMetrics(result.output);
+    assert.ok(metrics.types > 0 && metrics.instantiations > 0, "profile must measure checking work");
+    assert.ok(
+      metrics.types <= report.bounds.types && metrics.instantiations <= report.bounds.instantiations,
+      `${workload.name}: deterministic type cost exceeds bounds`,
     );
-  } finally {
-    project.dispose();
+    workload.measurements.push({ metrics, elapsedSeconds: (performance.now() - start) / 1000, raw: result.output });
   }
+  report.workloads.push(workload);
+  const median = (key: keyof Metrics): number => {
+    const values = workload.measurements.map((sample) => sample.metrics[key]).sort((a, b) => a - b);
+    return (values[Math.floor((values.length - 1) / 2)]! + values[Math.floor(values.length / 2)]!) / 2;
+  };
+  console.log(
+    `TS ${version} ${workload.name} (${samples} cold samples, medians): types=${median("types")} instantiations=${
+      median("instantiations")
+    } check=${median("checkSeconds").toFixed(3)}s total=${median("totalSeconds").toFixed(3)}s memory=${
+      median("memoryBytes")
+    } bytes`,
+  );
+  const output = options.get("--output");
+  if (output !== undefined) {
+    const file = resolve(output);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(`Raw profile: ${file}`);
+  }
+  console.log(
+    `Type cost gate: <=${report.bounds.types} types and <=${report.bounds.instantiations} instantiations per workload. Timing/memory reported only; machine noise is not gated.`,
+  );
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) profile();

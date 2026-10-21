@@ -13,7 +13,7 @@ import {
   type Value,
 } from "./schema-model.ts";
 import type { Field, Name } from "./schema-syntax.ts";
-import { checkSource, emit } from "./schema.ts";
+import { checkSource, ddl } from "./schema.ts";
 import { plan, statement } from "./sql.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
@@ -274,7 +274,7 @@ export const host: HostLanguage = {
         ...database(queries),
         "export declare const sql: string;\nexport default sql;\n",
       ],
-      javascript: () => module(emit(schema), queries),
+      javascript: () => module(ddl(schema), queries),
       diagnostics: [],
     };
   },

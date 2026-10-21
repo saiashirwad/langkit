@@ -14,18 +14,11 @@ import {
   within,
 } from "langkit";
 import { type Analysis, create as createAnalysis, highlight, unanalyzed } from "langkit/analysis";
-import { type Binding, type Body, create, type Program, type Value } from "langkit/ir";
+import { type Binding, type Body, create, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
-import { printingJavaScript } from "langkit/javascript/printing";
-import { recordsJavaScript } from "langkit/javascript/records";
-import { variantsJavaScript } from "langkit/javascript/variants";
+import * as javascript from "langkit/javascript";
 import { loadModules, type ModuleGraph, type ModuleOptions } from "langkit/modules";
 import { parseImports } from "langkit/modules/imports";
-import { printing } from "langkit/operations/printing";
-import { records } from "langkit/operations/records";
-import { variants } from "langkit/operations/variants";
 import { parseResult } from "langkit/parse";
 import {
   boolean,
@@ -76,17 +69,8 @@ type Constructor = {
 
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[]; };
 
-const recordFeature = records<Type>();
-const variantFeature = variants<Type>();
-const printingFeature = printing<Type>();
-const pureCode = create<Type>().use(recordFeature).use(variantFeature).use(printingFeature);
+const pureCode = create<Type>();
 const code = elaboration(pureCode);
-const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript(pureCode.coreDescriptors),
-  recordsJavaScript(recordFeature.descriptors),
-  variantsJavaScript(variantFeature.descriptors),
-  printingJavaScript(printingFeature.descriptors),
-);
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
@@ -234,7 +218,7 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
         ? yield* checkExpr(expr.value, annotation)
         : yield* elaborate(expr.value);
       const value = yield* code.declare(expr.name, initial);
-      binding = value.node.binding;
+      binding = value.binding;
       scheme = annotation
         ? mono(annotation)
         : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
@@ -500,7 +484,7 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
             }
             const type = variables.length ? forall(variables, initial.type) : initial.type;
             const value = yield* code.declare(syntax.name, { ...initial, type });
-            const binding = value.node.binding;
+            const binding = value.binding;
             yield* facts.define(
               binding,
               syntax.nameSpan,
@@ -521,7 +505,7 @@ export type Checked = {
   readonly syntax: Module;
   readonly datatypes: ReadonlyMap<string, string>;
 };
-export type Compiled = Checked & { readonly ir: Program<Type>; readonly javascript: string; };
+export type Compiled = Checked & { readonly javascript: string; };
 
 type Root = Pick<Checked, "syntax" | "datatypes">;
 
@@ -572,7 +556,7 @@ const buildModules = (
       ),
     );
     const primitive: Entry = {
-      binding: printed.node.binding,
+      binding: printed.binding,
       scheme: yield* generalize(printed.type, []),
     };
     const completed = new Map<string, ModuleExports>();
@@ -684,7 +668,7 @@ const buildModules = (
         }
         const original = moduleConstructors.get(name)!;
         const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
-        const binding = value.node.binding;
+        const binding = value.binding;
         entries.set(name, {
           binding,
           scheme: mono(original.type),
@@ -703,7 +687,7 @@ const buildModules = (
         }
         const reference = yield* code.declare(name, code.field(fieldType, result, name));
         entries.set(name, {
-          binding: reference.node.binding,
+          binding: reference.binding,
           scheme: yield* generalize(fieldType, [...environment.values()].map((entry) => entry.scheme)),
           identity: Symbol(name),
           origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
@@ -762,13 +746,12 @@ export const checkSource = (source: string, options: ModuleOptions = {}): Result
   return { success: true, value: { type: built.value.result.type, body: built.value, ...root } };
 };
 
-export const emit = ({ body }: Checked): string => javascript.emit(code.program(body));
+export const emit = ({ body }: Checked): string => javascript.emit(body);
 
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
   const checked = checkSource(source, options);
   if (!checked.success) return checked;
-  const ir = code.program(checked.value.body);
-  return { success: true, value: { ...checked.value, ir, javascript: javascript.emit(ir) } };
+  return { success: true, value: { ...checked.value, javascript: emit(checked.value) } };
 };
 
 if (import.meta.main) {

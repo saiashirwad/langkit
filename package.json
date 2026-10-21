@@ -10,8 +10,6 @@
     "./ir": "./src/ir.ts",
     "./ir/check": "./src/ir/check.ts",
     "./javascript": "./src/javascript.ts",
-    "./operations/*": "./src/operations/*.ts",
-    "./javascript/*": "./src/javascript/*.ts",
     "./types/*": "./src/types/*.ts",
     "./modules": "./src/modules.ts",
     "./modules/imports": "./src/modules/imports.ts",

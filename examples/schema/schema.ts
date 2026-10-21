@@ -481,7 +481,7 @@ const literal = (value: Default): string =>
 
 /** Emit a fresh SQLite schema, never migrations or database side effects. */
 
-export const emit = (schema: Schema): string => {
+export const ddl = (schema: Schema): string => {
   const enums = new Map(schema.enums.map((value) => [value.name.name, value]));
   const statements = ["PRAGMA foreign_keys = ON;"];
   const usedNames = new Set(schema.models.map((model) => key(model.name.name)));
@@ -540,7 +540,7 @@ export const checkSource = (source: string): Result<Checked> => {
 
 export const compile = (source: string): Result<Compiled> => {
   const checked = checkSource(source);
-  return checked.success ? { success: true, value: { ...checked.value, sql: emit(checked.value.schema) } } : checked;
+  return checked.success ? { success: true, value: { ...checked.value, sql: ddl(checked.value.schema) } } : checked;
 };
 
 export const analyze = (source: string): Analysis<Type> => {

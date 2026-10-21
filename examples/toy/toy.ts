@@ -1,9 +1,8 @@
 import { bind, type Check, fail, lookup, pure, render, type Result, run, scoped, type Span } from "langkit";
 import { type Analysis, create as createAnalysis, highlight, type TokenRule, unanalyzed } from "langkit/analysis";
-import { type Binding, type Body, create, type Operator, type Program, type Value } from "langkit/ir";
+import { type Binding, type Body, create, type Operator, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
+import * as javascript from "langkit/javascript";
 import {
   between,
   choice,
@@ -210,7 +209,6 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 export const program = lex.complete(expression);
 
 const code = elaboration(create<Type>());
-const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreDescriptors));
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
 
@@ -245,7 +243,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         return yield* code.scope(function*() {
           const initial = yield* elaborate(expr.value);
           const value = yield* code.declare(expr.name, initial);
-          const binding = value.node.binding;
+          const binding = value.binding;
           yield* facts.define(binding, expr.nameSpan, binding.type.kind === "function" ? "function" : "variable");
           return yield* bind(env, [[expr.name, binding]], elaborate(expr.body));
         });
@@ -275,7 +273,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
     }
   }).flatMap((value) =>
     code.check(function*() {
-      if (code.coreDescriptors.ref.is(value)) yield* facts.reference(value.node.binding, expr.span);
+      if (value.kind === "ref") yield* facts.reference(value.binding, expr.span);
       yield* facts.typed(value.type, expr.span);
       return code.at(value, expr.span);
     })
@@ -283,7 +281,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
 export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
 
 export type Checked = { readonly type: Type; readonly body: Body<Type>; };
-export type Compiled = Checked & { readonly ir: Program<Type>; readonly javascript: string; };
+export type Compiled = Checked & { readonly javascript: string; };
 
 const parse = (source: string): Result<Expr> => parseResult(program, source);
 
@@ -301,13 +299,12 @@ export const checkSource = (source: string): Result<Checked> => {
   return built.success ? { success: true, value: { type: built.value.result.type, body: built.value } } : built;
 };
 
-export const emit = ({ body }: Checked): string => javascript.emit(code.program(body));
+export const emit = ({ body }: Checked): string => javascript.emit(body);
 
 export const compile = (source: string): Result<Compiled> => {
   const checked = checkSource(source);
   if (!checked.success) return checked;
-  const ir = code.program(checked.value.body);
-  return { success: true, value: { ...checked.value, ir, javascript: javascript.emit(ir) } };
+  return { success: true, value: { ...checked.value, javascript: emit(checked.value) } };
 };
 
 if (import.meta.main) {

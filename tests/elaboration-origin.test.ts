@@ -1,33 +1,37 @@
 import type { Result } from "langkit";
-import type { Program, Value } from "langkit/ir";
+import type { Body, Value } from "langkit/ir";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { compile as compileHM } from "../examples/hm/hm.ts";
 
-function initializers<T>(program: Program<T>): readonly Value<T>[] {
-  const result: Value<T>[] = [];
-  const tasks = [program.body];
-  const descriptors = new Map(program.operations.map(descriptor => [descriptor.id, descriptor]));
-  while (tasks.length) {
-    const body = tasks.pop()!;
-    for (const declaration of body.declarations) result.push(declaration.value);
-    const values = [...body.declarations.map(declaration => declaration.value), body.result];
-    while (values.length) {
-      const value = values.pop()!;
-      const descriptor = descriptors.get(value.operationId)!;
-      values.push(...descriptor.children(value.node));
-      tasks.push(...descriptor.scopedBodies(value.node).map(scoped => scoped.body));
+function initializers<T>(body: Body<T>): Value<T>[] {
+  const nested = (value: Value<T>): Value<T>[] => {
+    switch (value.kind) {
+      case "binary":
+        return [...nested(value.left), ...nested(value.right)];
+      case "call":
+        return [...nested(value.fn), ...nested(value.arg)];
+      case "fn":
+      case "block":
+        return initializers(value.body);
+      case "conditional":
+        return [...nested(value.cond), ...initializers(value.then), ...initializers(value.else)];
+      default:
+        return [];
     }
-  }
-  return result;
+  };
+  return [
+    ...body.declarations.flatMap((declaration) => [declaration.value, ...nested(declaration.value)]),
+    ...nested(body.result),
+  ];
 }
 
-function checkOrigins<T>(name: string, compile: (source: string) => Result<{ readonly ir: Program<T>; }>): void {
+function checkOrigins<T>(name: string, compile: (source: string) => Result<{ readonly body: Body<T>; }>): void {
   for (const source of ["let x = 1 in x", "let x = (let y = 1 in y) in x"]) {
     test(`${name} retains let-initializer IR origins: ${source}`, () => {
       const compiled = compile(source);
       assert(compiled.success);
-      const literals = initializers(compiled.value.ir).filter(value => value.node.kind === "literal");
+      const literals = initializers(compiled.value.body).filter((value) => value.kind === "literal");
       assert.equal(literals.length, 1);
       const span = literals[0]!.span;
       assert(span);

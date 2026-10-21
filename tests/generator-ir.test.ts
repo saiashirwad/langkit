@@ -1,24 +1,15 @@
 import { type Check, check, fail, lookup, run, scoped } from "langkit";
 import { type Body, create, type Declaration, type Reference, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
-import { printingJavaScript } from "langkit/javascript/printing";
-import { printing } from "langkit/operations/printing";
+import { emit } from "langkit/javascript";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 
-const printingSet = printing<string>();
-const code = create<string>().use(printingSet);
-const javascript = createJavaScriptEmitter(
-  coreJavaScript(code.coreDescriptors),
-  printingJavaScript(printingSet.descriptors),
-);
-const emptyBody = (result: Value<string>): Body<string> => ({ declarations: [], result });
+const code = create<string>();
 const evaluate = (body: Body<string>, output: unknown[] = []) =>
   runInNewContext(
-    javascript.emit(code.program(body)),
+    emit(body),
     { console: { log: (value: unknown) => output.push(value) } },
     { timeout: 1000 },
   );
@@ -147,17 +138,6 @@ test("yield-star helpers compose raw declaration generators with checks", () => 
     assert.deepEqual(body.value.declarations.map(({ binding }) => binding.name), ["left", "right", "twice"]);
     assert.equal(evaluate(body.value), 84);
   }
-});
-
-test("program construction validates descriptor scope and duplicate identities", () => {
-  const local = code.binding("local", "number");
-  assert.throws(() => code.program(emptyBody(code.ref(local))));
-  const duplicate = code.binding("duplicate", "number");
-  const body: Body<string> = {
-    declarations: [{ binding: duplicate, value: number(1) }, { binding: duplicate, value: number(2) }],
-    result: code.ref(duplicate),
-  };
-  assert.throws(() => code.program(body));
 });
 
 test("mixed elaboration preserves diagnostics and rolls back abandoned declarations", () => {
