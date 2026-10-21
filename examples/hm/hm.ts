@@ -316,7 +316,10 @@ export type Compiled = {
   readonly type: Type;
   readonly ir: Program<Type>;
   readonly javascript: string;
+  readonly result: Span;
 };
+
+const finalExpression = (expr: Expr): Expr => expr.kind === "let" ? finalExpression(expr.body) : expr;
 
 const parse = (source: string): Result<Expr> => {
   const parsed = program.parse(source);
@@ -359,6 +362,7 @@ export const compile = (source: string): Result<Compiled> => {
       type: built.value.result.type,
       ir,
       javascript: javascript.emit(ir),
+      result: finalExpression(parsed.value).span,
     },
   };
 };

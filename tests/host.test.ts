@@ -5,11 +5,13 @@ import { join, resolve } from "node:path";
 import { test } from "node:test";
 import { compile, fragment, isolatedProject, root } from "../tools/type-contracts.ts";
 
+type Misuse = { readonly original: string; readonly replacement: string; readonly code: `TS${number}`; };
+
 type HostCase = {
   readonly language: string;
   readonly consumer: string;
   readonly output: string;
-  readonly misuse: { readonly original: string; readonly replacement: string; readonly code: `TS${number}`; };
+  readonly misuses: readonly Misuse[];
   readonly guestError: {
     readonly file: string;
     readonly source: string;
@@ -23,16 +25,44 @@ const cases: readonly HostCase[] = [
     language: "toy",
     consumer: "examples/typescript/toy.ts",
     output: "42\n",
-    misuse: {
+    misuses: [{
       original: "const answer: number = main;",
       replacement: "const answer: string = main;",
       code: "TS2322",
-    },
+    }],
     guestError: {
       file: "examples/toy/main.toy",
       source: "let x = 1 in x + true\n",
       at: "true",
       message: "Expected number, found boolean",
+    },
+  },
+  {
+    language: "hm",
+    consumer: "examples/typescript/hm.ts",
+    output: "42 true 5 hey!!\n",
+    misuses: [
+      {
+        original: "const total: number = answer;",
+        replacement: "const total: string = answer;",
+        code: "TS2322",
+      },
+      {
+        original: "twice((n: number) => n + 2)(1)",
+        replacement: "twice((n: number) => n + 2)(\"one\")",
+        code: "TS2345",
+      },
+      {
+        original: "(s: string) => s.length)",
+        replacement: "(s: boolean) => 1)",
+        code: "TS2322",
+      },
+    ],
+    guestError: {
+      file: "examples/hm/main.hm",
+      source: "let x = 1 in x + true\n",
+      at: "true",
+      message: "Cannot unify boolean with number",
     },
   },
 ];
@@ -75,23 +105,25 @@ const position = (source: string, index: number) => {
 for (const host of cases) {
   test(`${host.language}: tsc types the consumer through the content mapper`, () => {
     const consumer = readFileSync(join(root, host.consumer), "utf8");
-    const seed = fragment(consumer, host.misuse.original);
-    const misused = consumer.slice(0, seed.index) + host.misuse.replacement
-      + consumer.slice(seed.index + seed.text.length);
     project(host.consumer, {}, (directory) => {
       const clean = typecheck(directory);
       assert.equal(clean.status, 0, clean.output);
     });
-    project(host.consumer, { [host.consumer]: misused }, (directory) => {
-      const checked = typecheck(directory);
-      assert.notEqual(checked.status, 0, "misuse must fail");
-      assert.deepEqual(
-        checked.errors.map(({ file, line, source }) => ({ file, line, source })),
-        [{ file: join(directory, host.consumer), line: position(misused, seed.index).line, source: "TS" }],
-        checked.output,
-      );
-      assert.ok(checked.output.includes(`error ${host.misuse.code}:`), checked.output);
-    });
+    for (const misuse of host.misuses) {
+      const seed = fragment(consumer, misuse.original);
+      const misused = consumer.slice(0, seed.index) + misuse.replacement
+        + consumer.slice(seed.index + seed.text.length);
+      project(host.consumer, { [host.consumer]: misused }, (directory) => {
+        const checked = typecheck(directory);
+        assert.notEqual(checked.status, 0, `${misuse.replacement} must fail`);
+        assert.deepEqual(
+          checked.errors.map(({ file, line, source }) => ({ file, line, source })),
+          [{ file: join(directory, host.consumer), line: position(misused, seed.index).line, source: "TS" }],
+          checked.output,
+        );
+        assert.ok(checked.output.includes(`error ${misuse.code}:`), checked.output);
+      });
+    }
   });
 
   test(`${host.language}: the loader runs the consumer`, () => {

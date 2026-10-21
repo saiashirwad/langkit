@@ -215,6 +215,13 @@ try {
       type: "main: number",
       guest: "examples/toy/main.toy",
     },
+    {
+      consumer: "examples/typescript/hm.ts",
+      anchor: "import compose",
+      offset: 7,
+      type: "main: <A, B>(x: (x: A) => B) => <C>(x: (x: C) => A) => (x: C) => B",
+      guest: "examples/hm/compose.hm",
+    },
   ];
   for (const { consumer, anchor, offset, type, guest } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");
