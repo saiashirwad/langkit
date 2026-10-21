@@ -1,7 +1,7 @@
 // Compile-time contracts, checked by pnpm typecheck.
 import { type Check, check, get, pure, scoped, within } from "langkit";
-import { type Body, create, type Declaration, type Reference, type Value } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
+import * as ir from "langkit/ir";
+import type { Body, Reference, Value } from "langkit/ir";
 
 const number = scoped(0);
 const narrow = scoped<0>(0);
@@ -17,71 +17,34 @@ within(number, "wrong", pure(0));
 const widened: typeof number = narrow;
 void widened;
 
-const code = create<"number" | "boolean">();
-const value: Value<"number" | "boolean"> = code.literal("number", 1);
+type Small = "number" | "boolean";
+const value: Value<Small> = ir.literal<Small>("number", 1);
 void value;
 // @ts-expect-error IR carries this language's type universe, not arbitrary labels.
-code.literal("string", 1);
-const binding = code.binding("x", "number");
-code.ref(binding, "boolean");
+ir.literal<Small>("string", 1);
+const binding = ir.binding<Small>("x", "number");
+const instantiated: Value<Small> = ir.ref(binding, "boolean");
+void instantiated;
 // @ts-expect-error Instantiated references must still use the language's type universe.
-code.ref(binding, "string");
+const escaped: Value<Small> = ir.ref(binding, "string");
+void escaped;
 // @ts-expect-error Language type universes cannot silently cross.
 const other: Value<"text"> = value;
 void other;
 
-const recordLanguage = create<"number" | "record">();
-const recordValue = recordLanguage.record("record", [{ name: "answer", value: recordLanguage.literal("number", 42) }]);
-const selected: Value<"number" | "record"> = recordLanguage.field("number", recordValue, "answer");
+const recordValue = ir.record<"number" | "record">("record", [{ name: "answer", value: ir.literal("number", 42) }]);
+const selected: Value<"number" | "record"> = ir.field("number", recordValue, "answer");
 void selected;
-// @ts-expect-error Record payloads are checked against the language universe.
-recordLanguage.record("text", []);
 // @ts-expect-error Record values retain the language's payload universe.
 const otherRecord: Value<"text"> = recordValue;
 void otherRecord;
 
-const pureCode = create<"number">();
-const pureValue = pureCode.literal("number", 42);
-function* declareAnswer(): Generator<Declaration<"number">, Reference<"number">, unknown> {
-  return yield* pureCode.declare("answer", pureValue);
-}
-const pureBody: Body<"number"> = pureCode.body(function*() {
-  return yield* declareAnswer();
-});
-void pureBody;
-// @ts-expect-error The standalone generator body accepts Values, not Check computations.
-pureCode.body(pure(pureValue));
-
-const codeBuilder = elaboration(recordLanguage);
-const typedBinding = codeBuilder.binding("x", "number");
-const typedReference: Value<"number" | "record"> = codeBuilder.ref(typedBinding);
-const typedFeature: Value<"number" | "record"> = codeBuilder.field(
-  "number",
-  codeBuilder.record("record", [{ name: "answer", value: codeBuilder.literal("number", 42) }]),
-  "answer",
-);
-const rawDeclaration: Generator<Declaration<"number" | "record">, Reference<"number" | "record">, unknown> = codeBuilder
-  .declare("answer", codeBuilder.literal("number", 42));
-const mixedBody: Check<Body<"number" | "record">> = codeBuilder.body(function*() {
-  const ref = yield* codeBuilder.declare("answer", codeBuilder.literal("number", 42));
-  const loaded = yield* check(function*() {
-    return yield* pure(ref);
-  });
-  return loaded;
-});
-const checkedComputation: Check<Value<"number" | "record">> = codeBuilder.check(function*() {
-  return typedReference;
-});
-const checkedScope: Check<Value<"number" | "record">> = codeBuilder.scope(function*() {
-  return typedFeature;
-});
-void rawDeclaration;
-void mixedBody;
-void checkedComputation;
-void checkedScope;
-const directBody: Check<Body<"number" | "record">> = codeBuilder.body(pure(typedReference));
-const directScope: Check<Value<"number" | "record">> = codeBuilder.scope(pure(typedFeature));
-void directBody;
-void directScope;
-// @ts-expect-error Adapter declarations yield raw IR, not Check computations.
-codeBuilder.declare("wrong", pure(typedReference));
+const answer: Check<Reference<"number">> = ir.declare("answer", ir.literal<"number">("number", 42));
+const answerBody: Check<Body<"number">> = ir.body(answer);
+const answerScope: Check<Value<"number">> = ir.scope(answer);
+void answerBody;
+void answerScope;
+// @ts-expect-error A body collects a checked value, not a bare one.
+ir.body(ir.literal("number", 42));
+// @ts-expect-error Declarations take IR values, not checks.
+ir.declare("wrong", answer);

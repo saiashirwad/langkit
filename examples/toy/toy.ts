@@ -1,7 +1,7 @@
-import { bind, type Check, fail, lookup, pure, render, type Result, run, scoped, type Span } from "langkit";
+import { bind, type Check, check, fail, lookup, pure, render, type Result, run, scoped, type Span } from "langkit";
 import { type Analysis, create as createAnalysis, highlight, type TokenRule, unanalyzed } from "langkit/analysis";
-import { type Binding, type Body, create, type Operator, type Value } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
+import type { Binding, Body, Operator, Value } from "langkit/ir";
+import * as ir from "langkit/ir";
 import * as javascript from "langkit/javascript";
 import {
   between,
@@ -208,7 +208,6 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-const code = elaboration(create<Type>());
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Binding<Type>>>(new Map());
 
@@ -218,15 +217,15 @@ const expect = (value: Value<Type>, type: Type): Check<void> =>
     : fail(`Expected ${show(type)}, found ${show(value.type)}`).at(value.span).recover();
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
-  code.check(function*() {
+  check(function*() {
     switch (expr.kind) {
       case "number":
         if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
-        return code.literal(number, expr.value);
+        return ir.literal(number, expr.value);
       case "boolean":
-        return code.literal(boolean, expr.value);
+        return ir.literal(boolean, expr.value);
       case "name":
-        return code.ref(yield* lookup(env, expr.name));
+        return ir.ref(yield* lookup(env, expr.name));
       case "binary": {
         const left = yield* elaborate(expr.left);
         const right = yield* elaborate(expr.right);
@@ -237,21 +236,20 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           yield* expect(left, number);
           yield* expect(right, number);
         }
-        return code.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
+        return ir.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
       }
       case "let":
-        return yield* code.scope(function*() {
+        return yield* ir.scope(check(function*() {
           const initial = yield* elaborate(expr.value);
-          const value = yield* code.declare(expr.name, initial);
-          const binding = value.binding;
+          const { binding } = yield* ir.declare(expr.name, initial);
           yield* facts.define(binding, expr.nameSpan, binding.type.kind === "function" ? "function" : "variable");
           return yield* bind(env, [[expr.name, binding]], elaborate(expr.body));
-        });
+        }));
       case "fn": {
-        const param = code.binding(expr.param, expr.annotation);
+        const param = ir.binding(expr.param, expr.annotation);
         yield* facts.define(param, expr.paramSpan, "parameter");
-        const body = yield* code.body(bind(env, [[expr.param, param]], elaborate(expr.body)));
-        return code.fn(fn(param.type, body.result.type), param, body);
+        const body = yield* ir.body(bind(env, [[expr.param, param]], elaborate(expr.body)));
+        return ir.fn(fn(param.type, body.result.type), param, body);
       }
       case "call": {
         const callee = yield* elaborate(expr.fn);
@@ -260,25 +258,25 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         }
         const arg = yield* elaborate(expr.arg);
         yield* expect(arg, callee.type.param);
-        return code.call(callee.type.result, callee, arg);
+        return ir.call(callee.type.result, callee, arg);
       }
       case "if": {
         const cond = yield* elaborate(expr.cond);
         yield* expect(cond, boolean);
-        const then = yield* code.body(elaborate(expr.then));
-        const otherwise = yield* code.body(elaborate(expr.else));
+        const then = yield* ir.body(elaborate(expr.then));
+        const otherwise = yield* ir.body(elaborate(expr.else));
         yield* expect(otherwise.result, then.result.type);
-        return code.conditional(then.result.type, cond, then, otherwise);
+        return ir.conditional(then.result.type, cond, then, otherwise);
       }
     }
   }).flatMap((value) =>
-    code.check(function*() {
+    check(function*() {
       if (value.kind === "ref") yield* facts.reference(value.binding, expr.span);
       yield* facts.typed(value.type, expr.span);
-      return code.at(value, expr.span);
+      return ir.at(value, expr.span);
     })
   ).at(expr.span);
-export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => ir.body(elaborate(expr));
 
 export type Checked = { readonly type: Type; readonly body: Body<Type>; };
 export type Compiled = Checked & { readonly javascript: string; };

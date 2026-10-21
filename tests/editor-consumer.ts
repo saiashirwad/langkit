@@ -1,5 +1,6 @@
 import { type Check, check, pure } from "langkit";
-import { create, type RecordField, type Value } from "langkit/ir";
+import * as ir from "langkit/ir";
+import type { RecordField, Value } from "langkit/ir";
 import * as rank from "langkit/types/higher-rank";
 
 export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
@@ -8,7 +9,6 @@ export type IsNever<T> = [T] extends [never] ? true : false;
 export const prove = <T extends true>(): T => true as T;
 export type Type = rank.Type;
 
-const language = create<Type>();
 export type RecordValue = Extract<Value<Type>, { readonly kind: "record"; }>;
 export type LiteralValue = Extract<Value<Type>, { readonly kind: "literal"; }>;
 
@@ -63,5 +63,5 @@ export const freshVariable = check(function*() {
   return variable;
 });
 
-export const namedValue: Value<Type> = language.literal(rank.number, 42);
+export const namedValue: Value<Type> = ir.literal(rank.number, 42);
 export const namedCheck: Check<Value<Type>> = pure(namedValue);

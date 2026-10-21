@@ -17,69 +17,54 @@ Write the checker as a `switch` over your own AST inside a `check` generator. `b
 
 ## Build IR and emit JavaScript
 
-The IR is a closed tagged union, `Value<T>`, where `T` is your language's type. `create<T>()` gives constructors for every node kind. A body generator yields declarations with `yield* code.declare(...)` and returns its result. `emit(body)` from `langkit/javascript` turns a `Body<T>` into one JavaScript expression.
+The IR is a closed tagged union, `Value<T>`, where `T` is your language's type. `langkit/ir` exports one constructor per node kind. `declare` is a `Check` that adds a declaration to the enclosing `body` and returns a reference to it, so declarations and diagnostics share one `check` generator. `emit(body)` from `langkit/javascript` turns a `Body<T>` into one JavaScript expression.
 
 ```ts
-import { create } from "langkit/ir";
+import { check, fail, run } from "langkit";
+import * as ir from "langkit/ir";
 import { emit } from "langkit/javascript";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 
 type Type = "number" | "function";
-const code = create<Type>();
-const number = (n: number) => code.literal("number", n);
+const number = (n: number) => ir.literal<Type>("number", n);
 
-const argument = code.binding("argument", "number");
-const increment = code.fn("function", argument, function*() {
-  return code.binary("number", "+", code.ref(argument), number(1));
+const argument = ir.binding<Type>("argument", "number");
+const increment = ir.fn<Type>("function", argument, {
+  declarations: [],
+  result: ir.binary("number", "+", ir.ref(argument), number(1)),
 });
-const body = code.body(function*() {
-  const left = yield* code.declare("left", number(19));
-  const right = yield* code.declare("right", number(23));
-  const addOne = yield* code.declare("addOne", increment);
-  return code.call("number", addOne, code.binary("number", "+", left, right));
-});
-
-assert.equal(runInNewContext(emit(body)), 43);
-```
-
-`declareRecursive(binding, fn)` keeps the binding you pass, so the function can call itself. The IR trusts your checker: it does not re-check scope or types.
-
-### Integrating checking
-
-The core IR DSL remains pure and does not require `Check`. Pass the builder to `elaboration(builder)` from `langkit/ir/check`. The adapter adds generator-factory entrypoints: `code.check(factory)` composes yielded `Check` computations and raw `Declaration` yields, `code.body(factory)` collects declarations into a checked body, and `code.scope(factory)` builds a checked block value. Factories have the mixed yield channel `Check<unknown> | Declaration<T>` and return their ordinary result. Use these factories—not Check-argument overloads—to bridge diagnostics into IR. Raw `declare` and `declareRecursive` remain pure generators that yield one declaration and return its reference; declaration yields require an enclosing `code.body` (or another body factory using the same adapter). Pure builder methods such as `fn`, `conditional`, `block`, and `scope` remain Check-free and accept a `Body` or pure body factory.
-
-```ts
-import { fail, run } from "langkit";
-import { assign } from "langkit";
-import { create } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
-
-type Type = "number";
-const code = elaboration(create<Type>());
-const bodyResult = run(code.body(function*() {
-  const result = yield* code.check(function*() {
-    yield* fail("independent constraint failed").map(() => undefined).recover();
-    return code.literal("number", 42);
-  });
-  const answer = yield* code.declare("answer", result);
-  return answer;
+const program = ir.body(check(function*() {
+  const left = yield* ir.declare("left", number(19));
+  const right = yield* ir.declare("right", number(23));
+  const addOne = yield* ir.declare("addOne", increment);
+  return ir.call<Type>("number", addOne, ir.binary("number", "+", left, right));
 }));
 
-if (bodyResult.success) {
-  // Emit only this success branch; recovered diagnostics make run() fail.
-  void bodyResult.value;
-} else {
-  console.error(bodyResult.errors); // nonempty structured diagnostics
-}
+const built = run(program);
+assert(built.success);
+assert.equal(runInNewContext(emit(built.value)), 43);
 
-const cell = { value: 0 };
-const transaction = assign(cell, "value", 1).flatMap(() => fail("constraint conflict")).atomic();
-const rolledBack = run(transaction);
-if (rolledBack.success || cell.value !== 0) throw new Error("atomic rollback failed");
+const failed = run(ir.body(check(function*() {
+  yield* fail("independent constraint failed").recover();
+  return yield* ir.declare("answer", number(42));
+})));
+assert(!failed.success); // recovered diagnostics still fail the run, so nothing is emitted
 ```
 
+`declareRecursive(binding, fn)` keeps the binding you pass, so the function can call itself. `scope(check)` wraps a body in a block value. The IR trusts your checker: it does not re-check scope or types.
+
+## Checking
+
 `Check` failures are diagnostics; unexpected implementation exceptions propagate. `recover()` is for independent void checks: it records a diagnostic and continues, but `run` still returns failure when any recovered diagnostic exists. `Result<A>` is either `{ success: true, value: A }` or `{ success: false, errors: readonly [Diagnostic, ...Diagnostic[]] }`. Never emit a target program from a recovered-error result. `atomic()` restores run-local state on terminal failure or throw. Each `run` has fresh state storage.
+
+```ts
+import { assign, fail, run } from "langkit";
+
+const cell = { value: 0 };
+const rolledBack = run(assign(cell, "value", 1).flatMap(() => fail("constraint conflict")).atomic());
+if (rolledBack.success || cell.value !== 0) throw new Error("atomic rollback failed");
+```
 
 The state API separates mutable, checkpointable run-local values from immutable scoped environments: `state(init, checkpoint)` creates a `State` whose checkpoint callback returns a restore function; `scoped(initial)` creates a readonly `Scoped` binding. `get` reads either key. `within(key, update, body)` scopes an updated value only for the body, with `update` as the sole updater callback; `bind` extends a readonly map binding environment.
 

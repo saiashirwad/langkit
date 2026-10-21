@@ -14,8 +14,8 @@ import {
   within,
 } from "langkit";
 import { type Analysis, create as createAnalysis, highlight, unanalyzed } from "langkit/analysis";
-import { type Binding, type Body, create, type Value } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
+import type { Binding, Body, Value } from "langkit/ir";
+import * as ir from "langkit/ir";
 import * as javascript from "langkit/javascript";
 import { loadModules, type ModuleGraph, type ModuleOptions } from "langkit/modules";
 import { parseImports } from "langkit/modules/imports";
@@ -69,8 +69,6 @@ type Constructor = {
 
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[]; };
 
-const pureCode = create<Type>();
-const code = elaboration(pureCode);
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
@@ -147,7 +145,7 @@ const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> 
     .flatMap((value) =>
       check(function*() {
         yield* facts.typed(value.type, expr.span);
-        return code.at(value, expr.span);
+        return ir.at(value, expr.span);
       })
     )
     .at(expr.span);
@@ -169,20 +167,20 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
       if (expr.kind === "fn" && target.kind === "function") {
         const parameter = expr.annotation ? yield* resolve(expr.annotation) : target.param;
         if (expr.annotation) yield* subsume(target.param, parameter, current);
-        const binding = code.binding(expr.param, parameter);
+        const binding = ir.binding(expr.param, parameter);
         yield* facts.define(binding, expr.paramSpan, "parameter");
-        const body = yield* code.body(bind(
+        const body = yield* ir.body(bind(
           env,
           [[expr.param, { binding, scheme: mono(parameter) }]],
           checkExpr(expr.body, target.result),
         ));
-        return code.fn(expected, binding, body);
+        return ir.fn(expected, binding, body);
       }
       if (expr.kind === "if") {
         const cond = yield* checkExpr(expr.cond, boolean);
-        const then = yield* code.body(checkExpr(expr.then, expected));
-        const otherwise = yield* code.body(checkExpr(expr.else, expected));
-        return code.conditional(expected, cond, then, otherwise);
+        const then = yield* ir.body(checkExpr(expr.then, expected));
+        const otherwise = yield* ir.body(checkExpr(expr.else, expected));
+        return ir.conditional(expected, cond, then, otherwise);
       }
       if (expr.kind === "let") return yield* elaborateLet(expr, expected);
       if (expr.kind === "match") return yield* elaborateMatch(expr, expected);
@@ -193,7 +191,7 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
   );
 
 const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): Check<Value<Type>> =>
-  code.scope(function*() {
+  ir.scope(check(function*() {
     const environment = yield* get(env);
     const annotation = expr.annotation ? yield* resolve(expr.annotation) : undefined;
     let binding: Binding<Type>;
@@ -203,13 +201,13 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
         return yield* fail("Recursive bindings require a function initializer");
       }
       const type = annotation ?? (yield* fresh(yield* get(level)));
-      binding = code.binding(expr.name, type);
+      binding = ir.binding(expr.name, type);
       const initial = yield* bind(
         env,
         [[expr.name, { binding, scheme: mono(type) }]],
         checkExpr(expr.value, type),
       );
-      yield* code.declareRecursive(binding, initial);
+      yield* ir.declareRecursive(binding, initial);
       scheme = annotation
         ? mono(annotation)
         : yield* generalize(type, [...environment.values()].map((entry) => entry.scheme));
@@ -217,8 +215,7 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
       const initial = annotation
         ? yield* checkExpr(expr.value, annotation)
         : yield* elaborate(expr.value);
-      const value = yield* code.declare(expr.name, initial);
-      binding = value.binding;
+      binding = (yield* ir.declare(expr.name, initial)).binding;
       scheme = annotation
         ? mono(annotation)
         : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
@@ -233,7 +230,7 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
       [[expr.name, { binding, scheme }]],
       expected ? checkExpr(expr.body, expected) : elaborate(expr.body),
     );
-  });
+  }));
 
 const elaborateMatch = (
   expr: Extract<Expr, { kind: "match"; }>,
@@ -254,12 +251,12 @@ const elaborateMatch = (
       if (pattern.kind === "binding") {
         if (pattern.name === "_") {
           fallback = {
-            body: yield* code.body(checkExpr(branch.body, result)),
+            body: yield* ir.body(checkExpr(branch.body, result)),
           };
         } else {
-          const binding = code.binding(pattern.name, value.type);
+          const binding = ir.binding(pattern.name, value.type);
           yield* facts.define(binding, pattern.span);
-          const body = yield* code.body(bind(
+          const body = yield* ir.body(bind(
             env,
             [[pattern.name, { binding, scheme: mono(value.type) }]],
             checkExpr(branch.body, result),
@@ -289,7 +286,7 @@ const elaborateMatch = (
       for (const field of pattern.fields) {
         const arrow = prune(type);
         if (arrow.kind !== "function") throw new Error("Constructor arity does not match its type");
-        const binding = code.binding(field.name, arrow.param);
+        const binding = ir.binding(field.name, arrow.param);
         bindings.push(binding);
         if (field.name !== "_") {
           if (entries.has(field.name)) {
@@ -301,7 +298,7 @@ const elaborateMatch = (
         type = arrow.result;
       }
       yield* unify(value.type, type).at(pattern.span);
-      const body = yield* code.body(bind(env, entries, checkExpr(branch.body, result)));
+      const body = yield* ir.body(bind(env, entries, checkExpr(branch.body, result)));
       cases.push({ tag: constructor.tag, bindings, body });
     }
     if (!fallback) {
@@ -315,7 +312,7 @@ const elaborateMatch = (
         return yield* fail(`Non-exhaustive match; missing: ${missing.join(", ")}`);
       }
     }
-    return code.match(result, value, cases, fallback);
+    return ir.match(result, value, cases, fallback);
   }).at(expr.span);
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
@@ -326,15 +323,15 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       switch (expr.kind) {
         case "number":
           if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
-          return code.literal(number, expr.value);
+          return ir.literal(number, expr.value);
         case "boolean":
-          return code.literal(boolean, expr.value);
+          return ir.literal(boolean, expr.value);
         case "string":
-          return code.literal(string, expr.value);
+          return ir.literal(string, expr.value);
         case "name": {
           const { binding, scheme } = yield* lookup(env, expr.name);
           yield* facts.reference(binding, expr.span);
-          return code.ref(binding, yield* instantiateForall(yield* instantiate(scheme, current), current));
+          return ir.ref(binding, yield* instantiateForall(yield* instantiate(scheme, current), current));
         }
         case "record": {
           const fields: { name: string; value: Value<Type>; }[] = [];
@@ -348,12 +345,12 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
             fields.push({ name: field.name, value });
             types.set(field.name, value.type);
           }
-          if (!expr.base) return code.record(record(row(types)), fields);
+          if (!expr.base) return ir.record(record(row(types)), fields);
           const base = yield* elaborate(expr.base);
           const tail = yield* freshRow([], current);
           yield* unify(base.type, record(row(new Map(), tail))).at(expr.base.span);
           yield* exclude(row(new Map(), tail), types.keys()).at(expr.base.span);
-          return code.record(record(row(types, tail)), fields, base);
+          return ir.record(record(row(types, tail)), fields, base);
         }
         case "field": {
           const value = yield* elaborate(expr.record);
@@ -362,14 +359,14 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
             value.type,
             record(row(new Map([[expr.name, type]]), yield* freshRow([expr.name], current))),
           );
-          return code.field(type, value, expr.name);
+          return ir.field(type, value, expr.name);
         }
         case "binary": {
           const left = yield* elaborate(expr.left);
           const right = yield* elaborate(expr.right);
           yield* subsume(left.type, number, current).at(expr.left.span).recover();
           yield* subsume(right.type, number, current).at(expr.right.span).recover();
-          return code.binary(
+          return ir.binary(
             expr.op === ">" || expr.op === "==" ? boolean : number,
             expr.op,
             left,
@@ -380,24 +377,24 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           return yield* elaborateLet(expr);
         case "fn": {
           const type = expr.annotation ? yield* resolve(expr.annotation) : yield* fresh(current);
-          const binding = code.binding(expr.param, type);
+          const binding = ir.binding(expr.param, type);
           yield* facts.define(binding, expr.paramSpan, "parameter");
-          const body = yield* code.body(
+          const body = yield* ir.body(
             bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body)),
           );
-          return code.fn(fn(type, body.result.type), binding, body);
+          return ir.fn(fn(type, body.result.type), binding, body);
         }
         case "call": {
           const callee = yield* elaborate(expr.fn);
           const type = yield* expectFunction(callee.type, current).at(expr.fn.span);
           const arg = yield* checkExpr(expr.arg, type.param);
-          return code.call(type.result, callee, arg);
+          return ir.call(type.result, callee, arg);
         }
         case "if": {
           const cond = yield* checkExpr(expr.cond, boolean);
-          const then = yield* code.body(elaborate(expr.then));
-          const otherwise = yield* code.body(checkExpr(expr.else, then.result.type));
-          return code.conditional(then.result.type, cond, then, otherwise);
+          const then = yield* ir.body(elaborate(expr.then));
+          const otherwise = yield* ir.body(checkExpr(expr.else, then.result.type));
+          return ir.conditional(then.result.type, cond, then, otherwise);
         }
         case "annotated":
           return yield* checkExpr(expr.value, yield* resolve(expr.annotation));
@@ -406,9 +403,9 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       }
     }),
   );
-export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => ir.body(elaborate(expr));
 const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> =>
-  code.check(function*() {
+  check(function*() {
     const existing = yield* get(definitions);
     const added = new Map<string, Definition>();
     for (const declaration of declarations) {
@@ -437,7 +434,7 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
     return yield* bind(
       definitions,
       added,
-      code.check(function*() {
+      check(function*() {
         const known = yield* get(constructors);
         const addedConstructors = new Map<string, Constructor>();
         const entries = new Map<string, Entry>();
@@ -465,26 +462,23 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
                   field.span,
                 );
               }
-              fields.push(code.binding("field", type));
+              fields.push(ir.binding("field", type));
             }
             const tag = `${owner.name}.${syntax.name}`;
-            let initial = code.variant(
+            let initial = ir.variant(
               result,
               tag,
-              fields.map((field) => code.ref(field)),
+              fields.map((field) => ir.ref(field)),
             );
             for (const field of fields.toReversed()) {
-              initial = code.fn(
+              initial = ir.fn(
                 fn(field.type, initial.type),
                 field,
-                pureCode.body(function*() {
-                  return initial;
-                }),
+                { declarations: [], result: initial },
               );
             }
             const type = variables.length ? forall(variables, initial.type) : initial.type;
-            const value = yield* code.declare(syntax.name, { ...initial, type });
-            const binding = value.binding;
+            const { binding } = yield* ir.declare(syntax.name, { ...initial, type });
             yield* facts.define(
               binding,
               syntax.nameSpan,
@@ -542,17 +536,15 @@ const buildModules = (
   external: Map<symbol, Export>,
   expose: (root: Root) => void = () => {},
 ): Check<Body<Type>> =>
-  code.body(function*() {
-    const param = code.binding("value", yield* fresh());
+  ir.body(check(function*() {
+    const param = ir.binding("value", yield* fresh());
     const unit = record(row());
-    const printed = yield* code.declare(
+    const printed = yield* ir.declare(
       "print",
-      code.fn(
+      ir.fn(
         fn(param.type, unit),
         param,
-        pureCode.body(function*() {
-          return code.print(unit, code.ref(param));
-        }),
+        { declarations: [], result: ir.print(unit, ir.ref(param)) },
       ),
     );
     const primitive: Entry = {
@@ -628,10 +620,10 @@ const buildModules = (
       );
       const bundled = yield* facts.ignore(
         inEnvironment(
-          code.scope(function*() {
+          ir.scope(check(function*() {
             const initial = yield* withTypes(
               parsed.value.types,
-              code.check(function*() {
+              check(function*() {
                 const value = yield* elaborate(parsed.value.body);
                 moduleDefinitions = yield* get(definitions);
                 moduleConstructors = yield* get(constructors);
@@ -641,25 +633,25 @@ const buildModules = (
             if (prune(initial.type).kind !== "record") {
               return yield* fail(`Imported module must return a record: ${module.uri}`).at(parsed.value.body.span);
             }
-            const result = yield* code.declare("exports", initial);
+            const result = yield* ir.declare("exports", initial);
             const fields = [{ name: "@values", value: result as Value<Type> }];
             for (const name of ownConstructors.keys()) {
-              fields.push({ name: `@${name}`, value: code.ref(moduleConstructors.get(name)!.binding) });
+              fields.push({ name: `@${name}`, value: ir.ref(moduleConstructors.get(name)!.binding) });
             }
-            return code.record(
+            return ir.record(
               record(row(new Map(fields.map((field) => [field.name, field.value.type])))),
               fields,
             );
-          }),
+          })),
         ),
       ).inDocument(module.uri);
-      const bundle = yield* code.declare("module", bundled);
+      const bundle = yield* ir.declare("module", bundled);
       const bundledType = prune(bundle.type);
       if (bundledType.kind !== "record") throw new Error("Expected module bundle");
       const resultType = flatten(bundledType.row).fields.get("@values")!;
       const type = prune(resultType);
       if (type.kind !== "record") throw new Error("Expected record exports");
-      const result = code.field(resultType, bundle, "@values");
+      const result = ir.field(resultType, bundle, "@values");
       const entries = new Map(imported);
       const constructorEntries = new Map(importedConstructors);
       for (const [name, span] of ownConstructors) {
@@ -667,8 +659,7 @@ const buildModules = (
           return yield* fail(`Conflicting exported name: ${name}`).at(span).inDocument(module.uri);
         }
         const original = moduleConstructors.get(name)!;
-        const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
-        const binding = value.binding;
+        const { binding } = yield* ir.declare(name, ir.field(original.type, bundle, `@${name}`));
         entries.set(name, {
           binding,
           scheme: mono(original.type),
@@ -685,7 +676,7 @@ const buildModules = (
             .at(origins.get(name) ?? parsed.value.body.span)
             .inDocument(module.uri);
         }
-        const reference = yield* code.declare(name, code.field(fieldType, result, name));
+        const reference = yield* ir.declare(name, ir.field(fieldType, result, name));
         entries.set(name, {
           binding: reference.binding,
           scheme: yield* generalize(fieldType, [...environment.values()].map((entry) => entry.scheme)),
@@ -700,7 +691,7 @@ const buildModules = (
       });
     }
     throw new Error("Module graph has no root");
-  });
+  }));
 
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });

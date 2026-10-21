@@ -128,8 +128,8 @@ export const probes: readonly Probe[] = [
   {
     id: "literal-signature",
     method: "signatureHelp",
-    anchor: "language.literal(rank.number, 42)",
-    offset: 30,
+    anchor: "ir.literal(rank.number, 42)",
+    offset: 24,
     require: ["type: rank.Type", "value: number | boolean | string"],
     activeParameter: 1,
   },

@@ -31,7 +31,7 @@ Arithmetic, `>`, and `==` are numeric. Boolean equality is deliberately unsuppor
 
 ## Compile, analyze, and run
 
-[`hm.ts`](./hm.ts) exports `compile(source)` for parsing, inference, and compilation, and `analyze(source)` for source-oriented type and editor facts. Type checking and elaboration are generator-based: `yield*` composes language-owned `Check` inference computations with raw portable IR declarations. HM's solver allocations and constraints are run-local; journaled constraints and atomic checking allow a failed constraint operation to roll back its partial mutations. The optional elaboration adapter collects declarations, and reusable consumers use the language-owned `elaborateBody` rather than a foreign adapter wrapper.
+[`hm.ts`](./hm.ts) exports `compile(source)` for parsing, inference, and compilation, and `analyze(source)` for source-oriented type and editor facts. Type checking and elaboration are generator-based: `yield*` composes language-owned `Check` inference computations with IR declarations. HM's solver allocations and constraints are run-local; journaled constraints and atomic checking allow a failed constraint operation to roll back its partial mutations. `ir.body` collects the declarations, and `elaborateBody` is the reusable entry point.
 
 Independent operand checks can recover multiple span-bearing diagnostics, but recovery is limited to checks that can safely continue; it does not imply every branch recovers. Diagnostics are plural, and compilation does not emit a target program when errors were recovered. Import `program` for parsing and `show` for the type printer. Import these APIs with a relative import such as `import { compile, analyze } from "./hm.ts"`.
 

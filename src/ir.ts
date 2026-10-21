@@ -1,10 +1,10 @@
+import { type Check, check, get, push, scoped, within } from "./check.ts";
 import type { Span } from "./diagnostic.ts";
 
 export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
 export type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T; };
 export type Declaration<T> = { readonly recursive?: true; readonly binding: Binding<T>; readonly value: Value<T>; };
 export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readonly result: Value<T>; };
-export type BodySource<T> = Body<T> | (() => Generator<Declaration<T>, Value<T>, unknown>);
 export type RecordField<T> = { readonly name: string; readonly value: Value<T>; };
 export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T>; };
 export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T>; };
@@ -74,67 +74,44 @@ export const match = <T>(
 ): Value<T> =>
   fallback ? { type, kind: "match", value: matched, cases, fallback } : { type, kind: "match", value: matched, cases };
 export const print = <T>(type: T, printed: Value<T>): Value<T> => ({ type, kind: "print", value: printed });
-export const at = <T>(value: Value<T>, span: Span): Value<T> => ({ ...value, span });
-
-export const body = <T>(source: BodySource<T>): Body<T> => {
-  if (typeof source !== "function") return source;
-  const declarations: Declaration<T>[] = [];
-  const iterator = source();
-  let step = iterator.next();
-  for (; !step.done; step = iterator.next()) declarations.push(step.value);
-  return { declarations, result: step.value };
-};
-export const fn = <T>(type: T, param: Binding<T>, source: BodySource<T>): Value<T> => ({
-  type,
-  kind: "fn",
-  param,
-  body: body(source),
-});
-export const conditional = <T>(type: T, cond: Value<T>, then: BodySource<T>, otherwise: BodySource<T>): Value<T> => ({
+export const fn = <T>(type: T, param: Binding<T>, body: Body<T>): Value<T> => ({ type, kind: "fn", param, body });
+export const conditional = <T>(type: T, cond: Value<T>, then: Body<T>, otherwise: Body<T>): Value<T> => ({
   type,
   kind: "conditional",
   cond,
-  then: body(then),
-  else: body(otherwise),
+  then,
+  else: otherwise,
 });
-export const block = <T>(type: T, source: BodySource<T>): Value<T> => ({ type, kind: "block", body: body(source) });
-export const scope = <T>(source: BodySource<T>): Value<T> => {
-  const built = body(source);
-  return block(built.result.type, built);
+export const block = <T>(type: T, body: Body<T>): Value<T> => ({ type, kind: "block", body });
+export const at = <T>(value: Value<T>, span: Span): Value<T> => ({ ...value, span });
+
+const active = scoped<Declaration<unknown>[] | undefined>(undefined);
+
+/** Builds the declaration per run, so a check reused across runs mints fresh bindings. */
+const collect = <T>(declaration: () => Declaration<T>): Check<Reference<T>> =>
+  check(function*() {
+    const declarations = yield* get(active);
+    if (!declarations) throw new Error("IR declarations need an enclosing body");
+    const declared = declaration();
+    yield* push(declarations, declared);
+    return ref(declared.binding);
+  });
+
+export const declare = <T>(name: string, initial: Value<T>): Check<Reference<T>> =>
+  collect(() => ({ binding: binding(name, initial.type), value: initial }));
+
+export const declareRecursive = <T>(target: Binding<T>, initial: Value<T>): Check<Reference<T>> => {
+  if (initial.kind !== "fn") throw new Error("Recursive declarations require a function initializer");
+  return collect(() => ({ binding: target, value: initial, recursive: true }));
 };
 
-export function* declare<T>(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown> {
-  const target = binding(name, initial.type);
-  yield { binding: target, value: initial };
-  return ref(target);
-}
-export function* declareRecursive<T>(
-  target: Binding<T>,
-  initial: Value<T>,
-): Generator<Declaration<T>, Reference<T>, unknown> {
-  if (initial.kind !== "fn") throw new Error("Recursive declarations require a function initializer");
-  yield { binding: target, value: initial, recursive: true };
-  return ref(target);
-}
+/** Collects the declarations `result` makes into a fresh body; the copy survives a later rollback. */
+export const body = <T>(result: Check<Value<T>>): Check<Body<T>> =>
+  check(function*() {
+    const declarations: Declaration<T>[] = [];
+    const value = yield* within(active, () => declarations, result);
+    return { declarations: [...declarations], result: value };
+  });
 
-export const create = <T>() => ({
-  binding: binding<T>,
-  ref: ref<T>,
-  body: body<T>,
-  declare: declare<T>,
-  declareRecursive: declareRecursive<T>,
-  literal: literal<T>,
-  binary: binary<T>,
-  call: call<T>,
-  fn: fn<T>,
-  conditional: conditional<T>,
-  block: block<T>,
-  scope: scope<T>,
-  record: record<T>,
-  field: field<T>,
-  variant: variant<T>,
-  match: match<T>,
-  print: print<T>,
-  at: at<T>,
-});
-export type Builder<T> = ReturnType<typeof create<T>>;
+export const scope = <T>(result: Check<Value<T>>): Check<Value<T>> =>
+  body(result).map((built) => block(built.result.type, built));

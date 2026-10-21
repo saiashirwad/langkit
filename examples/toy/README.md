@@ -34,7 +34,7 @@ There is no recursion, polymorphism, record/data type, or mutable source-languag
 
 ## Compile, analyze, and run
 
-The compiler exports `compile(source)`, which returns either the compiled portable IR expression or diagnostics, and `analyze(source)`, which returns source analysis including expression types and editor facts. The checker is generator-based: `yield*` composes language-owned `Check` inference with raw, portable IR declarations. Toy's types are immutable, so checking needs no solver state. The optional elaboration adapter gathers yielded declarations, while Toy owns the reusable `elaborateBody` entry point; reusable consumers call that language-owned entry point rather than wrapping Toy in a foreign adapter.
+The compiler exports `compile(source)`, which returns either the compiled portable IR expression or diagnostics, and `analyze(source)`, which returns source analysis including expression types and editor facts. The checker is generator-based: `yield*` composes language-owned `Check` inference with IR declarations. Toy's types are immutable, so checking needs no solver state. `ir.body` collects the declarations, and `elaborateBody` is the reusable entry point.
 
 Independent operand checks can recover and report multiple diagnostics with source spans. Recovery is limited to checks that can continue independently; it is not a claim that every error branch recovers. Diagnostics are plural, and a compilation with errors does not emit a target program. Import `program` for parsing and use `elaborateBody` for language-owned body elaboration. The language server in [`toy-lsp.ts`](./toy-lsp.ts) serves `analyze` over stdio; launch it with `pnpm toy:lsp` from the repository root.
 

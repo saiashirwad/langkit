@@ -8,7 +8,6 @@
     ".": "./src/index.ts",
     "./parse": "./src/parse.ts",
     "./ir": "./src/ir.ts",
-    "./ir/check": "./src/ir/check.ts",
     "./javascript": "./src/javascript.ts",
     "./types/*": "./src/types/*.ts",
     "./modules": "./src/modules.ts",
