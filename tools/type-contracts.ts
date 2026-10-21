@@ -30,7 +30,9 @@ export function compile(config: string, extra: string[] = []) {
   return { status: result.status, output: `${result.stdout}${result.stderr}` };
 }
 
-export function isolatedProject(): { directory: string; config: string; dispose: () => void; } {
+export function isolatedProject(
+  files: readonly string[] = ["consumer.ts"],
+): { directory: string; config: string; dispose: () => void; } {
   const directory = mkdtempSync(join(root, ".tooling-contract-"));
   try {
     cpSync(join(root, "src"), join(directory, "src"), { recursive: true });
@@ -42,7 +44,7 @@ export function isolatedProject(): { directory: string; config: string; dispose:
       JSON.stringify({
         extends: join(root, "tsconfig.json"),
         compilerOptions: { composite: false, incremental: false },
-        files: ["consumer.ts"],
+        files,
         include: [],
         exclude: [],
       }),
