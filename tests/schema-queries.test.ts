@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
+import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
 import { test } from "node:test";
 import { compile } from "../examples/schema/schema.ts";
+import { statement } from "../examples/schema/sql.ts";
 
 const models = `model User = { id : Int |> primaryKey |> autoIncrement, email : String |> unique }
   |> many posts = Post.author
@@ -164,4 +166,74 @@ test("queries: each mistake is one guest diagnostic at the guest span it is abou
       replacement,
     );
   }
+});
+
+const compiledBlog = () => {
+  const result = compile(blog);
+  assert.ok(result.success);
+  const db = new DatabaseSync(":memory:");
+  db.exec(result.value.sql);
+  const sql = new Map(result.value.queries.map((query) => [query.name.name, statement(query)]));
+  return { db, queries: result.value.queries, sql };
+};
+
+test("sql: no correlated subquery in any blog statement scans a table", () => {
+  const { db, queries, sql } = compiledBlog();
+  assert.equal(queries.length, 12);
+  for (const query of queries) {
+    const nulls = Object.fromEntries(query.params.map((param) => [param.name.name, null]));
+    const plan = db.prepare(`EXPLAIN QUERY PLAN ${sql.get(query.name.name)}`).all(nulls);
+    const children = Map.groupBy(plan, (row) => Number(row.parent));
+    const below = (id: number): readonly string[] =>
+      (children.get(id) ?? []).flatMap((row) => [String(row.detail), ...below(Number(row.id))]);
+    for (const row of plan.filter((row) => String(row.detail).startsWith("CORRELATED"))) {
+      const details = below(Number(row.id));
+      const coroutines = new Set(details.flatMap((detail) => /^CO-ROUTINE (\S+)/.exec(detail)?.[1] ?? []));
+      const scans = details.filter((detail) => /^SCAN (\S+)/.test(detail) && !coroutines.has(detail.split(" ")[1]!));
+      assert.deepEqual(scans, [], `${query.name.name}: ${details.join("; ")}`);
+    }
+  }
+});
+
+test("sql: every blog statement runs, pages before projecting, and nests JSON with real booleans", () => {
+  const { db, sql } = compiledBlog();
+  const exec = (name: string) => db.prepare(sql.get(name)!);
+  const id = (row: Record<string, SQLOutputValue> | undefined): number => Number(row!.id);
+  const sai = id(exec("createUser").get({ email: "sai@example.com", role: "Admin" }));
+  const kim = id(exec("createUser").get({ email: "kim@example.com", role: "Member" }));
+  const hello = id(exec("createPost").get({ author: sai, title: "Hello", featured: 1, at: "2026-01-01 10:00:00" }));
+  const draft = id(exec("createPost").get({ author: sai, title: "Draft", featured: 0, at: "2026-01-02 10:00:00" }));
+  exec("createPost").get({ author: kim, title: "Scratch", featured: 0, at: "2026-01-03 10:00:00" });
+  const comments: readonly (readonly [string, number])[] = [
+    ["2026-01-01 11:00:00", 0],
+    ["2026-01-01 12:00:00", 1],
+    ["2026-01-01 13:00:00", 0],
+  ];
+  for (const [at, hidden] of comments) {
+    exec("addComment").run({ post: hello, author: kim, body: `at ${at}`, hidden, at });
+  }
+  assert.equal(exec("publish").run({ post: hello, editor: kim }).changes, 1);
+  assert.equal(exec("publish").run({ post: hello, editor: kim }).changes, 0);
+  const [entry, ...rest] = exec("feed").all({ n: 10, before: null });
+  assert.equal(rest.length, 0);
+  assert.equal(entry!.featured, 1);
+  assert.deepEqual(JSON.parse(String(entry!.author)), { id: sai, email: "sai@example.com" });
+  assert.deepEqual(JSON.parse(String(entry!.editor)), { email: "kim@example.com" });
+  assert.deepEqual(JSON.parse(String(entry!.comments)), [
+    { body: "at 2026-01-01 13:00:00", hidden: false, by: "kim@example.com" },
+    { body: "at 2026-01-01 11:00:00", hidden: false, by: "kim@example.com" },
+  ]);
+  assert.equal(entry!.commentCount, 2);
+  assert.deepEqual(exec("feed").all({ n: 10, before: "2026-01-01 00:00:00" }), []);
+  assert.equal(exec("userByEmail").get({ email: "kim@example.com" })!.role, "Member");
+  assert.equal(exec("latestDraft").get({ author: sai })!.id, draft);
+  assert.deepEqual(exec("activeAuthors").all({ role: "Admin" }).map((row) => ({ ...row })), [
+    { id: sai, email: "sai@example.com", drafts: 1 },
+  ]);
+  assert.deepEqual(exec("staffPicks").all({ skip: 0 }).map((row) => row.title), ["Hello"]);
+  assert.deepEqual(exec("staffPicks").all({ skip: 1 }), []);
+  assert.equal(exec("draftCount").get({ author: sai })!.value, 1);
+  assert.deepEqual(exec("hideComments").all({ author: kim }).map((row) => row.hidden), [1, 1, 1]);
+  assert.equal(exec("purgeDrafts").run({ author: sai }).changes, 1);
+  assert.equal(exec("draftCount").get({ author: sai })!.value, 0);
 });

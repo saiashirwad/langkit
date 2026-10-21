@@ -49,6 +49,7 @@ model Comment = {
   |> authored
   |> timestamps
   |> index [.postId, .createdAt]
+  |> index [.authorId]
 
 query createUser(email: User.email, role: Role) =
   User |> insert { email, role } |> returning { .id }

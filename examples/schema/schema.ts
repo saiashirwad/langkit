@@ -13,6 +13,7 @@ import {
   parse,
   tokens,
 } from "./schema-syntax.ts";
+import { quote, text } from "./sql.ts";
 
 export type Type = string;
 
@@ -479,20 +480,11 @@ const relationType = (relation: Relation): Type =>
     ? `${relation.target}?`
     : relation.target;
 
-const quote = (name: string): string => `"${name.replaceAll("\"", "\"\"")}"`;
-
-const string = (value: string): string => `'${value.replaceAll("'", "''")}'`;
-
 const literal = (value: Default): string => {
   if (value.kind === "now") return "CURRENT_TIMESTAMP";
-  if (value.kind === "enum") return string(value.member.name);
+  if (value.kind === "enum") return text(value.member.name);
   if (typeof value.value === "boolean") return value.value ? "1" : "0";
-  // SQLite SQL text cannot contain a literal NUL. Hex preserves all UTF-8 text.
-  if (typeof value.value === "string") {
-    return value.value.includes("\0")
-      ? `(CAST(X'${Buffer.from(value.value).toString("hex")}' AS TEXT))`
-      : string(value.value);
-  }
+  if (typeof value.value === "string") return text(value.value);
   return String(value.value);
 };
 
@@ -520,7 +512,7 @@ export const emit = (schema: Schema): string => {
       if (field.type.name === "Bool") column += ` CHECK (${name} IN (0, 1))`;
       const enumeration = enums.get(field.type.name);
       if (enumeration) {
-        column += ` CHECK (${name} IN (${enumeration.members.map((member) => string(member.name)).join(", ")}))`;
+        column += ` CHECK (${name} IN (${enumeration.members.map((member) => text(member.name)).join(", ")}))`;
       }
       return column;
     });
