@@ -30,7 +30,10 @@
     "./modules": "./src/modules.ts",
     "./modules/imports": "./src/modules/imports.ts",
     "./analysis": "./src/analysis.ts",
-    "./lsp": "./src/lsp.ts"
+    "./lsp": "./src/lsp.ts",
+    "./host": "./src/host.ts",
+    "./host/content-mapper": "./src/host/content-mapper.ts",
+    "./host/loader": "./src/host/loader.ts"
   },
   "scripts": {
     "fmt": "dprint fmt",
