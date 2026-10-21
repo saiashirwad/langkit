@@ -4,12 +4,12 @@ Bring your own AST, semantic types, and term representation. Use `createJudgment
 
 ## Define rules for your AST
 
-This complete compiler accepts a numeric AST and emits JavaScript. The rules use the supported HM solver rather than a local unifier.
+This complete compiler accepts a numeric AST and emits JavaScript. The rules use the supported solver rather than a local unifier.
 
 ```ts
 import { run } from "langkit";
 import { createJudgments, type RuleTable } from "langkit/judgments";
-import * as hm from "langkit/types/hm";
+import * as rank from "langkit/types/higher-rank";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
 
@@ -17,28 +17,28 @@ type Expr =
   | { readonly kind: "number"; readonly value: number; }
   | { readonly kind: "add"; readonly left: Expr; readonly right: Expr; };
 
-const rules: RuleTable<Expr, hm.Type, string> = {
+const rules: RuleTable<Expr, rank.Type, string> = {
   number: {
     mode: "synth",
     check: "fromSynth",
     *synth(node) {
-      return { type: hm.number, term: String(node.value) };
+      return { type: rank.number, term: String(node.value) };
     },
   },
   add: {
     mode: "synth",
     check: "fromSynth",
     *synth(node, judgments) {
-      const left = yield* judgments.check(node.left, hm.number);
-      const right = yield* judgments.check(node.right, hm.number);
-      return { type: hm.number, term: `(${left}+${right})` };
+      const left = yield* judgments.check(node.left, rank.number);
+      const right = yield* judgments.check(node.right, rank.number);
+      return { type: rank.number, term: `(${left}+${right})` };
     },
   },
 };
 const judgments = createJudgments(rules, {
   modes: {
     enter: (expected, body) => body(expected),
-    accept: (actual, expected) => hm.unify(actual.type, expected).map(() => actual.term),
+    accept: (actual, expected) => rank.unify(actual.type, expected).map(() => actual.term),
   },
 });
 
@@ -48,7 +48,7 @@ const outcome = run(judgments.synth({
   right: { kind: "number", value: 23 },
 }));
 assert.ok(outcome.success);
-assert.equal(hm.show(outcome.value.type), "number");
+assert.equal(rank.show(outcome.value.type), "number");
 assert.equal(runInNewContext(outcome.value.term), 42);
 ```
 
@@ -64,4 +64,4 @@ Use `bindings.reference(name, span)` at a use site. Use `bindings.parameter(name
 
 Connect the optional `define` and `use` callbacks to your analysis collector. Binding identity remains separate from spelling and from each reference's instantiated type. For an IR language, bridge `declare` to the enclosing checked body's declaration collector.
 
-The implementation in [`examples/hm/hm.ts`](../examples/hm/hm.ts) uses these helpers with `langkit/ir/check`. They keep source spans on the resulting IR, not only on checking diagnostics.
+The implementation in [`examples/hm/rank.ts`](../examples/hm/rank.ts) uses these helpers with `langkit/ir/check`. They keep source spans on the resulting IR, not only on checking diagnostics.

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { check, fail, get, pure, run, scoped, state, within } from "../src/check.ts";
-import { add, assign, pruneLink } from "../src/inference.ts";
+import { add, assign, check, fail, get, pure, run, scoped, state, within } from "../src/check.ts";
+import { pruneLink } from "../src/types/higher-rank.ts";
 
 const counter = state(() => ({ value: 0 }), (cell) => {
   const saved = cell.value;

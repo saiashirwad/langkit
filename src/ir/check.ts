@@ -1,5 +1,4 @@
-import { Check, check, get, scoped, within } from "../check.ts";
-import { push } from "../inference.ts";
+import { Check, check, get, push, scoped, within } from "../check.ts";
 import type { Body, Declaration, LanguageBuilder, Value } from "../ir.ts";
 
 type MixedGenerator<T, A> = () => Generator<Check<unknown> | Declaration<T>, A, unknown>;

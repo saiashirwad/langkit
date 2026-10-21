@@ -5,13 +5,12 @@ import { createJudgments, type Synthesized } from "langkit/judgments";
 import type { DescriptorNode } from "langkit/operations/descriptor";
 import { records } from "langkit/operations/records";
 import * as rank from "langkit/types/higher-rank";
-import * as hm from "langkit/types/hm";
 
 export type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 export type IsAny<T> = 0 extends (1 & T) ? true : false;
 export type IsNever<T> = [T] extends [never] ? true : false;
 export const prove = <T extends true>(): T => true as T;
-export type Type = hm.Type;
+export type Type = rank.Type;
 export type RecordField = { readonly name: string; readonly value: Value<Type>; };
 
 const language = create<Type>();
@@ -55,23 +54,21 @@ export const inferred = check(function*() {
 });
 prove<Equal<typeof inferred, Check<["label", 42, true]>>>();
 
-export const theoryConsumer: Check<readonly [hm.Variable, rank.Variable]> = check(function*() {
-  const hmVariable = yield* hm.fresh();
-  prove<Equal<typeof hmVariable, hm.Variable>>();
+export const theoryConsumer: Check<rank.Variable> = check(function*() {
   const rankVariable = yield* rank.fresh(1);
   prove<Equal<typeof rankVariable, rank.Variable>>();
-  return [hmVariable, rankVariable] as const;
+  return rankVariable;
 });
 
 export const freshVariable = check(function*() {
-  const variable = yield* hm.fresh();
-  prove<Equal<typeof variable, hm.Variable>>();
+  const variable = yield* rank.fresh();
+  prove<Equal<typeof variable, rank.Variable>>();
   prove<Equal<IsAny<typeof variable>, false>>();
   prove<Equal<IsNever<typeof variable>, false>>();
   return variable;
 });
 
-export const namedValue: Value<Type> = language.literal(hm.number, 42);
+export const namedValue: Value<Type> = language.literal(rank.number, 42);
 export const namedCheck: Check<Value<Type>> = pure(namedValue);
 
 type AuthorNode = { readonly kind: "number"; readonly value: number; } | {

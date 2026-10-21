@@ -1,5 +1,34 @@
-import { Check, check, fail } from "../check.ts";
-import { add, assign, pruneLink, variableNames } from "../inference.ts";
+import { add, assign, Check, check, fail } from "../check.ts";
+
+/** Resolve inference variables without mutating or compressing their link path. */
+export const pruneLink = <T, V extends object>(
+  value: T,
+  variable: (value: T) => V | null,
+  instance: (variable: V) => T | undefined,
+): T => {
+  let current = value;
+  for (;;) {
+    const node = variable(current);
+    if (node === null) return current;
+    const target = instance(node);
+    if (target === undefined) return current;
+    current = target;
+  }
+};
+
+/** Names variables a, b, …, z, a1, … in first-seen order. */
+export const variableNames = <V>(first = "a"): (variable: V) => string => {
+  const names = new Map<V, string>();
+  return (variable) => {
+    let name = names.get(variable);
+    if (name === undefined) {
+      const index = names.size;
+      name = String.fromCharCode(first.charCodeAt(0) + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : "");
+      names.set(variable, name);
+    }
+    return name;
+  };
+};
 
 export type Type =
   | { readonly kind: "number" | "boolean" | "string"; }

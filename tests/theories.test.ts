@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { type Check, check, fail, pure, run } from "../src/check.ts";
 import * as rank from "../src/types/higher-rank.ts";
-import * as hm from "../src/types/hm.ts";
 
 const value = <A>(operation: Check<A>): A => {
   const result = run(operation);
@@ -83,7 +82,6 @@ const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
   });
 };
 
-common("HM", hm);
 common<rank.Type, rank.Variable, rank.Scheme>("Higher rank", rank);
 
 test("Higher rank: pure row construction acquires journaled unique-label constraints", () => {

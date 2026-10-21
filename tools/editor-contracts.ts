@@ -18,7 +18,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "record: (recordNode, recordContext)",
     offset: 13,
-    require: ["RecordNode<hm.Type>"],
+    require: ["RecordNode<rank.Type>"],
     maxLength: 180,
   },
   {
@@ -34,7 +34,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "record: (recordNode, recordContext)",
     offset: 24,
-    require: ["JavaScriptContext<hm.Type>"],
+    require: ["JavaScriptContext<rank.Type>"],
     maxLength: 180,
   },
   {
@@ -66,7 +66,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "const namedValue:",
     offset: 9,
-    require: ["Value<hm.Type>"],
+    require: ["Value<rank.Type>"],
     maxLength: 160,
   },
   {
@@ -74,7 +74,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "const namedCheck:",
     offset: 9,
-    require: ["Check<Value<hm.Type>>"],
+    require: ["Check<Value<rank.Type>>"],
     maxLength: 160,
   },
   {
@@ -82,7 +82,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "return recordNode.fields",
     offset: 19,
-    require: ["readonly RecordField<hm.Type>[]"],
+    require: ["readonly RecordField<rank.Type>[]"],
     maxLength: 200,
   },
   {
@@ -98,7 +98,7 @@ export const probes: readonly Probe[] = [
     method: "hover",
     anchor: "recordContext.expr(field.value)",
     offset: 27,
-    require: ["value: Value<hm.Type>"],
+    require: ["value: Value<rank.Type>"],
     maxLength: 160,
   },
   {
@@ -151,17 +151,17 @@ export const probes: readonly Probe[] = [
       "descriptors:",
       "handlers:",
       "literalNode: Literal",
-      "recordNode: RecordNode<hm.Type>",
-      "recordContext: JavaScriptContext<hm.Type>",
+      "recordNode: RecordNode<rank.Type>",
+      "recordContext: JavaScriptContext<rank.Type>",
     ],
     activeParameter: 1,
   },
   {
     id: "literal-signature",
     method: "signatureHelp",
-    anchor: "language.literal(hm.number, 42)",
+    anchor: "language.literal(rank.number, 42)",
     offset: 30,
-    require: ["type: hm.Type", "value: number | boolean | string"],
+    require: ["type: rank.Type", "value: number | boolean | string"],
     activeParameter: 1,
   },
   {

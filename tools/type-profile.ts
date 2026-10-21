@@ -46,7 +46,7 @@ export function scalingConsumer(count: number): string {
     "import type { Value } from \"langkit/ir\";",
     "import { defineOperation } from \"langkit/operations/descriptor\";",
     "import { defineJavaScriptBackend } from \"langkit/javascript\";",
-    "import type { Type } from \"langkit/types/hm\";",
+    "import type { Type } from \"langkit/types/higher-rank\";",
     "type Field = { readonly name: string; readonly value: Value<Type> };",
     "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;",
     "const prove = <T extends true>(): T => true as T;",

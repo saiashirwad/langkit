@@ -54,7 +54,6 @@ Raw staged IR remains independently constructible and emit-able after structural
 | Module                         | Owned decisions                                                                           |
 | ------------------------------ | ----------------------------------------------------------------------------------------- |
 | `src/check.ts`                 | Execution frames, generators, transactions, scoped access, and diagnostics                |
-| `src/types/hm.ts`              | HM variables, occurs checks, schemes, instantiation, and generalization                   |
 | `src/types/higher-rank.ts`     | Level-based predicative quantifiers, rigid scopes, subsumption, rows, and nominal data    |
 | `src/judgments.ts`             | Exhaustive rule dispatch, checking modes, source attribution, and observation             |
 | Binding helpers                | Declaration/use coordination and explicit generalization policy                           |

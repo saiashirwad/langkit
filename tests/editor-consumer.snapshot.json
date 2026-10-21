@@ -2,16 +2,16 @@
   "compilerVersion": "7.1.0-beta",
   "observations": {
     "contextual-record-node": {
-      "text": "```typescript\n(parameter) recordNode: RecordNode<hm.Type>\n```"
+      "text": "```typescript\n(parameter) recordNode: RecordNode<rank.Type>\n```"
     },
     "contextual-literal-node": {
       "text": "```typescript\n(parameter) literalNode: Literal\n```"
     },
     "contextual-backend-context": {
-      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<hm.Type>\n```"
+      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<rank.Type>\n```"
     },
     "fresh-variable": {
-      "text": "```typescript\nconst variable: hm.Variable\n```"
+      "text": "```typescript\nconst variable: rank.Variable\n```"
     },
     "yield-literal": {
       "text": "```typescript\nconst yielded: \"ready\"\n```"
@@ -20,19 +20,19 @@
       "text": "```typescript\nconst tuple: [\"label\", 42, true]\n```"
     },
     "named-value": {
-      "text": "```typescript\nconst namedValue: Value<hm.Type>\n```"
+      "text": "```typescript\nconst namedValue: Value<rank.Type>\n```"
     },
     "named-check": {
-      "text": "```typescript\nconst namedCheck: Check<Value<hm.Type>>\n```"
+      "text": "```typescript\nconst namedCheck: Check<Value<rank.Type>>\n```"
     },
     "record-fields": {
-      "text": "```typescript\n(property) fields: readonly RecordField<hm.Type>[]\n```"
+      "text": "```typescript\n(property) fields: readonly RecordField<rank.Type>[]\n```"
     },
     "record-field-name": {
       "text": "```typescript\n(property) name: string\n```"
     },
     "record-field-value": {
-      "text": "```typescript\n(property) value: Value<hm.Type>\n```"
+      "text": "```typescript\n(property) value: Value<rank.Type>\n```"
     },
     "literal-value": {
       "text": "```typescript\n(property) value: string | number | boolean\n```"
@@ -72,11 +72,11 @@
       ]
     },
     "backend-signature": {
-      "text": "defineJavaScriptBackend(descriptors: { literal: OperationDescriptor<hm.Type, Literal>; record: OperationDescriptor<hm.Type, RecordNode<hm.Type>>; }, handlers: { readonly literal: (literalNode: Literal) => string; readonly record: (recordNode: RecordNode<hm.Type>, recordContext: JavaScriptContext<hm.Type>) => string; }): readonly JavaScriptHandler<hm.Type>[]",
+      "text": "defineJavaScriptBackend(descriptors: { literal: OperationDescriptor<rank.Type, Literal>; record: OperationDescriptor<rank.Type, RecordNode<rank.Type>>; }, handlers: { readonly literal: (literalNode: Literal) => string; readonly record: (recordNode: RecordNode<rank.Type>, recordContext: JavaScriptContext<rank.Type>) => string; }): readonly JavaScriptHandler<rank.Type>[]",
       "activeParameter": 1
     },
     "literal-signature": {
-      "text": "literal(type: hm.Type, value: number | boolean | string): OperationValue<hm.Type, Literal>",
+      "text": "literal(type: rank.Type, value: number | boolean | string): OperationValue<rank.Type, Literal>",
       "activeParameter": 1
     },
     "judgment-rule-node": {

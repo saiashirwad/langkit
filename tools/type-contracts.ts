@@ -80,9 +80,9 @@ export function runContracts(): void {
       },
       {
         name: "variable",
-        original: "const variable = yield* hm.fresh()",
+        original: "const variable = yield* rank.fresh()",
         replacement: (type: string) => `const variable = undefined as ${type}`,
-        proof: "prove<Equal<typeof variable, hm.Variable>>();",
+        proof: "prove<Equal<typeof variable, rank.Variable>>();",
       },
     ];
     for (const control of controls) {

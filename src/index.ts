@@ -1,4 +1,6 @@
 export {
+  add,
+  assign,
   bind,
   Check,
   check,
@@ -6,6 +8,7 @@ export {
   get,
   lookup,
   pure,
+  push,
   type Result,
   run,
   type Scoped,

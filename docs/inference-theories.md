@@ -1,10 +1,10 @@
 # Inference theory contracts
 
-The three supported theories own separate runtime type grammars. Their types are not interchangeable, even where the constructor names match. ASTs, bindings, IR, source locations, and recursion policy stay outside the solver modules.
+`langkit/types/higher-rank` owns the runtime type grammar. ASTs, bindings, IR, source locations, and recursion policy stay outside the solver modules.
 
-## Hindley–Milner
+## Hindley–Milner core
 
-`langkit/types/hm` has numeric and Boolean types, function types, and inference variables. Polymorphism belongs to `Scheme`, which pairs a type with a set of quantified variables.
+The rank-1 core of `langkit/types/higher-rank` is Hindley–Milner: numeric and Boolean types, function types, and inference variables. Polymorphism belongs to `Scheme`, which pairs a type with a set of quantified variables.
 
 - `fresh()` allocates a variable during execution.
 - `unify(left, right)` checks equality, rejects occurs-check failures, and journals links.
@@ -15,16 +15,16 @@ The three supported theories own separate runtime type grammars. Their types are
 
 ```ts
 import { check, run } from "langkit";
-import * as hm from "langkit/types/hm";
+import * as rank from "langkit/types/higher-rank";
 
 const result = run(check(function*() {
-  const a = yield* hm.fresh();
-  const identity = yield* hm.generalize(hm.fn(a, a), []);
-  const numeric = yield* hm.instantiate(identity);
-  const logical = yield* hm.instantiate(identity);
-  yield* hm.unify(numeric, hm.fn(hm.number, hm.number));
-  yield* hm.unify(logical, hm.fn(hm.boolean, hm.boolean));
-  return [hm.show(numeric), hm.show(logical)];
+  const a = yield* rank.fresh();
+  const identity = yield* rank.generalize(rank.fn(a, a), []);
+  const numeric = yield* rank.instantiate(identity);
+  const logical = yield* rank.instantiate(identity);
+  yield* rank.unify(numeric, rank.fn(rank.number, rank.number));
+  yield* rank.unify(logical, rank.fn(rank.boolean, rank.boolean));
+  return [rank.show(numeric), rank.show(logical)];
 }));
 ```
 
@@ -34,7 +34,7 @@ Pure, nonrecursive let bindings can generalize against outer schemes. Parameters
 
 ## Level-based predicative higher rank
 
-`langkit/types/higher-rank` adds explicit `forall`, identity-based generic variables, rigid skolems, lexical levels, and nominal parameterized data constructors. It is extracted from the Advanced language's level-based algorithm. It is not Dunfield and Krishnaswami's ordered-context calculus, and no soundness or completeness theorem is claimed.
+The same module adds explicit `forall`, identity-based generic variables, rigid skolems, lexical levels, and nominal parameterized data constructors. It is extracted from the Advanced language's level-based algorithm. It is not Dunfield and Krishnaswami's ordered-context calculus, and no soundness or completeness theorem is claimed.
 
 `instantiateForall` opens outer quantifiers with fresh inference variables. `skolemize` opens them with fresh rigid witnesses. `subsume(actual, expected, level)` checks expected polymorphism under rigid witnesses and applies contravariant parameter checking for functions. `expectFunction` opens an actual quantified type or constrains a monotype to an arrow.
 

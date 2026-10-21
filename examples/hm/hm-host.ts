@@ -1,17 +1,16 @@
 import { atom, esm, type HostLanguage, unhosted } from "langkit/host";
-import { variableNames } from "langkit/inference";
-import { free, prune, type Type, type Variable } from "langkit/types/hm";
+import { free, type FreeVariable, prune, type Type, variableNames } from "langkit/types/higher-rank";
 import { checkSource, emit } from "./hm.ts";
 
-const parameterNames = (type: Type): readonly Variable[] => {
+const parameterNames = (type: Type): readonly FreeVariable[] => {
   const pruned = prune(type);
   return pruned.kind === "function" ? [...free(pruned.param), ...parameterNames(pruned.result)] : [];
 };
 
 const typescript = (type: Type): string => {
-  const name = variableNames<Variable>("A");
-  const bound = new Set<Variable>();
-  const quantifier = (introduced: readonly Variable[]): string => {
+  const name = variableNames<FreeVariable>("A");
+  const bound = new Set<FreeVariable>();
+  const quantifier = (introduced: readonly FreeVariable[]): string => {
     const fresh = [...new Set(introduced)].filter((variable) => !bound.has(variable));
     for (const variable of fresh) bound.add(variable);
     return fresh.length ? `<${fresh.map(name).join(", ")}>` : "";
@@ -31,6 +30,8 @@ const typescript = (type: Type): string => {
         const generics = quantifier([...free(type.param), ...unmentioned]);
         return `${generics}(x: ${visit(type.param, false)}) => ${visit(type.result, false)}`;
       }
+      default:
+        throw new Error(`HM cannot produce a ${type.kind} type`);
     }
   };
   return visit(type, true);

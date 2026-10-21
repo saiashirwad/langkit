@@ -35,8 +35,8 @@ import {
   show,
   type Type,
   unify,
-} from "langkit/types/hm";
-export { show, type Type } from "langkit/types/hm";
+} from "langkit/types/higher-rank";
+export { show, type Type } from "langkit/types/higher-rank";
 
 type Syntax =
   | { readonly kind: "number"; readonly value: number; }
