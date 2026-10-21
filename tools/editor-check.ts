@@ -217,7 +217,7 @@ try {
     },
     {
       consumer: "examples/typescript/schema.ts",
-      anchor: "type User,",
+      anchor: "type User }",
       offset: 5,
       type: "interface User",
       guest: "examples/schema/simple.schema",
