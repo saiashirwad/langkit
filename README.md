@@ -13,9 +13,9 @@ pnpm test
 
 ## Author typing rules
 
-`createJudgments` dispatches exhaustive synthesis and checking rules over your own AST. `createBindings` coordinates declaration identity, lexical scopes, generalization, and reference instantiation.
+Write the checker as a `switch` over your own AST inside a `check` generator. `bind` and `lookup` manage lexical scopes, and the higher-rank theory supplies `generalize` and `instantiate`.
 
-[Build a compiler with typed judgments](docs/compiler-authoring.md) has a complete caller example.
+[Build a compiler with checks](docs/compiler-authoring.md) has a complete caller example.
 
 ## Compose an IR and backend
 

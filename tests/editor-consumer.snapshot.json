@@ -78,12 +78,6 @@
     "literal-signature": {
       "text": "literal(type: rank.Type, value: number | boolean | string): OperationValue<rank.Type, Literal>",
       "activeParameter": 1
-    },
-    "judgment-rule-node": {
-      "text": "```typescript\n(parameter) numberRuleNode: {\n    readonly kind: \"number\";\n    readonly value: number;\n}\n```"
-    },
-    "judgment-synth-yield": {
-      "text": "```typescript\nconst synthesized: Synthesized<AuthorType, AuthorTerm>\n```"
     }
   }
 }

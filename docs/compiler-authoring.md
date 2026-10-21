@@ -1,14 +1,13 @@
-# Build a compiler with typed judgments
+# Build a compiler with checks
 
-Bring your own AST, semantic types, and term representation. Use `createJudgments` to dispatch exhaustive synthesis and checking rules.
+Bring your own AST, semantic types, and term representation. Write the checker as one `switch` over the AST kind inside a `check` generator.
 
-## Define rules for your AST
+## Check your AST
 
-This complete compiler accepts a numeric AST and emits JavaScript. The rules use the supported solver rather than a local unifier.
+This complete compiler accepts a numeric AST and emits JavaScript. The checker uses the supported solver rather than a local unifier.
 
 ```ts
-import { run } from "langkit";
-import { createJudgments, type RuleTable } from "langkit/judgments";
+import { type Check, check, run } from "langkit";
 import * as rank from "langkit/types/higher-rank";
 import assert from "node:assert/strict";
 import { runInNewContext } from "node:vm";
@@ -17,32 +16,24 @@ type Expr =
   | { readonly kind: "number"; readonly value: number; }
   | { readonly kind: "add"; readonly left: Expr; readonly right: Expr; };
 
-const rules: RuleTable<Expr, rank.Type, string> = {
-  number: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(node) {
-      return { type: rank.number, term: String(node.value) };
-    },
-  },
-  add: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(node, judgments) {
-      const left = yield* judgments.check(node.left, rank.number);
-      const right = yield* judgments.check(node.right, rank.number);
-      return { type: rank.number, term: `(${left}+${right})` };
-    },
-  },
-};
-const judgments = createJudgments(rules, {
-  modes: {
-    enter: (expected, body) => body(expected),
-    accept: (actual, expected) => rank.unify(actual.type, expected).map(() => actual.term),
-  },
-});
+type Typed = { readonly type: rank.Type; readonly term: string; };
 
-const outcome = run(judgments.synth({
+const elaborate = (node: Expr): Check<Typed> =>
+  check(function*() {
+    switch (node.kind) {
+      case "number":
+        return { type: rank.number, term: String(node.value) };
+      case "add": {
+        const left = yield* elaborate(node.left);
+        const right = yield* elaborate(node.right);
+        yield* rank.unify(left.type, rank.number);
+        yield* rank.unify(right.type, rank.number);
+        return { type: rank.number, term: `(${left.term}+${right.term})` };
+      }
+    }
+  });
+
+const outcome = run(elaborate({
   kind: "add",
   left: { kind: "number", value: 19 },
   right: { kind: "number", value: 23 },
@@ -52,16 +43,14 @@ assert.equal(rank.show(outcome.value.type), "number");
 assert.equal(runInNewContext(outcome.value.term), 42);
 ```
 
-Give each AST kind a rule. Use `mode: "checkingOnly"` for a form that requires an expected type. Use `mode: "unsupported"` with a reason for a deliberate rejection. Select `check: "fromSynth"` explicitly when checking means synthesis followed by the configured `accept` operation.
-
-For bidirectional rules, supply a checking callback that uses its expected type before visiting children. A higher-rank theory's `enter` opens expected quantifiers before that callback runs. Do not replace subsumption with unification unless your theory gives them the same meaning.
+TypeScript checks the `switch` for exhaustiveness. Each case sees only its own AST variant.
 
 ## Add lexical bindings
 
-Create a `Bindings` handle with `createBindings`. Supply your theory's `monomorphic`, `instantiate`, and `generalize` operations, plus the term constructors `parameter`, `declare`, and `reference`.
+Keep the environment in `scoped(new Map())`. Enter a scope with `bind(env, entries, body)` and read it with `lookup(env, name)`. Store a scheme next to each binding so a use site can `instantiate` it.
 
-Use `bindings.reference(name, span)` at a use site. Use `bindings.parameter(name, type, span, body)` for a monomorphic parameter. Use `bindings.let(name, span, initializer, body)` for a nonrecursive binding. The initializer runs once, outside the new binding; the configured generalization policy determines its scheme.
+For a nonrecursive `let`, check the initializer outside the new binding, call `generalize(type, outerSchemes)` with the schemes from `get(env)`, then bind the result. Bind a parameter with `mono(type)` so it stays monomorphic.
 
-Connect the optional `define` and `use` callbacks to your analysis collector. Binding identity remains separate from spelling and from each reference's instantiated type. For an IR language, bridge `declare` to the enclosing checked body's declaration collector.
+Report definitions and uses to an analysis collector with `facts.define` and `facts.reference`. For an IR language, declare the binding in the enclosing checked body with `langkit/ir/check`.
 
-The implementation in [`examples/hm/rank.ts`](../examples/hm/rank.ts) uses these helpers with `langkit/ir/check`. They keep source spans on the resulting IR, not only on checking diagnostics.
+[`examples/hm/hm.ts`](../examples/hm/hm.ts) is a complete caller. It keeps source spans on the resulting IR, not only on checking diagnostics.

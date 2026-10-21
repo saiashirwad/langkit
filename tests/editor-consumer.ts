@@ -1,7 +1,6 @@
 import { type Check, check, pure } from "langkit";
 import { create, type Value } from "langkit/ir";
 import { defineJavaScriptBackend, type JavaScriptContext } from "langkit/javascript";
-import { createJudgments, type Synthesized } from "langkit/judgments";
 import type { DescriptorNode } from "langkit/operations/descriptor";
 import { records } from "langkit/operations/records";
 import * as rank from "langkit/types/higher-rank";
@@ -70,36 +69,3 @@ export const freshVariable = check(function*() {
 
 export const namedValue: Value<Type> = language.literal(rank.number, 42);
 export const namedCheck: Check<Value<Type>> = pure(namedValue);
-
-type AuthorNode = { readonly kind: "number"; readonly value: number; } | {
-  readonly kind: "text";
-  readonly value: string;
-};
-type AuthorType = "number" | "text";
-type AuthorTerm = number | string;
-export const judgments = createJudgments<AuthorNode, AuthorType, AuthorTerm>({
-  number: {
-    mode: "synth",
-    *synth(numberRuleNode) {
-      prove<Equal<typeof numberRuleNode, Extract<AuthorNode, { kind: "number"; }>>>();
-      prove<Equal<IsAny<typeof numberRuleNode>, false>>();
-      prove<Equal<IsNever<typeof numberRuleNode>, false>>();
-      return { type: "number", term: numberRuleNode.value };
-    },
-    check: "fromSynth",
-  },
-  text: {
-    mode: "synth",
-    *synth(node) {
-      return { type: "text", term: node.value };
-    },
-    check: "fromSynth",
-  },
-}, { modes: { enter: (expected, body) => body(expected), accept: (actual) => pure(actual.term) } });
-export const authorCheck = check(function*() {
-  const synthesized = yield* judgments.synth({ kind: "number", value: 42 });
-  prove<Equal<typeof synthesized, Synthesized<AuthorType, AuthorTerm>>>();
-  prove<Equal<IsAny<typeof synthesized>, false>>();
-  prove<Equal<IsNever<typeof synthesized>, false>>();
-  return synthesized;
-});

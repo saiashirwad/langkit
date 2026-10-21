@@ -165,11 +165,6 @@ try {
       replacement: (type: string) => type === "any" ? "pure<any>(\"ready\")" : "pure<never>(undefined as never)",
     },
     {
-      id: "judgment-synth-yield",
-      original: "judgments.synth({ kind: \"number\", value: 42 })",
-      replacement: (type: string) => `pure<${type}>(undefined as ${type})`,
-    },
-    {
       id: "fresh-variable",
       original: "const variable = yield* rank.fresh()",
       replacement: (type: string) => `const variable = undefined as ${type}`,

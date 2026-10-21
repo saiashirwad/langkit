@@ -55,8 +55,6 @@ Raw staged IR remains independently constructible and emit-able after structural
 | ------------------------------ | ----------------------------------------------------------------------------------------- |
 | `src/check.ts`                 | Execution frames, generators, transactions, scoped access, and diagnostics                |
 | `src/types/higher-rank.ts`     | Level-based predicative quantifiers, rigid scopes, subsumption, rows, and nominal data    |
-| `src/judgments.ts`             | Exhaustive rule dispatch, checking modes, source attribution, and observation             |
-| Binding helpers                | Declaration/use coordination and explicit generalization policy                           |
 | Elaboration runner             | Partial publication, clean-only finalization, and opaque artifacts                        |
 | Compiler recipe                | Fresh configuration and one source-to-outcome operation                                   |
 | `src/operations/descriptor.ts` | Exact descriptor records; `src/javascript.ts` derives exhaustive backend tables from them |

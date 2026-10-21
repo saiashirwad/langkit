@@ -42,7 +42,6 @@ export function scalingConsumer(count: number): string {
   const cases = Array.from({ length: count }, (_, index) => `case${index}`);
   return [
     "import { check, pure } from \"langkit\";",
-    "import { createJudgments, type Synthesized } from \"langkit/judgments\";",
     "import type { Value } from \"langkit/ir\";",
     "import { defineOperation } from \"langkit/operations/descriptor\";",
     "import { defineJavaScriptBackend } from \"langkit/javascript\";",
@@ -67,41 +66,6 @@ export function scalingConsumer(count: number): string {
     }]);`,
     `  prove<Equal<typeof labels, [${cases.map((name) => JSON.stringify(name)).join(", ")} ]>>();`,
     "  return labels;",
-    "});",
-    ...cases.map((name, index) =>
-      `type ${name}Source = { readonly kind: "${name}"; ${
-        index % 3 === 0
-          ? "readonly value: number"
-          : index % 3 === 1
-          ? "readonly value: string"
-          : "readonly amount: number; readonly label: string"
-      } };`
-    ),
-    `type Source = ${cases.map((name) => `${name}Source`).join(" | ")};`,
-    "type ResultType = \"number\" | \"text\" | \"record\";",
-    "type Term = number | string | { total: number; label: string };",
-    "const judgments = createJudgments<Source, ResultType, Term>({",
-    ...cases.map((name, index) =>
-      `  ${name}: { mode: "synth", *synth(node) { prove<Equal<typeof node, ${name}Source>>(); return ${
-        index % 3 === 0
-          ? "{ type: \"number\", term: node.value }"
-          : index % 3 === 1
-          ? "{ type: \"text\", term: node.value }"
-          : "{ type: \"record\", term: { total: node.amount, label: node.label } }"
-      }; }, check: "fromSynth" },`
-    ),
-    "}, { modes: { enter: (expected, body) => body(expected), accept: (actual) => pure(actual.term) } });",
-    "export const elaborated = check(function* () {",
-    ...cases.map((name, index) =>
-      `  const ${name}Result = yield* judgments.synth({ kind: "${name}", ${
-        index % 3 === 0
-          ? `value: ${index}`
-          : index % 3 === 1
-          ? `value: "${name}"`
-          : `amount: ${index}, label: "${name}"`
-      } }); prove<Equal<typeof ${name}Result, Synthesized<ResultType, Term>>>();`
-    ),
-    `  return [${cases.map((name) => `${name}Result`).join(", ")}] as const;`,
     "});",
   ].join("\n");
 }
@@ -162,7 +126,7 @@ export function profile(): void {
       const source = size === 0 ? undefined : scalingConsumer(size);
       if (source !== undefined) writeFileSync(join(project.directory, "consumer.ts"), source);
       const workload: Workload = {
-        name: size === 0 ? "main" : `${size} descriptors + heterogeneous judgment rules`,
+        name: size === 0 ? "main" : `${size} descriptors`,
         measurements: [],
         ...(source === undefined ? {} : { consumerHash: createHash("sha256").update(source).digest("hex") }),
       };

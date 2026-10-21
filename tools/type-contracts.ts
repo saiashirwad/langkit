@@ -73,12 +73,6 @@ export function runContracts(): void {
         proof: "prove<Equal<typeof yielded, \"ready\">>();",
       },
       {
-        name: "synthesized",
-        original: "judgments.synth({ kind: \"number\", value: 42 })",
-        replacement: (type: string) => `pure<${type}>(undefined as ${type})`,
-        proof: "prove<Equal<typeof synthesized, Synthesized<AuthorType, AuthorTerm>>>();",
-      },
-      {
         name: "variable",
         original: "const variable = yield* rank.fresh()",
         replacement: (type: string) => `const variable = undefined as ${type}`,

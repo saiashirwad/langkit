@@ -1,11 +1,9 @@
-import { type Check, fail, render, type Result, run, type Span } from "langkit";
+import { bind, type Check, fail, get, lookup, render, type Result, run, scoped, type Span } from "langkit";
 import { type Analysis, create as createAnalysis, highlight, type TokenRule, unanalyzed } from "langkit/analysis";
-import { createBindings } from "langkit/bindings";
 import { type Binding, type Body, create, type Operator, type Program, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { createJavaScriptEmitter } from "langkit/javascript";
 import { coreJavaScript } from "langkit/javascript/core";
-import { createJudgments, type RuleTable } from "langkit/judgments";
 import {
   between,
   choice,
@@ -179,124 +177,75 @@ export const program = lex.complete(expression);
 const code = elaboration(create<Type>());
 const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreDescriptors));
 const facts = createAnalysis<Type>();
-const bindings = createBindings<Type, Value<Type>, Binding<Type>, Scheme>({
-  monomorphic: mono,
-  instantiate,
-  generalize,
-  parameter: code.binding,
-  declare: (name, value) =>
-    code.check(function*() {
-      return (yield* code.declare(name, value.term)).node.binding;
-    }),
-  reference: code.ref,
-  define: (binding, type, span, kind) =>
-    facts.define(
-      binding,
-      span,
-      kind === "parameter" ? kind : prune(type).kind === "function" ? "function" : "variable",
-    ),
-  use: (binding, _type, span) => facts.reference(binding, span),
-});
-const synthesized = (term: Value<Type>) => ({ type: term.type, term });
-const rules: RuleTable<Expr, Type, Value<Type>> = {
-  number: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
-      return synthesized(code.literal(number, expr.value));
-    },
-  },
-  boolean: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return synthesized(code.literal(boolean, expr.value));
-    },
-  },
-  name: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return yield* bindings.reference(expr.name, expr.span);
-    },
-  },
-  binary: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      const left = yield* elaborate(expr.left);
-      const right = yield* elaborate(expr.right);
-      yield* unify(left.type, number).at(expr.left.span).recover();
-      yield* unify(right.type, number).at(expr.right.span).recover();
-      return synthesized(code.binary(
-        expr.op === ">" || expr.op === "==" ? boolean : number,
-        expr.op,
-        left,
-        right,
-      ));
-    },
-  },
-  let: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return synthesized(
-        yield* code.scope(function*() {
-          return yield* bindings.let(
-            expr.name,
+const env = scoped<ReadonlyMap<string, { readonly binding: Binding<Type>; readonly scheme: Scheme; }>>(new Map());
+
+const elaborate = (expr: Expr): Check<Value<Type>> =>
+  code.check(function*() {
+    const value = yield* synthesize(expr);
+    yield* facts.typed(value.type, expr.span);
+    return code.at(value, expr.span);
+  }).at(expr.span);
+
+const synthesize = (expr: Expr): Check<Value<Type>> =>
+  code.check(function*() {
+    switch (expr.kind) {
+      case "number":
+        if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
+        return code.literal(number, expr.value);
+      case "boolean":
+        return code.literal(boolean, expr.value);
+      case "name": {
+        const { binding, scheme } = yield* lookup(env, expr.name);
+        const type = yield* instantiate(scheme);
+        yield* facts.reference(binding, expr.span);
+        return code.ref(binding, type);
+      }
+      case "binary": {
+        const left = yield* elaborate(expr.left);
+        const right = yield* elaborate(expr.right);
+        yield* unify(left.type, number).at(expr.left.span).recover();
+        yield* unify(right.type, number).at(expr.right.span).recover();
+        return code.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
+      }
+      case "let":
+        return yield* code.scope(function*() {
+          const initial = yield* elaborate(expr.value);
+          const outer = yield* get(env);
+          const scheme = yield* generalize(initial.type, [...outer.values()].map((entry) => entry.scheme));
+          const binding = (yield* code.declare(expr.name, initial)).node.binding;
+          yield* facts.define(
+            binding,
             expr.nameSpan,
-            elaborate(expr.value).map(synthesized),
-            () => elaborate(expr.body),
+            prune(initial.type).kind === "function" ? "function" : "variable",
           );
-        }),
-      );
-    },
-  },
-  fn: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return yield* bindings.parameter(expr.param, yield* fresh(), expr.paramSpan, (param) =>
-        code.check(function*() {
-          const body = yield* code.body(elaborate(expr.body));
-          return synthesized(code.fn(fn(param.type, body.result.type), param, body));
-        }));
-    },
-  },
-  call: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      const callee = yield* elaborate(expr.fn);
-      const arg = yield* elaborate(expr.arg);
-      const result = yield* fresh();
-      yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span).recover();
-      return synthesized(code.call(result, callee, arg));
-    },
-  },
-  if: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      const cond = yield* elaborate(expr.cond);
-      yield* unify(cond.type, boolean).at(expr.cond.span).recover();
-      const then = yield* code.body(elaborate(expr.then));
-      const otherwise = yield* code.body(elaborate(expr.else));
-      yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
-      return synthesized(code.conditional(then.result.type, cond, then, otherwise));
-    },
-  },
-};
-const judgments = createJudgments(rules, {
-  modes: {
-    enter: (expected, body) => body(expected),
-    accept: (actual, expected) => unify(actual.type, expected).map(() => actual.term),
-  },
-  span: (expr) => expr.span,
-  typed: facts.typed,
-});
-const elaborate = (expr: Expr): Check<Value<Type>> => judgments.synth(expr).map(({ term }) => code.at(term, expr.span));
+          return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
+        });
+      case "fn": {
+        const type = yield* fresh();
+        const param = code.binding(expr.param, type);
+        yield* facts.define(param, expr.paramSpan, "parameter");
+        const body = yield* code.body(
+          bind(env, [[expr.param, { binding: param, scheme: mono(type) }]], elaborate(expr.body)),
+        );
+        return code.fn(fn(param.type, body.result.type), param, body);
+      }
+      case "call": {
+        const callee = yield* elaborate(expr.fn);
+        const arg = yield* elaborate(expr.arg);
+        const result = yield* fresh();
+        yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span).recover();
+        return code.call(result, callee, arg);
+      }
+      case "if": {
+        const cond = yield* elaborate(expr.cond);
+        yield* unify(cond.type, boolean).at(expr.cond.span).recover();
+        const then = yield* code.body(elaborate(expr.then));
+        const otherwise = yield* code.body(elaborate(expr.else));
+        yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
+        return code.conditional(then.result.type, cond, then, otherwise);
+      }
+    }
+  });
 
 export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
 

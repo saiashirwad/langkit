@@ -164,22 +164,6 @@ export const probes: readonly Probe[] = [
     require: ["type: rank.Type", "value: number | boolean | string"],
     activeParameter: 1,
   },
-  {
-    id: "judgment-rule-node",
-    method: "hover",
-    anchor: "*synth(numberRuleNode)",
-    offset: 9,
-    require: ["kind: \"number\"", "value: number"],
-    maxLength: 200,
-  },
-  {
-    id: "judgment-synth-yield",
-    method: "hover",
-    anchor: "const synthesized =",
-    offset: 8,
-    require: ["Synthesized<AuthorType, AuthorTerm>"],
-    maxLength: 180,
-  },
 ];
 
 export function position(source: string, probe: Probe): { line: number; character: number; } {
