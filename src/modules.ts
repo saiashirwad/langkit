@@ -1,7 +1,8 @@
-import { type Diagnostic, type Result, type SourceLocation, type Span, withDocument, withLocation } from "langkit";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Result } from "./check.ts";
+import { type Diagnostic, type SourceLocation, type Span, withDocument, withLocation } from "./diagnostic.ts";
 
 export type ModuleOptions = { readonly uri?: string; readonly read?: (uri: string) => string; };
 export type ImportDirective = { readonly path: string; readonly span: Span; };
@@ -17,42 +18,17 @@ export type ModuleSource = {
 export class ModuleGraph {
   readonly root: string;
   readonly modules: readonly ModuleSource[];
-  readonly dependencyUris: readonly string[];
-  readonly #sources: ReadonlyMap<string, string>;
   readonly #byUri: ReadonlyMap<string, ModuleSource>;
   constructor(root: string, modules: readonly ModuleSource[]) {
     this.root = root;
-    this.modules = Object.freeze(
-      modules.map((module) =>
-        Object.freeze({
-          ...module,
-          imports: Object.freeze(
-            module.imports.map((edge) => Object.freeze({ ...edge, span: Object.freeze({ ...edge.span }) })),
-          ),
-        })
-      ),
-    );
-    this.#byUri = new Map(this.modules.map((module) => [module.uri, module]));
-    this.dependencyUris = Object.freeze(
-      this.modules.filter((module) => module.uri !== root).map((module) => module.uri),
-    );
-    this.#sources = new Map(this.modules.map((module) => [module.uri, module.original]));
+    this.modules = modules;
+    this.#byUri = new Map(modules.map((module) => [module.uri, module]));
+  }
+  get dependencyUris(): readonly string[] {
+    return this.modules.filter((module) => module.uri !== this.root).map((module) => module.uri);
   }
   get sources(): ReadonlyMap<string, string> {
-    return new Map(this.#sources);
-  }
-  module(uri: string): ModuleSource | undefined {
-    return this.#byUri.get(uri);
-  }
-  reaches(from: string, target: string): boolean {
-    const seen = new Set<string>();
-    const visit = (uri: string): boolean => {
-      if (uri === target) return true;
-      if (seen.has(uri)) return false;
-      seen.add(uri);
-      return this.#byUri.get(uri)?.imports.some((dependency) => visit(dependency.uri)) ?? false;
-    };
-    return visit(from);
+    return new Map(this.modules.map((module) => [module.uri, module.original]));
   }
   routeDiagnostic(diagnostic: Diagnostic): Diagnostic {
     const origin = diagnostic.origin ?? diagnostic.location

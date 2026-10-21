@@ -44,24 +44,3 @@ export const add = <T>(target: Set<T>, value: T): Check<void> =>
     });
     target.add(value);
   });
-
-export const put = <K, V>(target: Map<K, V>, key: K, value: V): Check<void> =>
-  get(undoJournal).map((journal) => {
-    const existed = target.has(key);
-    const previous = target.get(key);
-    if (existed && Object.is(previous, value)) return;
-    journal.push(() => {
-      if (existed) target.set(key, previous as V);
-      else target.delete(key);
-    });
-    target.set(key, value);
-  });
-
-export const append = <T>(target: T[], value: T): Check<void> =>
-  get(undoJournal).map((journal) => {
-    const length = target.length;
-    journal.push(() => {
-      target.length = length;
-    });
-    target.push(value);
-  });

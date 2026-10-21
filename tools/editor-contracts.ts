@@ -54,7 +54,7 @@ export const probes: readonly Probe[] = [
     maxLength: 120,
   },
   {
-    id: "sequence-tuple",
+    id: "yield-tuple",
     method: "hover",
     anchor: "const tuple =",
     offset: 8,

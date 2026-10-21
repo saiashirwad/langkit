@@ -1,4 +1,4 @@
-import { attempt, Check, check, choice, fail, get, pure, run, scoped, within } from "langkit";
+import { Check, check, fail, get, pure, run, scoped, within } from "langkit";
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
@@ -31,9 +31,9 @@ test("20,000 recursively produced yielded Checks use bounded native stack", () =
   assert.deepEqual(run(descend(20_000)), { success: true, value: 20_000 });
 });
 
-test("2,000 nested transactions and ordered choices use bounded native stack", () => {
+test("2,000 nested transactions use bounded native stack", () => {
   let computation = pure(42);
-  for (let i = 0; i < 2_000; i++) computation = choice(fail("no"), attempt(computation.atomic()));
+  for (let i = 0; i < 2_000; i++) computation = computation.atomic();
   assert.deepEqual(run(computation), { success: true, value: 42 });
 });
 
@@ -62,13 +62,6 @@ for (const pending of ["failure", "exception"] as const) {
     assert.deepEqual(events, ["inner", "outer"]);
   });
 }
-
-test("custom primitive callbacks can synchronously consume a built-in step", () => {
-  let child = pure(0);
-  for (let i = 0; i < 20_000; i++) child = child.map((value) => value + 1);
-  const custom = new Check((runtime) => child.step(runtime));
-  assert.deepEqual(run(custom), { success: true, value: 20_000 });
-});
 
 test("forced cleanup yields are rejected without execution and outer cleanup runs", () => {
   let executed = false;

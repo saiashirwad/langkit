@@ -71,6 +71,6 @@ test("type profile requires actual metrics and generates distinct typed descript
   const source = scalingConsumer(10);
   assert.equal([...source.matchAll(/defineOperation<Type,/g)].length, 10);
   assert.match(source, /prove<Equal<typeof node, case9Node>>/);
-  assert.match(source, /yield\* sequence/);
+  assert.match(source, /yield\* pure\(\[/);
   assert.match(source, /createJudgments<Source, ResultType, Term>/);
 });

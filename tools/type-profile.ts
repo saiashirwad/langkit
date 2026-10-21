@@ -36,7 +36,8 @@ export function scalingConsumer(count: number): string {
   assert.ok(Number.isInteger(count) && count > 0, "positive descriptor count required");
   const cases = Array.from({ length: count }, (_, index) => `case${index}`);
   return [
-    "import { check, createJudgments, pure, sequence, type Synthesized } from \"langkit\";",
+    "import { check, pure } from \"langkit\";",
+    "import { createJudgments, type Synthesized } from \"langkit/judgments\";",
     "import type { Value } from \"langkit/ir\";",
     "import { defineOperation } from \"langkit/operations/descriptor\";",
     "import { defineDialect } from \"langkit/operations/dialect\";",
@@ -57,7 +58,9 @@ export function scalingConsumer(count: number): string {
     ),
     "});",
     "export const consumer = check(function* () {",
-    `  const labels = yield* sequence([${cases.map((name) => `pure("${name}" as const)`).join(", ")}]);`,
+    `  const labels = yield* pure([${cases.map((name) => JSON.stringify(name)).join(", ")}] as [${
+      cases.map((name) => JSON.stringify(name)).join(", ")
+    }]);`,
     `  prove<Equal<typeof labels, [${cases.map((name) => JSON.stringify(name)).join(", ")} ]>>();`,
     "  return labels;",
     "});",

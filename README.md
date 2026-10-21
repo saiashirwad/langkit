@@ -13,7 +13,7 @@ pnpm test
 
 ## Author typing rules
 
-`createJudgments` dispatches exhaustive synthesis and checking rules over your own AST. `createBindings` coordinates declaration identity, lexical scopes, generalization, and reference instantiation. `createCompiler` publishes an emit-ready artifact only after clean finalization; failed or recovered work still exposes editor facts.
+`createJudgments` dispatches exhaustive synthesis and checking rules over your own AST. `createBindings` coordinates declaration identity, lexical scopes, generalization, and reference instantiation.
 
 [Build a compiler with typed judgments](docs/compiler-authoring.md) has a complete caller example.
 

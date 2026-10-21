@@ -302,7 +302,7 @@ const judgments = createJudgments(rules, {
     enter: (expected, body) => body(expected),
     accept: (actual, expected) => unify(actual.type, expected).map(() => actual.term),
   },
-  source: (expr) => ({ span: expr.span }),
+  span: (expr) => expr.span,
   typed: facts.typed,
 });
 const elaborate = (expr: Expr): Check<Value<Type>> => judgments.synth(expr).map(({ term }) => code.at(term, expr.span));

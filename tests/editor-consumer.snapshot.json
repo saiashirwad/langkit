@@ -16,7 +16,7 @@
     "yield-literal": {
       "text": "```typescript\nconst yielded: \"ready\"\n```"
     },
-    "sequence-tuple": {
+    "yield-tuple": {
       "text": "```typescript\nconst tuple: [\"label\", 42, true]\n```"
     },
     "named-value": {

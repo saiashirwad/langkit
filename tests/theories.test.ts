@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type Check, check, choice, fail, pure, run } from "../src/check.ts";
+import { type Check, check, fail, pure, run } from "../src/check.ts";
 import * as rank from "../src/types/higher-rank.ts";
 import * as hm from "../src/types/hm.ts";
 
@@ -69,14 +69,14 @@ const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
       const first = yield* theory.fresh();
       const second = yield* theory.fresh();
       yield* theory.unify(first, second);
-      yield* choice(
+      const speculative = run(
         check(function*() {
           yield* theory.unify(second, theory.number);
           assert.equal(theory.prune(first), theory.number);
           return yield* fail("abandon speculative solution");
-        }),
-        pure(undefined),
+        }).atomic(),
       );
+      assert.equal(speculative.success, false);
       assert.equal(theory.prune(first), second);
       assert.equal(theory.prune(second), second);
     }));

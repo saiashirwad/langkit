@@ -1,8 +1,8 @@
-import { type Check, check, pure, sequence } from "langkit";
-import { createJudgments, type Synthesized } from "langkit";
+import { type Check, check, pure } from "langkit";
 import { create, type Value } from "langkit/ir";
 import type { JavaScriptContext } from "langkit/javascript";
 import { defineJavaScriptBackend } from "langkit/javascript/operations";
+import { createJudgments, type Synthesized } from "langkit/judgments";
 import { defineDialect, type DescriptorNode } from "langkit/operations/dialect";
 import { records } from "langkit/operations/records";
 import * as rank from "langkit/types/higher-rank";
@@ -48,7 +48,7 @@ export const inferred = check(function*() {
   prove<Equal<typeof yielded, "ready">>();
   prove<Equal<IsAny<typeof yielded>, false>>();
   prove<Equal<IsNever<typeof yielded>, false>>();
-  const tuple = yield* sequence([pure("label" as const), pure(42 as const), pure(true as const)]);
+  const tuple = yield* pure(["label", 42, true] as ["label", 42, true]);
   prove<Equal<typeof tuple, ["label", 42, true]>>();
   prove<Equal<IsAny<typeof tuple>, false>>();
   prove<Equal<IsNever<typeof tuple>, false>>();

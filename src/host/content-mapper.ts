@@ -28,8 +28,7 @@ const mapperDiagnostic = (diagnostic: Diagnostic, uri: string): readonly MapperD
   const site = place(diagnostic, uri);
   if (site.kind === "elsewhere") return [];
   const span = site.span ?? { start: 0, end: 0 };
-  const code = diagnostic.code !== undefined && /^[1-9]\d*$/.test(diagnostic.code) ? Number(diagnostic.code) : 1;
-  return [{ messageText: diagnostic.message, start: span.start, length: span.end - span.start, code }];
+  return [{ messageText: diagnostic.message, start: span.start, length: span.end - span.start, code: 1 }];
 };
 
 const failed = (messageText: string): TransformResult => ({

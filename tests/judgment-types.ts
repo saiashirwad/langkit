@@ -1,5 +1,4 @@
 import { type Check, pure } from "../src/check.ts";
-import type { CheckedArtifact } from "../src/elaboration.ts";
 import { createJudgments, type RuleTable, type Synthesized } from "../src/judgments.ts";
 
 type N = { kind: "num"; value: number; } | { kind: "ref"; name: string; };
@@ -51,11 +50,6 @@ type CheckValue<C> = C extends Check<infer V> ? V : never;
 const noAnyTerm: NotAny<CheckValue<typeof concrete>["term"]> = true;
 // @ts-expect-error configured expected type is string
 j.check({ kind: "num", value: 1 }, false);
-// @ts-expect-error consumers cannot construct the private publication brand
-const forged: CheckedArtifact<number> = { value: 1 };
-declare const checked: CheckedArtifact<number>;
-// @ts-expect-error spreading a checked artifact cannot carry its private nominal proof
-const altered: CheckedArtifact<number> = { ...checked, value: 2 };
 createJudgments<N, string, number>(table, {
   modes: {
     enter: (expected, body) => body(expected),
@@ -76,4 +70,4 @@ const invalidPhase: RuleTable<N, string, number> = {
     },
   },
 };
-void [missing, wrong, concrete, precise, forged, altered, noAnyTerm, invalidPhase];
+void [missing, wrong, concrete, precise, noAnyTerm, invalidPhase];

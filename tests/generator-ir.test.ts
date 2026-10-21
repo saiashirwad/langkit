@@ -1,4 +1,4 @@
-import { attempt, type Check, check, choice, fail, lookup, run, scoped } from "langkit";
+import { type Check, check, fail, lookup, run, scoped } from "langkit";
 import { type Body, create, type Declaration, type Reference, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { createJavaScriptEmitter } from "langkit/javascript";
@@ -47,12 +47,14 @@ test("one elaboration body reused in one run owns distinct declaration snapshots
 test("published body survives enclosing speculative rollback", () => {
   const api = elaboration(code);
   let published: Body<string> | undefined;
-  run(attempt(check(function*() {
-    published = yield* api.body(function*() {
-      return yield* declare("local", number(42));
-    });
-    yield* fail("abandon");
-  })));
+  run(
+    check(function*() {
+      published = yield* api.body(function*() {
+        return yield* declare("local", number(42));
+      });
+      yield* fail("abandon");
+    }).atomic(),
+  );
   assert.ok(published);
   assert.equal(published.declarations.length, 1);
   assert.equal(evaluate(published), 42);
@@ -185,24 +187,29 @@ test("mixed elaboration preserves diagnostics and rolls back abandoned declarati
     assert.notEqual(repeated.value.declarations[0]!.binding.id, firstRun.value.declarations[0]!.binding.id);
   }
 
-  const alternatives = api.body(function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {
-    const value = yield* choice(
-      api.check(function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {
-        yield* declare("abandoned", number(1));
-        return yield* fail("abandoned branch").context("choice");
-      }),
-      api.check(function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {
-        return yield* declare("kept", number(42));
-      }),
-    );
-    return value;
+  let selected: Body<string> | undefined;
+  const alternatives = check(function*() {
+    selected = yield* api.body(function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {
+      return yield* api.check(
+        function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {
+          yield* declare("abandoned", number(1));
+          return yield* fail("abandoned branch").context("choice");
+        },
+      ).atomic().recover(
+        api.check(function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {
+          return yield* declare("kept", number(42));
+        }),
+      );
+    });
   });
-  const selected = run(alternatives);
-  assert.equal(selected.success, true);
-  if (selected.success) {
-    assert.deepEqual(selected.value.declarations.map(({ binding }) => binding.name), ["kept"]);
-    assert.equal(evaluate(selected.value), 42);
+  const alternativesRun = run(alternatives);
+  assert.equal(alternativesRun.success, false);
+  if (!alternativesRun.success) {
+    assert.deepEqual(alternativesRun.errors.map(({ message }) => message), ["abandoned branch"]);
   }
+  assert.ok(selected);
+  assert.deepEqual(selected.declarations.map(({ binding }) => binding.name), ["kept"]);
+  assert.equal(evaluate(selected), 42);
 
   let closed = false;
   const failed = run(api.body(function*(): Generator<Check<unknown> | Declaration<string>, Value<string>, unknown> {

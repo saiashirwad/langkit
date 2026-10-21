@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { attempt, check, choice, fail, get, pure, run, scoped, sequence, state, within } from "../src/check.ts";
-import { add, append, assign, pruneLink, put } from "../src/inference.ts";
+import { check, fail, get, pure, run, scoped, state, within } from "../src/check.ts";
+import { add, assign, pruneLink } from "../src/inference.ts";
 
 const counter = state(() => ({ value: 0 }), (cell) => {
   const saved = cell.value;
@@ -31,20 +31,22 @@ test("public failures collect ordered recovered diagnostics and retain source ma
   });
 });
 
-test("attempt rolls state and recovered diagnostics back on both failure and throw", () => {
-  const failed = attempt(increment.flatMap(() => fail("nope")));
+test("atomic rolls state back on both failure and throw", () => {
+  const failed = increment.flatMap(() => fail("nope")).atomic();
   const afterFailure = run(failed.flatMap(() => get(counter)));
   assert.equal(afterFailure.success, false);
   const exception = new Error("boom");
   assert.throws(() =>
-    run(attempt(increment.flatMap(() => {
-      throw exception;
-    }))), exception);
+    run(
+      increment.flatMap(() => {
+        throw exception;
+      }).atomic(),
+    ), exception);
   const untouched = run(get(counter));
   assert.deepEqual(untouched, { success: true, value: { value: 0 } });
 });
 
-test("new states allocated inside a failed attempt undo external mutations", () => {
+test("new states allocated inside a failed atomic undo external mutations", () => {
   const external = { value: 0 };
   const local = state(() => external, (target) => {
     const previous = target.value;
@@ -52,11 +54,9 @@ test("new states allocated inside a failed attempt undo external mutations", () 
       target.value = previous;
     };
   });
-  const trial = attempt(
-    get(local).map((target) => {
-      target.value = 1;
-    }).flatMap(() => fail("abort")),
-  );
+  const trial = get(local).map((target) => {
+    target.value = 1;
+  }).flatMap(() => fail("abort")).atomic();
   assert.equal(run(trial).success, false);
   assert.equal(external.value, 0);
 });
@@ -85,46 +85,6 @@ test("state is isolated between runs; atomic rolls back only failed or thrown wo
       }).atomic(),
     ), thrown);
   assert.equal(external.value, 0);
-});
-
-test("choice discards failed and recovered alternatives, then keeps selected changes", () => {
-  const values = state(() => [] as string[], (items) => {
-    const saved = items.slice();
-    return () => {
-      items.splice(0, items.length, ...saved);
-    };
-  });
-  const abandoned = get(values).map((items) => {
-    items.push("abandoned");
-  }).flatMap(() => fail("first")).recover(pure("fallback"));
-  const selected = get(values).map((items) => {
-    items.push("selected");
-  }).flatMap(() => pure("ok"));
-  const result = run(
-    choice(abandoned, selected).flatMap((value) => get(values).map((items) => [value, items.slice()] as const)),
-  );
-  assert.deepEqual(result, { success: true, value: ["ok", ["selected"]] });
-  const failure = run(choice(fail("first"), fail("second")));
-  assert.equal(failure.success, false);
-  if (!failure.success) assert.deepEqual(failure.errors.map(({ message }) => message), ["first"]);
-});
-
-test("sequence preserves heterogeneous tuple values and short-circuits", () => {
-  const result = run(sequence([pure(3), pure("three"), pure(true)] as const));
-  assert.deepEqual(result, { success: true, value: [3, "three", true] });
-  const calls: string[] = [];
-  const stopped = run(sequence(
-    [
-      pure(1),
-      fail("stop"),
-      pure(3).map((value) => {
-        calls.push(String(value));
-        return value;
-      }),
-    ] as const,
-  ));
-  assert.equal(stopped.success, false);
-  assert.deepEqual(calls, []);
 });
 
 test("generator cleanup runs on yielded failure and thrown first next", () => {
@@ -170,27 +130,18 @@ test("scoped environments are dynamically read-only and updater scopes unwind", 
   assert.deepEqual(run(get(environment)), { success: true, value: new Map([["base", 1]]) });
 });
 
-test("transactional mutation helpers reverse property, set, map, and array writes", () => {
+test("transactional mutation helpers reverse property and set writes", () => {
   const object: { existing?: number; missing?: number; } = { existing: 1 };
   const set = new Set(["present"]);
-  const map = new Map([["present", 1]]);
-  const list = [1, 2];
-  const program = attempt(sequence(
-    [
-      assign(object, "existing", 9),
-      assign(object, "missing", 7),
-      add(set, "added"),
-      put(map, "present", 8),
-      put(map, "new", 3),
-      append(list, 4),
-      fail("undo"),
-    ] as const,
-  ));
+  const program = check(function*() {
+    yield* assign(object, "existing", 9);
+    yield* assign(object, "missing", 7);
+    yield* add(set, "added");
+    return yield* fail("undo");
+  }).atomic();
   assert.equal(run(program).success, false);
   assert.deepEqual(object, { existing: 1 });
   assert.deepEqual([...set], ["present"]);
-  assert.deepEqual([...map], [["present", 1]]);
-  assert.deepEqual(list, [1, 2]);
 });
 
 test("mutation journal reverses nested commits, exceptions, and first-use allocations", () => {
@@ -211,7 +162,7 @@ test("mutation journal reverses nested commits, exceptions, and first-use alloca
     ), /throw/);
   assert.equal(target.value, 0);
 
-  assert.equal(run(attempt(assign(target, "value", 4).flatMap(() => fail("first use")))).success, false);
+  assert.equal(run(assign(target, "value", 4).flatMap(() => fail("first use")).atomic()).success, false);
   assert.equal(target.value, 0);
 
   assert.equal(run(assign(target, "value", 5)).success, true);
@@ -234,7 +185,7 @@ test("recovered errors retain execution order and nested failures", () => {
   if (!result.success) assert.deepEqual(result.errors.map(({ message }) => message), ["first", "second", "terminal"]);
 });
 
-test("atomic commits recovered mutations while attempt reports the earliest recovery", () => {
+test("atomic commits recovered mutations and reports the earliest recovery", () => {
   const external = { value: 0 };
   const key = state(() => external, (cell) => {
     const saved = cell.value;
@@ -250,13 +201,9 @@ test("atomic commits recovered mutations while attempt reports the earliest reco
   assert.equal(committed.success, false);
   assert.equal(external.value, 1);
   if (!committed.success) assert.deepEqual(committed.errors.map((error) => error.message), ["first recovery"]);
-  const speculative = run(attempt(recovered.flatMap(() => fail("terminal"))));
-  assert.equal(speculative.success, false);
-  assert.equal(external.value, 1);
-  if (!speculative.success) assert.deepEqual(speculative.errors.map((error) => error.message), ["first recovery"]);
 });
 
-test("recovery and ordered choice propagate programming exceptions without fallback", () => {
+test("recovery propagates programming exceptions without fallback", () => {
   let fallback = false;
   const thrown = pure(undefined).map(() => {
     throw new Error("programming error");
@@ -265,7 +212,6 @@ test("recovery and ordered choice propagate programming exceptions without fallb
     fallback = true;
   });
   assert.throws(() => run(thrown.recover(other)), /programming error/);
-  assert.throws(() => run(choice(thrown, other)), /programming error/);
   assert.equal(fallback, false);
 });
 
@@ -298,7 +244,7 @@ test("forced return bypasses catch and cleanup exceptions unwind enclosing trans
       events.push("outer");
     }
   });
-  assert.throws(() => run(attempt(outer)), /cleanup wins/);
+  assert.throws(() => run(outer.atomic()), /cleanup wins/);
   assert.deepEqual(events, ["inner", "outer"]);
   assert.equal(external.value, 0);
 });

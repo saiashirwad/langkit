@@ -133,7 +133,7 @@ export const create = <T>() => {
   const record = (write: (facts: Facts<T>, document: string | undefined) => void): Check<void> =>
     new Check((runtime) => {
       const selected = runtime.get(collecting);
-      if (selected) write(runtime.get(selected), runtime.document);
+      if (selected) write(runtime.get(selected), runtime.frame.document);
       return { ok: true, value: undefined };
     });
 

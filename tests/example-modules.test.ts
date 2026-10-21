@@ -23,7 +23,9 @@ const options = (files: Record<string, string>) => ({
 const parsedImportSpan = (source: string, target: string, files: Record<string, string>) => {
   const graph = loadModules(source, options(files), { extension, imports: parseImports });
   assert.ok(graph.success);
-  const edge = graph.value.module(uri)?.imports.find((dependency) => dependency.uri === target);
+  const edge = graph.value.modules.find((module) => module.uri === uri)?.imports.find((dependency) =>
+    dependency.uri === target
+  );
   assert.ok(edge);
   return edge.span;
 };
