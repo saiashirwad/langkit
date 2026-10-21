@@ -1,8 +1,12 @@
 import type { Diagnostic } from "langkit";
 import { type HostLanguage, type Piece, verbatim } from "langkit/host";
+import type { Query } from "./queries.ts";
 import { type Base, fieldValue, type Model, type Schema, type Value } from "./schema-model.ts";
 import type { Field, Name } from "./schema-syntax.ts";
 import { compile } from "./schema.ts";
+import { plan } from "./sql.ts";
+
+const runtime = new URL("./runtime.ts", import.meta.url).href;
 
 const scalars: Readonly<Record<string, string>> = {
   Int: "number",
@@ -142,12 +146,24 @@ const insertion = (model: Model, valueOf: ValueOf): string => {
   return `export interface ${insertName(model)} {\n${columns.join("")}}\n`;
 };
 
+const module = (sql: string, queries: readonly Query[]): string =>
+  [
+    `import { connect } from ${JSON.stringify(runtime)};`,
+    `const sql = ${JSON.stringify(sql)};`,
+    `const plans = ${JSON.stringify(Object.fromEntries(queries.map((query) => [query.name.name, plan(query)])))};`,
+    "export const statements = Object.freeze(Object.fromEntries(Object.entries(plans).map(([name, plan]) => [name, plan.sql])));",
+    "export const open = (path) => connect(path, sql, plans);",
+    "export { sql };",
+    "export default sql;",
+    "",
+  ].join("\n");
+
 export const host: HostLanguage = {
   extension: ".schema",
   host: (source) => {
     const compiled = compile(source);
     if (!compiled.success) return { declarations: [], javascript: undefined, diagnostics: compiled.errors };
-    const { schema, sql } = compiled.value;
+    const { schema, sql, queries } = compiled.value;
     const diagnostics = [...nameClashes(schema), ...cycles(schema)];
     if (diagnostics.length) return { declarations: [], javascript: undefined, diagnostics };
     const valueOf = valuesOf(schema);
@@ -161,7 +177,7 @@ export const host: HostLanguage = {
         ]),
         "export declare const sql: string;\nexport default sql;\n",
       ],
-      javascript: `const sql = ${JSON.stringify(sql)};\nexport { sql };\nexport default sql;\n`,
+      javascript: module(sql, queries),
       diagnostics: [],
     };
   },

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
-import { test } from "node:test";
+import { after, test } from "node:test";
+import { pathToFileURL } from "node:url";
+import { host } from "../examples/schema/schema-host.ts";
 import { compile } from "../examples/schema/schema.ts";
 import { statement } from "../examples/schema/sql.ts";
 
@@ -73,8 +77,8 @@ type Mistake = {
 
 const mistakes: readonly Mistake[] = [
   {
-    original: "|> select { .title }",
-    replacement: "|> select { .titel }",
+    original: "{ .id, .title, .status,",
+    replacement: "{ .id, .titel, .status,",
     message: "Unknown field: Post.titel",
     at: "titel",
   },
@@ -97,8 +101,8 @@ const mistakes: readonly Mistake[] = [
     at: ".title == null",
   },
   {
-    original: "PostStatus.Draft |> newestFirst |> first",
-    replacement: "PostStatus.Draft |> first",
+    original: "Role.Admin |> newestFirst |> first",
+    replacement: "Role.Admin |> first",
     message: "first picks an arbitrary Post; add orderBy or match a unique field",
     at: "first",
   },
@@ -115,8 +119,8 @@ const mistakes: readonly Mistake[] = [
     at: "insert { role }",
   },
   {
-    original: "query staffPicks(skip: Int)",
-    replacement: "query staffPicks(skip: Int, page: Int)",
+    original: "query postsBy(author: User.id, skip: Int)",
+    replacement: "query postsBy(author: User.id, skip: Int, page: Int)",
     message: "Unused parameter: page",
     at: "page",
   },
@@ -202,7 +206,7 @@ test("sql: every blog statement runs, pages before projecting, and nests JSON wi
   const sai = id(exec("createUser").get({ email: "sai@example.com", role: "Admin" }));
   const kim = id(exec("createUser").get({ email: "kim@example.com", role: "Member" }));
   const hello = id(exec("createPost").get({ author: sai, title: "Hello", featured: 1, at: "2026-01-01 10:00:00" }));
-  const draft = id(exec("createPost").get({ author: sai, title: "Draft", featured: 0, at: "2026-01-02 10:00:00" }));
+  exec("createPost").get({ author: sai, title: "Draft", featured: 0, at: "2026-01-02 10:00:00" });
   exec("createPost").get({ author: kim, title: "Scratch", featured: 0, at: "2026-01-03 10:00:00" });
   const comments: readonly (readonly [string, number])[] = [
     ["2026-01-01 11:00:00", 0],
@@ -226,14 +230,118 @@ test("sql: every blog statement runs, pages before projecting, and nests JSON wi
   assert.equal(entry!.commentCount, 2);
   assert.deepEqual(exec("feed").all({ n: 10, before: "2026-01-01 00:00:00" }), []);
   assert.equal(exec("userByEmail").get({ email: "kim@example.com" })!.role, "Member");
-  assert.equal(exec("latestDraft").get({ author: sai })!.id, draft);
+  assert.equal(exec("latestStaffPick").get()!.title, "Hello");
   assert.deepEqual(exec("activeAuthors").all({ role: "Admin" }).map((row) => ({ ...row })), [
     { id: sai, email: "sai@example.com", drafts: 1 },
   ]);
-  assert.deepEqual(exec("staffPicks").all({ skip: 0 }).map((row) => row.title), ["Hello"]);
-  assert.deepEqual(exec("staffPicks").all({ skip: 1 }), []);
+  assert.deepEqual(exec("postsBy").all({ author: sai, skip: 0 }).map((row) => [row.title, row.editor]), [
+    ["Draft", null],
+    ["Hello", "{\"email\":\"kim@example.com\"}"],
+  ]);
+  assert.deepEqual(exec("postsBy").all({ author: sai, skip: 1 }).map((row) => row.id), [hello]);
   assert.equal(exec("draftCount").get({ author: sai })!.value, 1);
   assert.deepEqual(exec("hideComments").all({ author: kim }).map((row) => row.hidden), [1, 1, 1]);
   assert.equal(exec("purgeDrafts").run({ author: sai }).changes, 1);
   assert.equal(exec("draftCount").get({ author: sai })!.value, 0);
+});
+
+type Loaded = {
+  readonly open: (path: string) => Readonly<Record<string, (params?: object) => unknown>> & {
+    readonly init: () => void;
+    readonly close: () => void;
+    readonly transaction: <T>(body: () => T) => T;
+  };
+  readonly statements: Readonly<Record<string, string>>;
+};
+
+const scratch = mkdtempSync(join(tmpdir(), "schema-queries-"));
+after(() => rmSync(scratch, { recursive: true, force: true }));
+
+let modules = 0;
+const load = async (source: string): Promise<Loaded> => {
+  const { javascript, diagnostics } = host.host(source, "file:///blog.schema");
+  assert.deepEqual(diagnostics, []);
+  const file = join(scratch, `module-${modules++}.mjs`);
+  writeFileSync(file, javascript!);
+  return import(pathToFileURL(file).href);
+};
+
+const seeded = async () => {
+  const { open, statements } = await load(blog);
+  const db = open(":memory:");
+  db.init();
+  const sai = db.createUser!({ email: "sai@example.com", role: "Admin" }) as { readonly id: number; };
+  const post = db.createPost!({ author: sai.id, title: "Hello", featured: true, at: "2026-01-01 10:00:00" }) as {
+    readonly id: number;
+  };
+  db.addComment!({ post: post.id, author: sai.id, body: "first", hidden: false, at: "2026-01-01 11:00:00" });
+  return { db, statements, sai, post };
+};
+
+test("runtime: a throwing transaction rolls back and a nested one rolls back only to its savepoint", async () => {
+  const { db, sai } = await seeded();
+  const drafts = () => db.draftCount!({ author: sai.id });
+  const draft = (title: string) =>
+    db.createPost!({ author: sai.id, title, featured: false, at: "2026-01-02 10:00:00" });
+  assert.equal(drafts(), 1);
+  assert.throws(() =>
+    db.transaction(() => {
+      draft("lost");
+      throw new Error("abort");
+    }), /abort/);
+  assert.equal(drafts(), 1);
+  db.transaction(() => {
+    draft("kept");
+    assert.throws(() =>
+      db.transaction(() => {
+        draft("inner");
+        throw new Error("inner abort");
+      }), /inner abort/);
+  });
+  assert.equal(drafts(), 2);
+  assert.throws(() => db.transaction(async () => draft("async")), /must be synchronous/);
+  assert.equal(drafts(), 2);
+});
+
+test("runtime: open refuses a database whose DDL fingerprint differs", async () => {
+  const file = join(scratch, "fingerprint.db");
+  const first = (await load(blog)).open(file);
+  first.init();
+  first.close();
+  const { open } = await load(blog.replace("title : String,", "title : String,\n  subtitle : String?,"));
+  assert.throws(() => open(file), /schema fingerprint \d+, but this schema is \d+/);
+  const reopened = (await load(blog)).open(file);
+  reopened.init();
+  reopened.close();
+});
+
+test("runtime: rows decode Bool to booleans at the top level and inside JSON, and a missing to-one to null", async () => {
+  const { db, statements, sai, post } = await seeded();
+  db.createPost!({ author: sai.id, title: "Draft", featured: false, at: "2026-01-03 10:00:00" });
+  assert.equal(db.publish!({ post: post.id, editor: sai.id }), 1);
+  assert.deepEqual(db.postsBy!({ author: sai.id, skip: 0 }), [
+    { id: post.id + 1, title: "Draft", status: "Draft", featured: false, editor: null },
+    { id: post.id, title: "Hello", status: "Published", featured: true, editor: { email: "sai@example.com" } },
+  ]);
+  assert.deepEqual(db.feed!({ n: 10, before: null }), [{
+    id: post.id,
+    title: "Hello",
+    featured: true,
+    author: { id: sai.id, email: "sai@example.com" },
+    editor: { email: "sai@example.com" },
+    comments: [{ body: "first", hidden: false, by: "sai@example.com" }],
+    commentCount: 1,
+  }]);
+  assert.deepEqual(db.hideComments!({ author: sai.id }), [{ id: 1, hidden: true }]);
+  assert.deepEqual(db.feed!({ n: 1, before: null }), [{
+    id: post.id,
+    title: "Hello",
+    featured: true,
+    author: { id: sai.id, email: "sai@example.com" },
+    editor: { email: "sai@example.com" },
+    comments: [],
+    commentCount: 0,
+  }]);
+  assert.equal(db.userByEmail!({ email: "nobody@example.com" }), undefined);
+  assert.ok(statements.feed!.startsWith("SELECT"));
 });

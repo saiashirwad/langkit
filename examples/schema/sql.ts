@@ -1,4 +1,5 @@
-import type { Column, Query, Read, Shape, Term } from "./queries.ts";
+import type { Column, Output, Query, Read, Shape, Term } from "./queries.ts";
+import type { Cell, Decode, Plan } from "./runtime.ts";
 
 export const quote = (name: string): string => `"${name.replaceAll("\"", "\"\"")}"`;
 
@@ -10,9 +11,8 @@ export const text = (value: string): string =>
 
 const operators = { "==": "=", "!=": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=" } as const;
 
-const isBool = (column: Column): boolean =>
-  column.output.kind === "value" && column.output.value.base.kind === "scalar"
-  && column.output.value.base.name === "Bool";
+const isBool = (output: Output): boolean =>
+  output.kind === "value" && output.value.base.kind === "scalar" && output.value.base.name === "Bool";
 
 /** One statement per query. Depth 0 is `t0` in reads and the table itself in writes, which cannot alias it. */
 export const statement = ({ statement }: Query): string => {
@@ -94,7 +94,7 @@ export const statement = ({ statement }: Query): string => {
       : filtered(read);
 
   const json = (column: Column): string => {
-    if (isBool(column)) return `json(CASE ${sql(column.term)} WHEN 1 THEN 'true' WHEN 0 THEN 'false' END)`;
+    if (isBool(column.output)) return `json(CASE ${sql(column.term)} WHEN 1 THEN 'true' WHEN 0 THEN 'false' END)`;
     return column.output.kind === "value" ? sql(column.term) : `json(${sql(column.term)})`;
   };
 
@@ -158,3 +158,36 @@ export const statement = ({ statement }: Query): string => {
       return `DELETE FROM ${root}${where(statement.where.map(sql), "\n")}${returning(statement.returning)}`;
   }
 };
+
+const cell = (output: Output): Cell => (output.kind !== "value" ? "json" : isBool(output) ? "bool" : "value");
+
+const cells = (shape: Shape): readonly (readonly [string, Cell])[] =>
+  shape.columns.map((column) => [column.key.name, cell(column.output)]);
+
+const decode = ({ statement }: Query): Decode => {
+  switch (statement.kind) {
+    case "read":
+      switch (statement.result.kind) {
+        case "count":
+          return { kind: "value", cell: "value" };
+        case "exists":
+          return { kind: "value", cell: "bool" };
+        case "rows":
+          return { kind: "rows", cells: cells(statement.result.shape) };
+        case "first":
+        case "single":
+          return { kind: "row", cells: cells(statement.result.shape) };
+      }
+    case "insert":
+      return statement.returning ? { kind: "row", cells: cells(statement.returning) } : { kind: "changes" };
+    case "update":
+    case "delete":
+      return statement.returning ? { kind: "rows", cells: cells(statement.returning) } : { kind: "changes" };
+  }
+};
+
+export const plan = (query: Query): Plan => ({
+  sql: statement(query),
+  params: query.params.map((param) => param.name.name),
+  decode: decode(query),
+});

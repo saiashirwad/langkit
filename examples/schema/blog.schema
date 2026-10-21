@@ -90,8 +90,12 @@ query feed(n: Int, before: DateTime?) =
 query userByEmail(email: User.email) =
   User |> where .email == email |> first
 
-query latestDraft(author: User.id) =
-  Post |> where .authorId == author and .status == PostStatus.Draft |> newestFirst |> first
+query postsBy(author: User.id, skip: Int) =
+  Post
+    |> where .authorId == author
+    |> newestFirst
+    |> offset skip
+    |> select { .id, .title, .status, .featured, editor: .editor |> select { .email } }
 
 query activeAuthors(role: Role) =
   User
@@ -99,8 +103,8 @@ query activeAuthors(role: Role) =
     |> orderBy [.id]
     |> select { .id, .email, drafts: .posts |> where .status == PostStatus.Draft |> count }
 
-query staffPicks(skip: Int) =
-  Post |> where .featured and .author.role == Role.Admin |> orderBy [.id] |> offset skip |> select { .title }
+query latestStaffPick =
+  Post |> where .featured and .author.role == Role.Admin |> newestFirst |> first
 
 query draftCount(author: User.id) =
   Post |> where .authorId == author and .status == PostStatus.Draft |> count
