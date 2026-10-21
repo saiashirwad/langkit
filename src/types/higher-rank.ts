@@ -354,7 +354,7 @@ const maxLevel = (type: Type): number => {
   }
 };
 
-export const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type => {
+const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type => {
   type = prune(type);
   switch (type.kind) {
     case "generic":
@@ -442,14 +442,4 @@ export const expectFunction = (
     const result = yield* fresh(level);
     yield* unify(type, fn(param, result));
     return { kind: "function" as const, param, result };
-  }).atomic();
-
-export const withRigidScope = <A>(
-  expected: Type,
-  level: number,
-  body: (rigid: Type, level: number) => Check<A>,
-): Check<A> =>
-  check(function*() {
-    const inner = level + 1;
-    return yield* body(yield* skolemize(expected, inner), inner);
   }).atomic();

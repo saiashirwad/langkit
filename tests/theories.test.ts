@@ -156,7 +156,7 @@ test("Higher rank: reused subsumption, forall instantiation and rigid scopes exe
     const first = yield* instantiate;
     const second = yield* instantiate;
     assert.notEqual([...rank.free(first)][0], [...rank.free(second)][0]);
-    const rigid = rank.withRigidScope(rank.forall([a], a), 0, (type) => pure(type));
+    const rigid = rank.skolemize(rank.forall([a], a), 1);
     const firstRigid = yield* rigid;
     const secondRigid = yield* rigid;
     assert.notEqual(firstRigid, secondRigid);

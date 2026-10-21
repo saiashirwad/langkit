@@ -38,7 +38,7 @@ npm run editor:check
 
 `tools/editor-check.ts` starts the installed TypeScript 7 LSP server over standard input and output. `tests/editor-consumer.ts` is the source document. `tools/editor-contracts.ts` defines exact probe anchors and response requirements.
 
-The probes check callback types, judgment results, staged parameters and outputs, literal results, sequence tuples, named values, completions, and active signature arguments. Hover and signature text have length bounds and must not contain degraded types or truncation.
+The probes check callback types, judgment results, staged parameters and outputs, literal results, yielded tuples, named values, completions, and active signature arguments. Hover and signature text have length bounds and must not contain degraded types or truncation.
 
 The gate requires clean corpus diagnostics and compares responses against `tests/editor-consumer.snapshot.json`. It then changes the in-memory document to the `any` and `never` mutants, observes their actual hover text, rejects them, and confirms restoration. It does not edit the source document.
 
@@ -55,7 +55,7 @@ npm run editor:check
 npm run type:profile
 ```
 
-`tools/type-profile.ts` profiles the main project and generated consumers with 10, 50, and 200 distinct cases. Generated consumers exercise contextual descriptor callbacks, heterogeneous judgment rules, typed staged arrows and declarations, exact-type proofs, and literal sequence tuples.
+`tools/type-profile.ts` profiles the main project and generated consumers with 10, 50, and 200 distinct cases. Generated consumers exercise contextual descriptor callbacks, heterogeneous judgment rules, typed staged arrows and declarations, and exact-type proofs.
 
 Each workload runs in a new compiler process three times by default. The report includes medians for types, instantiations, check time, total time, and memory. The deterministic gate permits at most 500,000 types and 2,000,000 instantiations per workload. Timing and memory are reported, not gated.
 

@@ -16,11 +16,8 @@ const rankedProgram: Check<rank.Type> = check(function*() {
   const arrow = yield* rank.expectFunction(identity);
   const parameter: rank.Type = arrow.param;
   yield* rank.subsume(parameter, arrow.result);
-  return yield* rank.withRigidScope(
-    identity,
-    0,
-    (rigid, level) => rank.subsume(identity, rigid, level).map(() => identity),
-  );
+  yield* rank.subsume(identity, yield* rank.skolemize(identity, 1), 1);
+  return identity;
 });
 
 // @ts-expect-error A language binding map is not an environment of schemes.

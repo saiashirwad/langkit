@@ -38,8 +38,6 @@ Pure, nonrecursive let bindings can generalize against outer schemes. Parameters
 
 `instantiateForall` opens outer quantifiers with fresh inference variables. `skolemize` opens them with fresh rigid witnesses. `subsume(actual, expected, level)` checks expected polymorphism under rigid witnesses and applies contravariant parameter checking for functions. `expectFunction` opens an actual quantified type or constrains a monotype to an arrow.
 
-`withRigidScope(expected, level, body)` supplies the opened type and the inner level. It does not manage the language's lexical environment or inspect arbitrary returned terms. The language must use the supplied level for inner allocations and prevent forbidden witnesses from entering published results.
-
 Linking a variable lowers reachable unsolved ordinary and row variables before assignment. An outer variable cannot acquire an inner rigid witness through a function, record, or nominal data argument.
 
 Advanced checks annotated higher-rank parameters and results bidirectionally. It does not infer polymorphic lambda parameters or solve an inference variable directly to a `forall`. Its source-level restrictions on polymorphic record fields and data arguments remain language policies. Pure lets generalize. Unannotated recursive initializers are monomorphic while being checked; explicit polymorphic recursive annotations permit annotated polymorphic recursion.
@@ -50,7 +48,7 @@ There is no structural subtyping or impredicative inference.
 
 Solver computations allocate fresh cells and replacement maps during execution. Reusing an instantiation computation twice in one run produces distinct fresh cells, while repeated quantified occurrences within one use share their replacement.
 
-Links, absence constraints, and levels use the mutation journal. Failed compound unification restores them without requiring an outer speculative attempt. Pruning never performs unjournaled path compression.
+Links, absence constraints, and levels use the mutation journal. Failed compound unification restores them without an outer transaction. Pruning never performs unjournaled path compression.
 
 Type objects are mutable solver data, not detached editor snapshots. Retaining and reusing a variable across runs retains that object. Allocate variables within the checking task and supply a snapshot policy at publication boundaries.
 
