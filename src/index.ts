@@ -1,6 +1,4 @@
 export {
-  add,
-  assign,
   bind,
   Check,
   check,
@@ -8,13 +6,14 @@ export {
   get,
   lookup,
   pure,
-  push,
   type Result,
   run,
   type Scoped,
   scoped,
   type State,
   state,
+  type Transaction,
+  transaction,
   within,
 } from "./check.ts";
 export {

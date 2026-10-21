@@ -7,7 +7,7 @@ const rankedProgram: Check<rank.Type> = check(function*() {
   const arrow = yield* rank.expectFunction(identity);
   const parameter: rank.Type = arrow.param;
   yield* rank.subsume(parameter, arrow.result);
-  yield* rank.subsume(identity, yield* rank.skolemize(identity, 1), 1);
+  yield* rank.subsume(identity, rank.skolemize(identity, 1), 1);
   return identity;
 });
 

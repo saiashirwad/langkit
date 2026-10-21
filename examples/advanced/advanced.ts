@@ -160,7 +160,7 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
         const value = yield* within(
           level,
           () => current + 1,
-          checkExpr(expr, yield* skolemize(target, current + 1)),
+          checkExpr(expr, skolemize(target, current + 1)),
         );
         return { ...value, type: expected };
       }
@@ -200,7 +200,7 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
       if (expr.value.kind !== "fn") {
         return yield* fail("Recursive bindings require a function initializer");
       }
-      const type = annotation ?? (yield* fresh(yield* get(level)));
+      const type = annotation ?? fresh(yield* get(level));
       binding = ir.binding(expr.name, type);
       const initial = yield* bind(
         env,
@@ -210,7 +210,7 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
       yield* ir.declareRecursive(binding, initial);
       scheme = annotation
         ? mono(annotation)
-        : yield* generalize(type, [...environment.values()].map((entry) => entry.scheme));
+        : generalize(type, [...environment.values()].map((entry) => entry.scheme));
     } else {
       const initial = annotation
         ? yield* checkExpr(expr.value, annotation)
@@ -218,7 +218,7 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
       binding = (yield* ir.declare(expr.name, initial)).binding;
       scheme = annotation
         ? mono(annotation)
-        : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
+        : generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
     }
     yield* facts.define(
       binding,
@@ -239,7 +239,7 @@ const elaborateMatch = (
   check(function*() {
     const value = yield* elaborate(expr.value);
     const current = yield* get(level);
-    const result = expected ?? (yield* fresh(current));
+    const result = expected ?? fresh(current);
     const known = yield* get(constructors);
     const seen = new Set<string>();
     const cases: { tag: string; bindings: Binding<Type>[]; body: Body<Type>; }[] = [];
@@ -280,7 +280,7 @@ const elaborateMatch = (
         start: pattern.span.start,
         end: pattern.span.start + pattern.name.length,
       });
-      let type = yield* instantiateForall(constructor.type, current);
+      let type = instantiateForall(constructor.type, current);
       const bindings: Binding<Type>[] = [];
       const entries = new Map<string, Entry>();
       for (const field of pattern.fields) {
@@ -331,7 +331,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         case "name": {
           const { binding, scheme } = yield* lookup(env, expr.name);
           yield* facts.reference(binding, expr.span);
-          return ir.ref(binding, yield* instantiateForall(yield* instantiate(scheme, current), current));
+          return ir.ref(binding, instantiateForall(instantiate(scheme, current), current));
         }
         case "record": {
           const fields: { name: string; value: Value<Type>; }[] = [];
@@ -347,17 +347,17 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           }
           if (!expr.base) return ir.record(record(row(types)), fields);
           const base = yield* elaborate(expr.base);
-          const tail = yield* freshRow([], current);
+          const tail = freshRow([], current);
           yield* unify(base.type, record(row(new Map(), tail))).at(expr.base.span);
           yield* exclude(row(new Map(), tail), types.keys()).at(expr.base.span);
           return ir.record(record(row(types, tail)), fields, base);
         }
         case "field": {
           const value = yield* elaborate(expr.record);
-          const type = yield* fresh(current);
+          const type = fresh(current);
           yield* unify(
             value.type,
-            record(row(new Map([[expr.name, type]]), yield* freshRow([expr.name], current))),
+            record(row(new Map([[expr.name, type]]), freshRow([expr.name], current))),
           );
           return ir.field(type, value, expr.name);
         }
@@ -376,7 +376,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         case "let":
           return yield* elaborateLet(expr);
         case "fn": {
-          const type = expr.annotation ? yield* resolve(expr.annotation) : yield* fresh(current);
+          const type = expr.annotation ? yield* resolve(expr.annotation) : fresh(current);
           const binding = ir.binding(expr.param, type);
           yield* facts.define(binding, expr.paramSpan, "parameter");
           const body = yield* ir.body(
@@ -548,13 +548,13 @@ const exportOrigins = (expr: Expr): Map<string, Span> => {
 };
 
 const declarePrint: Check<Entry> = check(function*() {
-  const param = ir.binding("value", yield* fresh());
+  const param = ir.binding("value", fresh());
   const unit = record(row());
   const printed = yield* ir.declare(
     "print",
     ir.fn(fn(param.type, unit), param, { declarations: [], result: ir.print(unit, ir.ref(param)) }),
   );
-  return { binding: printed.binding, scheme: yield* generalize(printed.type, []) };
+  return { binding: printed.binding, scheme: generalize(printed.type, []) };
 });
 
 const buildModules = (graph: ModuleGraph, expose: (root: Root) => void = () => {}): Check<Linked> =>
@@ -704,7 +704,7 @@ const buildModules = (graph: ModuleGraph, expose: (root: Root) => void = () => {
           const reference = yield* ir.declare(name, ir.field(fieldType, result, name));
           entries.set(name, {
             binding: reference.binding,
-            scheme: yield* generalize(fieldType, [...imported.values()].map((entry) => entry.scheme)),
+            scheme: generalize(fieldType, [...imported.values()].map((entry) => entry.scheme)),
             identity: Symbol(name),
             origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
             kind: "field",

@@ -1,4 +1,4 @@
-import { add, assign, Check, check, fail } from "../check.ts";
+import { type Check, type Transaction, transaction } from "../check.ts";
 
 export type Type =
   | { readonly kind: "number" | "boolean" | "string"; }
@@ -59,13 +59,23 @@ export const record = (row: Row): Type => ({ kind: "record", row });
 export const row = (
   fields: ReadonlyMap<string, Type> = new Map(),
   tail: RowVariable | null = null,
-): Row => ({ fields, tail });
+): Row => {
+  const rest = tail && flatten({ fields: new Map(), tail });
+  for (const label of fields.keys()) {
+    if (rest && (rest.fields.has(label) || (rest.tail && !rest.tail.lacks.has(label)))) {
+      throw new TypeError(`Row tail must lack ${label}`);
+    }
+  }
+  return { fields, tail };
+};
 
-export const fresh = (level = 0): Check<Variable> =>
-  new Check(() => ({ ok: true, value: { kind: "variable", level } }));
+export const fresh = (level = 0): Variable => ({ kind: "variable", level });
 
-export const freshRow = (lacks: Iterable<string> = [], level = 0): Check<RowVariable> =>
-  new Check(() => ({ ok: true, value: { kind: "row-variable", level, lacks: new Set(lacks) } }));
+export const freshRow = (lacks: Iterable<string> = [], level = 0): RowVariable => ({
+  kind: "row-variable",
+  level,
+  lacks: new Set(lacks),
+});
 
 export const prune = (type: Type): Type => {
   while (type.kind === "variable" && type.instance) type = type.instance;
@@ -160,194 +170,161 @@ const occurs = (variable: Variable, input: Type): boolean => {
   }
 };
 
+const excludeLabels = (tx: Transaction, input: Row, labels: Iterable<string>): void => {
+  const { fields, tail } = flatten(input);
+  for (const label of labels) {
+    if (fields.has(label)) tx.fail(`Duplicate field: ${label}`);
+    if (tail) tx.add(tail.lacks, label);
+  }
+};
+
 export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
-  check(function*() {
-    const { fields, tail } = flatten(input);
-    for (const label of labels) {
-      if (fields.has(label)) return yield* fail(`Duplicate field: ${label}`);
-      if (tail) yield* add(tail.lacks, label);
+  transaction((tx) => excludeLabels(tx, input, labels));
+
+const solveRow = (tx: Transaction, variable: RowVariable, input: Row): void => {
+  const target = flatten(input);
+  if (!target.fields.size && target.tail === variable) return;
+  const variables = new Set<FreeVariable>();
+  freeRow(target, variables);
+  if (variables.has(variable)) tx.fail("Infinite row");
+  lower(tx, record(target), variable.level);
+  excludeLabels(tx, target, variable.lacks);
+  tx.assign(variable, "instance", target);
+};
+
+const unifyRows = (tx: Transaction, left: Row, right: Row): void => {
+  let a = flatten(left);
+  let b = flatten(right);
+  const unified = new Set<string>();
+  while (true) {
+    const common = [...a.fields].filter(([label]) => b.fields.has(label) && !unified.has(label));
+    if (!common.length) break;
+    for (const [label, type] of common) {
+      unifyTypes(tx, type, b.fields.get(label)!);
+      unified.add(label);
     }
-  }).atomic();
+    a = flatten(left);
+    b = flatten(right);
+  }
+  const onlyA = new Map([...a.fields].filter(([label]) => !b.fields.has(label)));
+  const onlyB = new Map([...b.fields].filter(([label]) => !a.fields.has(label)));
+  if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size)) {
+    tx.fail(`Missing field: ${[...(!a.tail ? onlyB : onlyA).keys()].join(", ")}`);
+  }
+  if (a.tail === b.tail) {
+    if (onlyA.size || onlyB.size) tx.fail("Infinite row: incompatible fields share a tail");
+    return;
+  }
+  if (a.tail && b.tail) {
+    const shared = freshRow([...onlyA.keys(), ...onlyB.keys()], Math.min(a.tail.level, b.tail.level));
+    solveRow(tx, a.tail, row(onlyB, shared));
+    solveRow(tx, b.tail, row(onlyA, shared));
+  } else if (a.tail) solveRow(tx, a.tail, row(onlyB));
+  else if (b.tail) solveRow(tx, b.tail, row(onlyA));
+};
 
-const constrain = (input: Type): Check<void> =>
-  check(function*() {
-    const type = prune(input);
-    if (type.kind === "function") {
-      yield* constrain(type.param);
-      yield* constrain(type.result);
-    } else if (type.kind === "record") {
-      yield* exclude(row(new Map(), type.row.tail), type.row.fields.keys());
-      const flat = flatten(type.row);
-      for (const field of flat.fields.values()) yield* constrain(field);
-      if (flat.tail) yield* exclude(row(new Map(), flat.tail), flat.fields.keys());
-    } else if (type.kind === "data") {
-      for (const arg of type.args) yield* constrain(arg);
-    } else if (type.kind === "forall") yield* constrain(type.body);
-  });
+const unifyTypes = (tx: Transaction, left: Type, right: Type): void => {
+  const a = prune(left);
+  const b = prune(right);
+  if (a === b) return;
+  if (a.kind === "variable") {
+    if (occurs(a, b)) tx.fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
+    if (b.kind === "forall") tx.fail("Cannot infer an impredicative type; add an explicit polymorphic annotation");
+    lower(tx, b, a.level);
+    tx.assign(a, "instance", b);
+  } else if (b.kind === "variable") unifyTypes(tx, b, a);
+  else if (a.kind === "function" && b.kind === "function") {
+    unifyTypes(tx, a.param, b.param);
+    unifyTypes(tx, a.result, b.result);
+  } else if (a.kind === "record" && b.kind === "record") unifyRows(tx, a.row, b.row);
+  else if (a.kind === "data" && b.kind === "data" && a.constructor.id === b.constructor.id) {
+    for (let i = 0; i < a.args.length; i++) unifyTypes(tx, a.args[i]!, b.args[i]!);
+  } else if (
+    a.kind === "forall"
+    && b.kind === "forall"
+    && a.variables.length === b.variables.length
+  ) {
+    const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
+    const witnesses = a.variables.map((v) => skolem(v.name, level));
+    const open = ({ variables, body }: typeof a) =>
+      substitute(body, new Map(variables.map((v, i) => [v, witnesses[i]!])));
+    unifyTypes(tx, open(a), open(b));
+  } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
+  else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
+  else if (a.kind === b.kind && (a.kind === "number" || a.kind === "boolean" || a.kind === "string")) return;
+  else tx.fail(`Cannot unify ${show(a)} with ${show(b)}`);
+};
 
-const solveRow = (variable: RowVariable, input: Row): Check<void> =>
-  check(function*() {
-    const target = flatten(input);
-    if (!target.fields.size && target.tail === variable) return;
-    const variables = new Set<FreeVariable>();
-    freeRow(target, variables);
-    if (variables.has(variable)) return yield* fail("Infinite row");
-    yield* lower(record(target), variable.level);
-    yield* exclude(target, variable.lacks);
-    if (target.tail) { for (const label of target.fields.keys()) yield* add(target.tail.lacks, label); }
-    yield* assign(variable, "instance", target);
-  });
-
-const unifyRows = (left: Row, right: Row): Check<void> =>
-  check(function*() {
-    let a = flatten(left);
-    let b = flatten(right);
-    const unified = new Set<string>();
-    while (true) {
-      const common = [...a.fields].filter(([label]) => b.fields.has(label) && !unified.has(label));
-      if (!common.length) break;
-      for (const [label, type] of common) {
-        yield* unifyTypes(type, b.fields.get(label)!);
-        unified.add(label);
-      }
-      a = flatten(left);
-      b = flatten(right);
-    }
-    const onlyA = new Map([...a.fields].filter(([label]) => !b.fields.has(label)));
-    const onlyB = new Map([...b.fields].filter(([label]) => !a.fields.has(label)));
-    if ((!a.tail && onlyB.size) || (!b.tail && onlyA.size)) {
-      return yield* fail(`Missing field: ${[...(!a.tail ? onlyB : onlyA).keys()].join(", ")}`);
-    }
-    if (a.tail === b.tail) {
-      if (onlyA.size || onlyB.size) {
-        return yield* fail("Infinite row: incompatible fields share a tail");
-      }
-      return;
-    }
-    if (a.tail && b.tail) {
-      const shared = yield* freshRow([], Math.min(a.tail.level, b.tail.level));
-      yield* solveRow(a.tail, row(onlyB, shared));
-      yield* solveRow(b.tail, row(onlyA, shared));
-    } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
-    else if (b.tail) yield* solveRow(b.tail, row(onlyA));
-  });
-
-const unifyTypes = (left: Type, right: Type): Check<void> =>
-  check(function*() {
-    const a = prune(left);
-    const b = prune(right);
-    if (a === b) return;
-    if (a.kind === "variable") {
-      if (occurs(a, b)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
-      if (b.kind === "forall") {
-        return yield* fail(
-          "Cannot infer an impredicative type; add an explicit polymorphic annotation",
-        );
-      }
-      yield* lower(b, a.level);
-      yield* assign(a, "instance", b);
-    } else if (b.kind === "variable") yield* unifyTypes(b, a);
-    else if (a.kind === "function" && b.kind === "function") {
-      yield* unifyTypes(a.param, b.param);
-      yield* unifyTypes(a.result, b.result);
-    } else if (a.kind === "record" && b.kind === "record") yield* unifyRows(a.row, b.row);
-    else if (a.kind === "data" && b.kind === "data" && a.constructor.id === b.constructor.id) {
-      for (let i = 0; i < a.args.length; i++) yield* unifyTypes(a.args[i]!, b.args[i]!);
-    } else if (
-      a.kind === "forall"
-      && b.kind === "forall"
-      && a.variables.length === b.variables.length
-    ) {
-      const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
-      const witnesses = a.variables.map((v) => skolem(v.name, level));
-      const open = ({ variables, body }: typeof a) =>
-        substitute(body, new Map(variables.map((v, i) => [v, witnesses[i]!])));
-      yield* unifyTypes(open(a), open(b));
-    } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
-    else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
-    else if (a.kind === b.kind && (a.kind === "number" || a.kind === "boolean" || a.kind === "string")) return;
-    else return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-  });
-
-export const unify = (left: Type, right: Type): Check<void> =>
-  check(function*() {
-    yield* constrain(left);
-    yield* constrain(right);
-    yield* unifyTypes(left, right);
-  }).atomic();
+export const unify = (left: Type, right: Type): Check<void> => transaction((tx) => unifyTypes(tx, left, right));
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 
-export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Scheme> =>
-  check(function*() {
-    yield* constrain(type);
-    const variables = free(type);
-    for (const scheme of environment) {
-      for (const variable of free(scheme.type)) {
-        if (!scheme.variables.has(variable)) variables.delete(variable);
-      }
+export const generalize = (type: Type, environment: Iterable<Scheme>): Scheme => {
+  const variables = free(type);
+  for (const scheme of environment) {
+    for (const variable of free(scheme.type)) {
+      if (!scheme.variables.has(variable)) variables.delete(variable);
     }
-    return { type, variables };
-  }).atomic();
+  }
+  return { type, variables };
+};
 
-export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
-  check(function*() {
-    if (scheme.variables.size === 0) return scheme.type;
-    const replacements = new Map<Variable, Variable>();
-    const rows = new Map<RowVariable, RowVariable>();
-    const visitRow = (input: Row): Row => {
-      const flat = flatten(input);
-      let tail = flat.tail;
-      if (tail && scheme.variables.has(tail)) {
-        if (!rows.has(tail)) rows.set(tail, { kind: "row-variable", level, lacks: new Set(tail.lacks) });
-        tail = rows.get(tail)!;
-      }
-      return row(new Map([...flat.fields].map(([name, type]) => [name, visit(type)])), tail);
-    };
-    const visit = (type: Type): Type => {
-      type = prune(type);
-      if (type.kind === "function") return fn(visit(type.param), visit(type.result));
-      if (type.kind === "record") return record(visitRow(type.row));
-      if (type.kind === "data") return data(type.constructor, type.args.map(visit));
-      if (type.kind === "forall") return forall(type.variables, visit(type.body));
-      if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
-      if (!replacements.has(type)) replacements.set(type, { kind: "variable", level });
-      return replacements.get(type)!;
-    };
-    return visit(scheme.type);
-  });
-
-const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set()): Check<void> =>
-  check(function*() {
+export const instantiate = (scheme: Scheme, level = 0): Type => {
+  if (scheme.variables.size === 0) return scheme.type;
+  const replacements = new Map<Variable, Variable>();
+  const rows = new Map<RowVariable, RowVariable>();
+  const visitRow = (input: Row): Row => {
+    const flat = flatten(input);
+    let tail = flat.tail;
+    if (tail && scheme.variables.has(tail)) {
+      if (!rows.has(tail)) rows.set(tail, freshRow(tail.lacks, level));
+      tail = rows.get(tail)!;
+    }
+    return row(new Map([...flat.fields].map(([name, type]) => [name, visit(type)])), tail);
+  };
+  const visit = (type: Type): Type => {
     type = prune(type);
-    switch (type.kind) {
-      case "variable":
-        if (type.level > level) yield* assign(type, "level", level);
-        return;
-      case "skolem":
-        if (type.level > level) return yield* fail(`Skolem escape: ${show(type)}`);
-        return;
-      case "generic":
-        if (!bound.has(type)) return yield* fail(`Escaping generic type: ${type.name}`);
-        return;
-      case "function":
-        yield* lower(type.param, level, bound);
-        yield* lower(type.result, level, bound);
-        return;
-      case "data":
-        for (const arg of type.args) yield* lower(arg, level, bound);
-        return;
-      case "forall":
-        yield* lower(type.body, level, new Set([...bound, ...type.variables]));
-        return;
-      case "record": {
-        const { fields, tail } = flatten(type.row);
-        for (const field of fields.values()) yield* lower(field, level, bound);
-        if (tail && tail.level > level) yield* assign(tail, "level", level);
-        return;
-      }
+    if (type.kind === "function") return fn(visit(type.param), visit(type.result));
+    if (type.kind === "record") return record(visitRow(type.row));
+    if (type.kind === "data") return data(type.constructor, type.args.map(visit));
+    if (type.kind === "forall") return forall(type.variables, visit(type.body));
+    if (type.kind !== "variable" || !scheme.variables.has(type)) return type;
+    if (!replacements.has(type)) replacements.set(type, fresh(level));
+    return replacements.get(type)!;
+  };
+  return visit(scheme.type);
+};
+
+const lower = (tx: Transaction, type: Type, level: number, bound: ReadonlySet<Generic> = new Set()): void => {
+  type = prune(type);
+  switch (type.kind) {
+    case "variable":
+      if (type.level > level) tx.assign(type, "level", level);
+      return;
+    case "skolem":
+      if (type.level > level) tx.fail(`Skolem escape: ${show(type)}`);
+      return;
+    case "generic":
+      if (!bound.has(type)) tx.fail(`Escaping generic type: ${type.name}`);
+      return;
+    case "function":
+      lower(tx, type.param, level, bound);
+      lower(tx, type.result, level, bound);
+      return;
+    case "data":
+      for (const arg of type.args) lower(tx, arg, level, bound);
+      return;
+    case "forall":
+      lower(tx, type.body, level, new Set([...bound, ...type.variables]));
+      return;
+    case "record": {
+      const { fields, tail } = flatten(type.row);
+      for (const field of fields.values()) lower(tx, field, level, bound);
+      if (tail && tail.level > level) tx.assign(tail, "level", level);
+      return;
     }
-  });
+  }
+};
 
 const maxLevel = (type: Type): number => {
   type = prune(type);
@@ -401,16 +378,13 @@ const substitute = (type: Type, replacements: ReadonlyMap<Generic, Type>): Type 
   }
 };
 
-export const instantiateForall = (input: Type, level = 0): Check<Type> =>
-  check(function*() {
-    let type = prune(input);
-    while (type.kind === "forall") {
-      const replacements = new Map<Generic, Type>();
-      for (const variable of type.variables) replacements.set(variable, yield* fresh(level));
-      type = prune(substitute(type.body, replacements));
-    }
-    return type;
-  });
+export const instantiateForall = (input: Type, level = 0): Type => {
+  let type = prune(input);
+  while (type.kind === "forall") {
+    type = prune(substitute(type.body, new Map(type.variables.map((variable) => [variable, fresh(level)]))));
+  }
+  return type;
+};
 
 const skolem = (name: string, level: number): Type => ({
   kind: "skolem",
@@ -419,46 +393,37 @@ const skolem = (name: string, level: number): Type => ({
   id: Symbol(name),
 });
 
-export const skolemize = (input: Type, level: number): Check<Type> =>
-  check(function*() {
-    let type = prune(input);
-    while (type.kind === "forall") {
-      type = prune(
-        substitute(
-          type.body,
-          new Map(type.variables.map((variable) => [variable, skolem(variable.name, level)])),
-        ),
-      );
-    }
-    return type;
-  });
+export const skolemize = (input: Type, level: number): Type => {
+  let type = prune(input);
+  while (type.kind === "forall") {
+    type = prune(
+      substitute(type.body, new Map(type.variables.map((variable) => [variable, skolem(variable.name, level)]))),
+    );
+  }
+  return type;
+};
 
-const subsumeAt = (actual: Type, expected: Type, level: number): Check<void> =>
-  check(function*() {
-    const target = prune(expected);
-    if (target.kind === "forall") {
-      yield* subsumeAt(yield* instantiateForall(actual, level + 1), yield* skolemize(target, level + 1), level + 1);
-      return;
-    }
-    const source = yield* instantiateForall(actual, level);
-    if (source.kind === "function" && target.kind === "function") {
-      yield* subsumeAt(target.param, source.param, level);
-      yield* subsumeAt(source.result, target.result, level);
-    } else yield* unify(source, target);
-  });
+const subsumeAt = (tx: Transaction, actual: Type, expected: Type, level: number): void => {
+  const target = prune(expected);
+  if (target.kind === "forall") {
+    return subsumeAt(tx, instantiateForall(actual, level + 1), skolemize(target, level + 1), level + 1);
+  }
+  const source = instantiateForall(actual, level);
+  if (source.kind === "function" && target.kind === "function") {
+    subsumeAt(tx, target.param, source.param, level);
+    subsumeAt(tx, source.result, target.result, level);
+  } else unifyTypes(tx, source, target);
+};
 
 export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
-  subsumeAt(actual, expected, level).atomic();
+  transaction((tx) => subsumeAt(tx, actual, expected, level));
 
-export const expectFunction = (
-  input: Type,
-  level = 0,
-): Check<Extract<Type, { kind: "function"; }>> =>
-  check(function*() {
-    const type = prune(yield* instantiateForall(input, level));
+export const expectFunction = (input: Type, level = 0): Check<Extract<Type, { kind: "function"; }>> =>
+  transaction((tx) => {
+    const type = instantiateForall(input, level);
     if (type.kind === "function") return type;
-    const param = yield* fresh(level);
-    const result = yield* fresh(level);
-    yield* unify(type, fn(param, result));
+    const param = fresh(level);
+    const result = fresh(level);
+    unifyTypes(tx, type, fn(param, result));
     return { kind: "function" as const, param, result };
-  }).atomic();
+  });

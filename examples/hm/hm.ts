@@ -192,7 +192,7 @@ const synthesize = (expr: Expr): Check<Value<Type>> =>
         return ir.literal(boolean, expr.value);
       case "name": {
         const { binding, scheme } = yield* lookup(env, expr.name);
-        const type = yield* instantiate(scheme);
+        const type = instantiate(scheme);
         yield* facts.reference(binding, expr.span);
         return ir.ref(binding, type);
       }
@@ -207,7 +207,7 @@ const synthesize = (expr: Expr): Check<Value<Type>> =>
         return yield* ir.scope(check(function*() {
           const initial = yield* elaborate(expr.value);
           const outer = yield* get(env);
-          const scheme = yield* generalize(initial.type, [...outer.values()].map((entry) => entry.scheme));
+          const scheme = generalize(initial.type, [...outer.values()].map((entry) => entry.scheme));
           const { binding } = yield* ir.declare(expr.name, initial);
           yield* facts.define(
             binding,
@@ -217,7 +217,7 @@ const synthesize = (expr: Expr): Check<Value<Type>> =>
           return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
         }));
       case "fn": {
-        const type = yield* fresh();
+        const type = fresh();
         const param = ir.binding(expr.param, type);
         yield* facts.define(param, expr.paramSpan, "parameter");
         const body = yield* ir.body(
@@ -228,7 +228,7 @@ const synthesize = (expr: Expr): Check<Value<Type>> =>
       case "call": {
         const callee = yield* elaborate(expr.fn);
         const arg = yield* elaborate(expr.arg);
-        const result = yield* fresh();
+        const result = fresh();
         yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span).recover();
         return ir.call(result, callee, arg);
       }

@@ -1,4 +1,4 @@
-import { type Check, check, get, push, scoped, within } from "./check.ts";
+import { type Check, check, get, scoped, transaction, within } from "./check.ts";
 import type { Span } from "./diagnostic.ts";
 
 export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
@@ -106,7 +106,7 @@ const collect = <T>(declaration: () => Declaration<T>): Check<Reference<T>> =>
     const declarations = yield* get(active);
     if (!declarations) throw new Error("IR declarations need an enclosing body");
     const declared = declaration();
-    yield* push(declarations, declared);
+    yield* transaction((tx) => tx.push(declarations, declared));
     return ref(declared.binding);
   });
 

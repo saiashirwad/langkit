@@ -268,39 +268,76 @@ export const run = <A>(checker: Check<A>): Result<A> => {
 };
 
 type Undo = () => void;
-const undoJournal = state<Undo[]>(() => [], (entries) => {
-  const length = entries.length;
-  return () => {
-    while (entries.length > length) entries.pop()!();
-  };
-});
 
-export const assign = <T extends object, K extends keyof T>(target: T, key: K, value: T[K]): Check<void> =>
-  get(undoJournal).map((journal) => {
+export type Transaction = {
+  assign<T extends object, K extends keyof T>(target: T, key: K, value: T[K]): void;
+  add<T>(target: Set<T>, value: T): void;
+  push<T>(target: T[], value: T): void;
+  fail(message: string): never;
+};
+
+class Failure {
+  readonly message: string;
+
+  constructor(message: string) {
+    this.message = message;
+  }
+}
+
+class Journal implements Transaction {
+  readonly entries: Undo[] = [];
+
+  assign<T extends object, K extends keyof T>(target: T, key: K, value: T[K]): void {
     const existed = Object.prototype.hasOwnProperty.call(target, key);
     const previous = target[key];
     if (existed && Object.is(previous, value)) return;
-    journal.push(() => {
+    this.entries.push(() => {
       if (existed) target[key] = previous;
       else Reflect.deleteProperty(target, key);
     });
     target[key] = value;
-  });
+  }
 
-export const add = <T>(target: Set<T>, value: T): Check<void> =>
-  get(undoJournal).map((journal) => {
+  add<T>(target: Set<T>, value: T): void {
     if (target.has(value)) return;
-    journal.push(() => {
+    this.entries.push(() => {
       target.delete(value);
     });
     target.add(value);
-  });
+  }
 
-export const push = <T>(target: T[], value: T): Check<void> =>
-  get(undoJournal).map((journal) => {
+  push<T>(target: T[], value: T): void {
     const length = target.length;
-    journal.push(() => {
+    this.entries.push(() => {
       target.length = length;
     });
     target.push(value);
+  }
+
+  fail(message: string): never {
+    throw new Failure(message);
+  }
+
+  undo(length: number): void {
+    while (this.entries.length > length) this.entries.pop()!();
+  }
+}
+
+const journal = state(() => new Journal(), (current) => {
+  const length = current.entries.length;
+  return () => current.undo(length);
+});
+
+/** Runs `body` against the undo journal; a throw undoes its writes, and `tx.fail` becomes a check failure. */
+export const transaction = <A>(body: (tx: Transaction) => A): Check<A> =>
+  new Check((runtime) => {
+    const tx = runtime.get(journal);
+    const length = tx.entries.length;
+    try {
+      return { ok: true, value: body(tx) };
+    } catch (error) {
+      tx.undo(length);
+      if (error instanceof Failure) return { ok: false, error: runtime.diagnostic(error.message) };
+      throw error;
+    }
   });

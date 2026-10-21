@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { add, assign, check, fail, get, pure, run, scoped, state, within } from "../src/check.ts";
+import { check, fail, get, pure, run, scoped, state, transaction, within } from "../src/check.ts";
 
 const counter = state(() => ({ value: 0 }), (cell) => {
   const saved = cell.value;
@@ -129,25 +129,30 @@ test("scoped environments are dynamically read-only and updater scopes unwind", 
   assert.deepEqual(run(get(environment)), { success: true, value: new Map([["base", 1]]) });
 });
 
-test("transactional mutation helpers reverse property and set writes", () => {
+test("failed transactions undo property, set and array writes", () => {
   const object: { existing?: number; missing?: number; } = { existing: 1 };
   const set = new Set(["present"]);
-  const program = check(function*() {
-    yield* assign(object, "existing", 9);
-    yield* assign(object, "missing", 7);
-    yield* add(set, "added");
-    return yield* fail("undo");
-  }).atomic();
-  assert.equal(run(program).success, false);
+  const list = [1];
+  const result = run(
+    transaction((tx) => {
+      tx.assign(object, "existing", 9);
+      tx.assign(object, "missing", 7);
+      tx.add(set, "added");
+      tx.push(list, 2);
+      return tx.fail("undo");
+    }).context("writing"),
+  );
+  assert.deepEqual(result, { success: false, errors: [{ message: "undo", context: ["writing"] }] });
   assert.deepEqual(object, { existing: 1 });
   assert.deepEqual([...set], ["present"]);
+  assert.deepEqual(list, [1]);
 });
 
 test("mutation journal reverses nested commits, exceptions, and first-use allocations", () => {
   const target = { value: 0 };
-  const innerCommit = assign(target, "value", 1).atomic();
-  const failedOuter = assign(target, "value", 2)
-    .flatMap(() => innerCommit)
+  const write = (value: number) => transaction((tx) => tx.assign(target, "value", value));
+  const failedOuter = write(2)
+    .flatMap(() => write(1).atomic())
     .flatMap(() => fail("outer"))
     .atomic();
   assert.equal(run(failedOuter).success, false);
@@ -155,16 +160,23 @@ test("mutation journal reverses nested commits, exceptions, and first-use alloca
 
   assert.throws(() =>
     run(
-      assign(target, "value", 3).flatMap(() => {
+      write(3).flatMap(() => {
         throw new Error("throw");
       }).atomic(),
     ), /throw/);
   assert.equal(target.value, 0);
 
-  assert.equal(run(assign(target, "value", 4).flatMap(() => fail("first use")).atomic()).success, false);
+  assert.throws(() =>
+    run(transaction((tx) => {
+      tx.assign(target, "value", 3);
+      throw new Error("inside");
+    })), /inside/);
   assert.equal(target.value, 0);
 
-  assert.equal(run(assign(target, "value", 5)).success, true);
+  assert.equal(run(write(4).flatMap(() => fail("first use")).atomic()).success, false);
+  assert.equal(target.value, 0);
+
+  assert.equal(run(write(5)).success, true);
   assert.equal(target.value, 5);
 });
 

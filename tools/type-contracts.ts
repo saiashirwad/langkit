@@ -74,7 +74,7 @@ export function runContracts(): void {
       },
       {
         name: "variable",
-        original: "const variable = yield* rank.fresh()",
+        original: "const variable = rank.fresh()",
         replacement: (type: string) => `const variable = undefined as ${type}`,
         proof: "prove<Equal<typeof variable, rank.Variable>>();",
       },

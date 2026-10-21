@@ -166,7 +166,7 @@ try {
     },
     {
       id: "fresh-variable",
-      original: "const variable = yield* rank.fresh()",
+      original: "const variable = rank.fresh()",
       replacement: (type: string) => `const variable = undefined as ${type}`,
     },
   ];

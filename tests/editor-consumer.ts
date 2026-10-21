@@ -50,13 +50,13 @@ export const inferred = check(function*() {
 prove<Equal<typeof inferred, Check<["label", 42, true]>>>();
 
 export const theoryConsumer: Check<rank.Variable> = check(function*() {
-  const rankVariable = yield* rank.fresh(1);
+  const rankVariable = rank.fresh(1);
   prove<Equal<typeof rankVariable, rank.Variable>>();
   return rankVariable;
 });
 
 export const freshVariable = check(function*() {
-  const variable = yield* rank.fresh();
+  const variable = rank.fresh();
   prove<Equal<typeof variable, rank.Variable>>();
   prove<Equal<IsAny<typeof variable>, false>>();
   prove<Equal<IsNever<typeof variable>, false>>();
