@@ -65,6 +65,37 @@ const cases: readonly HostCase[] = [
       message: "Cannot unify boolean with number",
     },
   },
+  {
+    language: "schema",
+    consumer: "examples/typescript/schema.ts",
+    output: "true 2 190\n2026-01-01 00:00:00 true\n"
+      + "{\"email\":\"sai@example.com\",\"role\":\"Admin\"} {\"title\":\"Hello\",\"authorId\":1}\n",
+    misuses: [
+      {
+        original: "const timestamp: string = author.updatedAt;",
+        replacement: "const timestamp: number = author.updatedAt;",
+        code: "TS2322",
+      },
+      { original: "const role: Role = \"Admin\";", replacement: "const role: Role = \"Owner\";", code: "TS2322" },
+      {
+        original: "({ title: \"Hello\", authorId: by.id })",
+        replacement: "({ title: \"Hello\", authorId: 1 })",
+        code: "TS2322",
+      },
+      { original: "entry.authorId === by.id", replacement: "entry.id === by.id", code: "TS2367" },
+      {
+        original: "{ email: author.email, role }",
+        replacement: "{ id: author.id, email: author.email, role }",
+        code: "TS2353",
+      },
+    ],
+    guestError: {
+      file: "examples/schema/simple.schema",
+      source: "model User = { id : Int |> primaryKey, role : Missing }\n",
+      at: "Missing",
+      message: "Unknown field type: Missing",
+    },
+  },
 ];
 
 const project = <A>(consumer: string, edits: Readonly<Record<string, string>>, use: (directory: string) => A): A => {

@@ -222,6 +222,20 @@ try {
       type: "main: <A, B>(x: (x: A) => B) => <C>(x: (x: C) => A) => (x: C) => B",
       guest: "examples/hm/compose.hm",
     },
+    {
+      consumer: "examples/typescript/schema.ts",
+      anchor: "type User }",
+      offset: 5,
+      type: "interface User",
+      guest: "examples/schema/simple.schema",
+    },
+    {
+      consumer: "examples/typescript/schema.ts",
+      anchor: "type Role,",
+      offset: 5,
+      type: "type Role = \"Admin\" | \"Member\"",
+      guest: "examples/schema/simple.schema",
+    },
   ];
   for (const { consumer, anchor, offset, type, guest } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");
