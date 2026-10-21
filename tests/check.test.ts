@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { add, assign, check, fail, get, pure, run, scoped, state, within } from "../src/check.ts";
-import { pruneLink } from "../src/types/higher-rank.ts";
 
 const counter = state(() => ({ value: 0 }), (cell) => {
   const saved = cell.value;
@@ -169,15 +168,6 @@ test("mutation journal reverses nested commits, exceptions, and first-use alloca
   assert.equal(target.value, 5);
 });
 
-test("pruneLink follows links without compressing any node", () => {
-  type Node = { value: string; next?: Node; };
-  const root: Node = { value: "root" };
-  const middle: Node = { value: "middle", next: root };
-  const start: Node = { value: "start", next: middle };
-  const resolved = pruneLink(start, (node: Node) => node.next === undefined ? null : node, (node) => node.next);
-  assert.equal(resolved, root);
-  assert.equal(start.next, middle);
-});
 test("recovered errors retain execution order and nested failures", () => {
   const recovered = fail("first").recover(pure(undefined)).flatMap(() => fail("second").recover(pure(undefined)));
   const result = run(recovered.flatMap(() => fail("terminal")));

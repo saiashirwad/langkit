@@ -22,6 +22,13 @@ type Theory<T, V extends T, S> = {
   free(type: T): ReadonlySet<unknown>;
 };
 
+test("prune follows links without compressing any node", () => {
+  const middle: rank.Variable = { kind: "variable", level: 0, instance: rank.number };
+  const start: rank.Variable = { kind: "variable", level: 0, instance: middle };
+  assert.equal(rank.prune(start), rank.number);
+  assert.equal(start.instance, middle);
+});
+
 const common = <T, V extends T, S>(name: string, theory: Theory<T, V, S>) => {
   test(`${name}: reused fresh and instantiation allocate within each execution`, () => {
     value(check(function*() {

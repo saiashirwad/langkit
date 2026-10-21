@@ -1,35 +1,5 @@
 import { add, assign, Check, check, fail } from "../check.ts";
 
-/** Resolve inference variables without mutating or compressing their link path. */
-export const pruneLink = <T, V extends object>(
-  value: T,
-  variable: (value: T) => V | null,
-  instance: (variable: V) => T | undefined,
-): T => {
-  let current = value;
-  for (;;) {
-    const node = variable(current);
-    if (node === null) return current;
-    const target = instance(node);
-    if (target === undefined) return current;
-    current = target;
-  }
-};
-
-/** Names variables a, b, …, z, a1, … in first-seen order. */
-export const variableNames = <V>(first = "a"): (variable: V) => string => {
-  const names = new Map<V, string>();
-  return (variable) => {
-    let name = names.get(variable);
-    if (name === undefined) {
-      const index = names.size;
-      name = String.fromCharCode(first.charCodeAt(0) + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : "");
-      names.set(variable, name);
-    }
-    return name;
-  };
-};
-
 export type Type =
   | { readonly kind: "number" | "boolean" | "string"; }
   | { readonly kind: "function"; readonly param: Type; readonly result: Type; }
@@ -97,10 +67,11 @@ export const fresh = (level = 0): Check<Variable> =>
 export const freshRow = (lacks: Iterable<string> = [], level = 0): Check<RowVariable> =>
   new Check(() => ({ ok: true, value: { kind: "row-variable", level, lacks: new Set(lacks) } }));
 
-const typeVariable = (value: Type): Variable | null => value.kind === "variable" ? value : null;
-const typeInstance = (variable: Variable): Type | undefined => variable.instance;
+export const prune = (type: Type): Type => {
+  while (type.kind === "variable" && type.instance) type = type.instance;
+  return type;
+};
 
-export const prune = (type: Type): Type => pruneLink(type, typeVariable, typeInstance);
 export const flatten = (input: Row): Row => {
   if (!input.tail?.instance) return input;
   const fields = new Map(input.fields);
@@ -113,7 +84,7 @@ export const flatten = (input: Row): Row => {
 };
 
 export const show = (type: Type): string => {
-  const name = variableNames<Variable>();
+  const variables = new Map<Variable, string>();
   const rows = new Map<RowVariable, string>();
   const visit = (type: Type): string => {
     type = prune(type);
@@ -139,7 +110,12 @@ export const show = (type: Type): string => {
         type.constructor.name + (type.args.length ? `(${type.args.map(visit).join(", ")})` : "")
       );
     }
-    return type.kind === "variable" ? name(type) : type.kind;
+    if (type.kind !== "variable") return type.kind;
+    if (!variables.has(type)) {
+      const index = variables.size;
+      variables.set(type, "abcdefghijklmnopqrstuvwxyz"[index % 26]! + (index >= 26 ? Math.floor(index / 26) : ""));
+    }
+    return variables.get(type)!;
   };
   const result = visit(type);
   const constraints = [...rows]
@@ -174,7 +150,7 @@ const occurs = (variable: Variable, input: Type): boolean => {
     case "function":
       return occurs(variable, type.param) || occurs(variable, type.result);
     case "record":
-      return [...flatten(type.row).fields.values()].some((field) => occurs(variable, field));
+      return flatten(type.row).fields.values().some((field) => occurs(variable, field));
     case "data":
       return type.args.some((arg) => occurs(variable, arg));
     case "forall":
@@ -284,10 +260,9 @@ const unifyTypes = (left: Type, right: Type): Check<void> =>
     ) {
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
       const witnesses = a.variables.map((v) => skolem(v.name, level));
-      yield* unifyTypes(
-        substitute(a.body, new Map(a.variables.map((v, i) => [v, witnesses[i]!]))),
-        substitute(b.body, new Map(b.variables.map((v, i) => [v, witnesses[i]!]))),
-      );
+      const open = ({ variables, body }: typeof a) =>
+        substitute(body, new Map(variables.map((v, i) => [v, witnesses[i]!])));
+      yield* unifyTypes(open(a), open(b));
     } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
     else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
     else if (a.kind === b.kind && (a.kind === "number" || a.kind === "boolean" || a.kind === "string")) return;
@@ -347,7 +322,7 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
     type = prune(type);
     switch (type.kind) {
       case "variable":
-        yield* assign(type, "level", Math.min(type.level, level));
+        if (type.level > level) yield* assign(type, "level", level);
         return;
       case "skolem":
         if (type.level > level) return yield* fail(`Skolem escape: ${show(type)}`);
@@ -368,7 +343,7 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
       case "record": {
         const { fields, tail } = flatten(type.row);
         for (const field of fields.values()) yield* lower(field, level, bound);
-        if (tail) yield* assign(tail, "level", Math.min(tail.level, level));
+        if (tail && tail.level > level) yield* assign(tail, "level", level);
         return;
       }
     }
