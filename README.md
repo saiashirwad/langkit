@@ -15,8 +15,6 @@ pnpm test
 
 Write the checker as a `switch` over your own AST inside a `check` generator. `bind` and `lookup` manage lexical scopes, and the higher-rank theory supplies `generalize` and `instantiate`.
 
-[Build a compiler with checks](docs/compiler-authoring.md) has a complete caller example.
-
 ## Compose an IR and backend
 
 The IR is extensible and descriptor-driven. `create<T>()` supplies the small core; optional operation sets add methods and descriptors explicitly. A value carries the language's own type descriptor and the exact identity of its operation descriptor. The framework does not define the language's type system.
@@ -89,7 +87,7 @@ const program = code.program(code.body(function*() {
 }));
 ```
 
-Each selected descriptor owns child evaluation order, scoped bodies and bindings, and references. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the portable `Program<T>` and throws if a selected operation has no handler. A `Program<T>` supplies its body together with the builder's selected readonly operation registry and core function identity needed by standalone validation and backends. `validate(program)` checks structural scope and declaration invariants; it does not prove language-level typing. [Operation contracts and runtime representations](docs/operations.md) cover the complete API and runtime representations.
+Each selected descriptor owns child evaluation order, scoped bodies and bindings, and references. Backend handlers are matched by exact descriptor identity, not by operation name. Emission validates the portable `Program<T>` and throws if a selected operation has no handler. A `Program<T>` supplies its body together with the builder's selected readonly operation registry and core function identity needed by standalone validation and backends. `validate(program)` checks structural scope and declaration invariants; it does not prove language-level typing.
 
 ### Integrating checking
 
@@ -136,14 +134,14 @@ Inference computations allocate fresh variables, instantiate, and generalize ins
 
 - **Parsing:** `langkit/parse` re-exports parserator parsers, generators, precedence, cuts, and source locations.
 - **Checking and diagnostics:** `langkit` provides synchronous `Check` computations, checkpointable run-local `State`, readonly scoped environments, atomic rollback, recoverable independent diagnostics, and structured nonempty `Result.errors`. `Check.inDocument(uri)` optionally attaches a document identity to failures for module routing while preserving nested source origins; human-readable `context` labels are not machine source locations.
-- **Inference:** `langkit/types/higher-rank` provides a reusable theory, and `assign`, `add`, and `push` from `langkit` provide journaled mutation for others. [Inference theory contracts](docs/inference-theories.md) define the grammars and limits.
+- **Inference:** `langkit/types/higher-rank` provides a reusable theory, and `assign`, `add`, and `push` from `langkit` provide journaled mutation for others.
 - **Modules:** `langkit/modules` provides a local-file module graph/loader for languages that want imports; it is optional. Analyses can include transitive dependency URIs and source snapshots.
 - **Analysis and editor support:** `langkit/analysis` optionally collects UTF-16 source ranges for types, definitions, references, lexical tokens, and diagnostics. `langkit/lsp` serves language-provided analysis over LSP, including dependency-aware re-analysis when imported documents change. Diagnostics retain structured source locations and related information for imported-source errors.
 - **JavaScript:** `langkit/javascript` validates and emits an expression using explicitly composed handlers. Feature handler sets must use the same operation descriptor instances as the IR builder. Emission is not a source-map generator. Executing the emitted code is the consumer's responsibility: a VM timeout is not a security sandbox for untrusted code.
 
 The core IR's scope validation and the language's type checker have different responsibilities. Constructors trust the language's typing rules; neither runtime validation nor TypeScript provides a general type proof.
 
-[Verification contracts](docs/verification.md) cover runtime tests, compiler fixtures, real TypeScript editor probes, isolated `any` and `never` controls, and compiler-cost measurements.
+Verification covers runtime tests, compiler fixtures, real TypeScript editor probes, isolated `any` and `never` controls, and compiler-cost measurements.
 
 ## Example languages and capabilities
 

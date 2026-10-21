@@ -1,6 +1,6 @@
 # Hindley–Milner (HM)
 
-HM is an expression language using Langkit's Hindley–Milner core of Langkit's [higher-rank theory](../../docs/inference-theories.md). It keeps Toy's expression syntax but removes parameter annotations. [`hm.ts`](./hm.ts) contains the language rules and compiler, and [`main.hm`](./main.hm) is its default program.
+HM is an expression language using Langkit's Hindley–Milner core of Langkit's higher-rank theory. It keeps Toy's expression syntax but removes parameter annotations. [`hm.ts`](./hm.ts) contains the language rules and compiler, and [`main.hm`](./main.hm) is its default program.
 
 ## Run it
 

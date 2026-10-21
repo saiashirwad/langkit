@@ -14,4 +14,4 @@ The compiler framework now composes diagnostic checks, run-local transactional s
 - Core IR contains primitive operations; records, variants/matches, printing, and folders are opt-in. `Schema` remains its domain-specific schema-to-SQL IR and is not routed through expression IR.
 - Analysis facts are run-local and roll back with abandoned alternatives. Failed collections retain valid child types but omit ancestor types containing same-document diagnostics.
 
-See [README](README.md) and [operation contracts](docs/operations.md) for runnable examples and API details.
+See [README](README.md) for runnable examples and API details.
