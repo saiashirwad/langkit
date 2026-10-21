@@ -1,10 +1,10 @@
 import type { Diagnostic, Span } from "langkit";
 import { atom, type HostLanguage, type Piece, specifier, unhosted, verbatim } from "langkit/host";
-import { binding, type Body, field, type Module, ref } from "langkit/ir";
+import { binding, field, type Module, ref } from "langkit/ir";
 import { emitModule } from "langkit/javascript";
 import { flatten, free, type FreeVariable, type Generic, prune, type Row, type Type } from "langkit/types/higher-rank";
 import type { DataDecl, Expr } from "./advanced-syntax.ts";
-import { checkSource } from "./advanced.ts";
+import { type Checked, checkSource } from "./advanced.ts";
 
 type Printed = { readonly text: string; readonly problem: string | undefined; };
 
@@ -126,11 +126,15 @@ const exported = (body: Expr) => {
   return { result, origin };
 };
 
-const program = (body: Body<Type>, fields: readonly (readonly [string, Type])[]): Module<Type> => {
+const program = (checked: Checked, fields: readonly (readonly [string, Type])[], uri: string): Module<Type> => {
+  const { body, imports, constructors } = checked;
   const main = binding("main", body.result.type);
   const exports = fields.map(([name, type]) => [name, binding(name, type)] as const);
   return {
-    imports: [],
+    imports: [...Map.groupBy(imports, (imported) => imported.from)].map(([from, names]) => ({
+      from: specifier(uri, from),
+      names: names.map((imported) => [imported.name, imported.binding] as const),
+    })),
     body: {
       declarations: [
         ...body.declarations,
@@ -139,7 +143,7 @@ const program = (body: Body<Type>, fields: readonly (readonly [string, Type])[])
       ],
       result: ref(main),
     },
-    exports,
+    exports: [...exports, ...constructors.filter(([name]) => !fields.some(([exported]) => exported === name))],
   };
 };
 
@@ -198,7 +202,7 @@ export const host: HostLanguage = {
         ),
         ...declarations,
       ],
-      javascript: diagnostics.length ? undefined : () => emitModule(program(checked.value.body, fields)),
+      javascript: diagnostics.length ? undefined : () => emitModule(program(checked.value, fields, uri)),
       diagnostics,
     };
   },
