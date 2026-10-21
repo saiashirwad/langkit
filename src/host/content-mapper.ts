@@ -1,4 +1,6 @@
-import { extname } from "node:path";
+import { createHash } from "node:crypto";
+import { readdirSync, readFileSync } from "node:fs";
+import { dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type Diagnostic, site } from "../diagnostic.ts";
 import { hostFor, type HostLanguage, project, type Projection } from "../host.ts";
@@ -59,12 +61,38 @@ const transform = (
   }
 };
 
-const reply = (languages: (fileName: string) => HostLanguage | undefined, method: string, params: unknown): Reply => {
+const guestFiles = (directory: string, extensions: ReadonlySet<string>): string[] =>
+  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      return entry.name === "node_modules" || entry.name.startsWith(".") ? [] : guestFiles(path, extensions);
+    }
+    return entry.isFile() && extensions.has(extname(entry.name)) ? [path] : [];
+  });
+
+/** A guest file's projection can read other guest files, so any change on disk reopens the project and retransforms it. */
+const openProject = (configFileName: string, extensions: ReadonlySet<string>) => {
+  const watchedFiles = guestFiles(dirname(configFileName), extensions).sort();
+  const identity = createHash("sha256");
+  for (const file of watchedFiles) identity.update(file).update("\0").update(readFileSync(file)).update("\0");
+  return { watchedFiles, configIdentity: identity.digest("hex") };
+};
+
+const reply = (
+  languages: (fileName: string) => HostLanguage | undefined,
+  extensions: ReadonlySet<string>,
+  method: string,
+  params: unknown,
+): Reply => {
   switch (method) {
     case "initialize":
       return { result: { positionEncoding: "utf-16", diagnosticSource: "langkit" } };
     case "openProject":
-      return { result: {} };
+      return {
+        result: isRecord(params) && typeof params.configFileName === "string" && params.configFileName
+          ? openProject(params.configFileName, extensions)
+          : {},
+      };
     case "closeProject":
       return { result: null };
     case "transform":
@@ -84,6 +112,7 @@ export const serveContentMapper = (
   },
 ): void => {
   const registry = hostFor(languages);
+  const extensions = new Set(languages.map((language) => language.extension));
   const send = (message: Record<string, unknown>) => {
     const body = JSON.stringify({ jsonrpc: "2.0", ...message });
     io.output.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
@@ -97,7 +126,7 @@ export const serveContentMapper = (
       return;
     }
     if (!isRecord(message) || typeof message.method !== "string" || message.id === undefined) return;
-    send({ id: message.id, ...reply(registry, message.method, message.params) });
+    send({ id: message.id, ...reply(registry, extensions, message.method, message.params) });
   };
   let pending = Buffer.alloc(0);
   io.input.on("data", (chunk: Buffer | string) => {

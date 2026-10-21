@@ -493,7 +493,15 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
     );
   });
 
-export type Imported = { readonly name: string; readonly from: string; readonly binding: Binding<Type>; };
+/** A binding the root module takes from another module, with the type it was checked against and its first use. */
+export type Imported = {
+  readonly name: string;
+  readonly from: string;
+  readonly binding: Binding<Type>;
+  readonly kind: Export["kind"];
+  readonly type: Type;
+  readonly span: Span;
+};
 
 export type Checked = {
   readonly type: Type;
@@ -515,7 +523,7 @@ const parse = (source: string): Result<Module> => parseResult(program, source);
 
 type Origin = { readonly uri: string; readonly span: Span; readonly name: string; };
 
-type Export = Entry & { readonly identity: symbol; readonly origin: Origin; };
+type Export = Entry & { readonly identity: symbol; readonly origin: Origin; readonly kind: "constructor" | "field"; };
 
 type ModuleExports = {
   readonly values: ReadonlyMap<string, Export>;
@@ -681,6 +689,7 @@ const buildModules = (graph: ModuleGraph, expose: (root: Root) => void = () => {
             scheme: mono(original.type),
             identity: original.binding.id,
             origin: { uri: module.uri, name, span },
+            kind: "constructor",
           });
           constructorEntries.set(name, { ...original, binding });
         }
@@ -698,6 +707,7 @@ const buildModules = (graph: ModuleGraph, expose: (root: Root) => void = () => {
             scheme: yield* generalize(fieldType, [...imported.values()].map((entry) => entry.scheme)),
             identity: Symbol(name),
             origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
+            kind: "field",
           });
         }
         completed.set(module.uri, {
@@ -754,10 +764,12 @@ export const checkSource = (source: string, options: ModuleOptions = {}): Result
   }
   if (!root) throw new Error("Module graph has no root");
   const { imported, ...exposed } = root;
-  const used = new Set(analysis.references.map((reference) => reference.id));
-  const imports = [...imported]
-    .filter(([, entry]) => used.has(entry.binding.id))
-    .map(([name, entry]) => ({ name, from: entry.origin.uri, binding: entry.binding }));
+  const uses = new Map<symbol, Span>();
+  for (const { id, span } of analysis.references) if (!uses.has(id)) uses.set(id, span);
+  const imports = [...imported].flatMap(([name, { binding, origin, kind, scheme }]) => {
+    const span = uses.get(binding.id);
+    return span ? [{ name, from: origin.uri, binding, kind, type: scheme.type, span }] : [];
+  });
   return { success: true, value: { type: built.value.body.result.type, ...built.value, imports, ...exposed } };
 };
 

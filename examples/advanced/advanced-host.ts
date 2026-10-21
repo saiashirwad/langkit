@@ -194,12 +194,24 @@ export const host: HostLanguage = {
       : typescript(type);
     if (printed.problem) diagnostics.push(unrepresentable("the module result", printed.problem, result.span));
     else declarations.push("declare const ", atom(main, result.span), `: ${printed.text};\nexport default ${main};\n`);
+    const taken = new Set(["main", ...fields.map(([name]) => name), ...datatypes.keys()]);
+    const assumed = checked.value.imports.flatMap(({ name, from, kind, type, span }) => {
+      if (kind !== "field") return [];
+      const local = reserved.has(name) || taken.has(name) ? `$$${name}` : name;
+      const printed = typescript(type);
+      return [atom(
+        `import { ${local === name ? name : `${name} as ${local}`} } from "${specifier(uri, from)}";\n`
+          + (printed.problem ? "" : `${local} satisfies ${printed.text};\n`),
+        span,
+      )];
+    });
     const imports = Map.groupBy([...referenced].filter(([, module]) => module !== uri), ([, module]) => module);
     return {
       declarations: [
         ...[...imports].map(([module, names]) =>
           `import type { ${names.map(([name]) => name).sort().join(", ")} } from "${specifier(uri, module)}";\n`
         ),
+        ...assumed,
         ...declarations,
       ],
       javascript: diagnostics.length ? undefined : () => emitModule(program(checked.value, fields, uri)),
