@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
   createConnection,
@@ -20,7 +22,6 @@ import {
   unanalyzed,
 } from "./analysis.ts";
 import { type Diagnostic, diagnostic, site, type Span } from "./diagnostic.ts";
-import { readFileUri } from "./modules.ts";
 
 const kindIndex = new Map(tokenKinds.map((kind, index) => [kind, index]));
 
@@ -91,7 +92,7 @@ export const serve = <T>(
     },
   }));
 
-  const read = (uri: string): string => documents.get(uri)?.getText() ?? readFileUri(uri);
+  const read = (uri: string): string => documents.get(uri)?.getText() ?? readFileSync(fileURLToPath(uri), "utf8");
   const sourceDocument = (analysis: Analysis<T>, uri: string): TextDocument | undefined => {
     const open = documents.get(uri);
     if (open) return open;

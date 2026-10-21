@@ -17,4 +17,11 @@ export {
   state,
   within,
 } from "./check.ts";
-export { type Diagnostic, type RelatedDiagnostic, render, type SourceLocation, type Span } from "./diagnostic.ts";
+export {
+  type Diagnostic,
+  type RelatedDiagnostic,
+  render,
+  type SourceLocation,
+  type Span,
+  withDocument,
+} from "./diagnostic.ts";

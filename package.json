@@ -10,8 +10,6 @@
     "./ir": "./src/ir.ts",
     "./javascript": "./src/javascript.ts",
     "./types/*": "./src/types/*.ts",
-    "./modules": "./src/modules.ts",
-    "./modules/imports": "./src/modules/imports.ts",
     "./analysis": "./src/analysis.ts",
     "./lsp": "./src/lsp.ts",
     "./host": "./src/host.ts",

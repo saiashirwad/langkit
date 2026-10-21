@@ -1,15 +1,7 @@
+import { type Diagnostic, type Result, type SourceLocation, type Span, withDocument } from "langkit";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import type { Result } from "./check.ts";
-import {
-  type Diagnostic,
-  diagnostic,
-  type SourceLocation,
-  type Span,
-  withDocument,
-  withLocation,
-} from "./diagnostic.ts";
 
 export type ModuleOptions = { readonly uri?: string; readonly read?: (uri: string) => string; };
 export type ImportDirective = { readonly path: string; readonly span: Span; };
@@ -22,10 +14,10 @@ export type ModuleSource = {
   readonly imports: readonly { readonly uri: string; readonly span: Span; }[];
 };
 
-export const readFileUri = (uri: string): string => {
-  const url = new URL(uri);
-  if (url.protocol !== "file:") throw new Error("Only local file URLs can be read");
-  return readFileSync(fileURLToPath(url), "utf8");
+const withLocation = (diagnostic: Diagnostic, location: SourceLocation): Diagnostic => {
+  const origin = diagnostic.origin ?? diagnostic.location
+    ?? (diagnostic.span ? { uri: location.uri, span: diagnostic.span } : undefined);
+  return origin ? { ...diagnostic, origin, location } : { ...diagnostic, location };
 };
 
 export class ModuleGraph {
@@ -97,7 +89,7 @@ const strip = (original: string, directives: readonly ImportDirective[]): string
 export const loadModules = (source: string, options: ModuleOptions, language: ModuleLanguage): Result<ModuleGraph> => {
   const { extension } = language;
   const located = (message: string, uri: string, span: Span = { start: 0, end: 0 }): Diagnostic =>
-    withDocument(diagnostic(message, span), uri);
+    withDocument({ message, context: [], span }, uri);
   const failure = (errors: readonly [Diagnostic, ...Diagnostic[]]): Result<never> => ({ success: false, errors });
   let root: string;
   try {
@@ -105,7 +97,7 @@ export const loadModules = (source: string, options: ModuleOptions, language: Mo
   } catch (cause) {
     return failure([located("Invalid module URI: " + String(cause), options.uri ?? "")]);
   }
-  const read = options.read ?? readFileUri;
+  const read = options.read ?? ((uri: string) => readFileSync(fileURLToPath(uri), "utf8"));
   const completed = new Map<string, ModuleSource>();
   const active = new Set<string>();
   const modules: ModuleSource[] = [];

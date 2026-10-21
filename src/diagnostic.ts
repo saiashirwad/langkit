@@ -29,12 +29,6 @@ export const withDocument = (diagnostic: Diagnostic, uri: string): Diagnostic =>
   return { ...diagnostic, origin, location: diagnostic.location ?? origin };
 };
 
-export const withLocation = (diagnostic: Diagnostic, location: SourceLocation): Diagnostic => {
-  const origin = diagnostic.origin ?? diagnostic.location
-    ?? (diagnostic.span ? { uri: location.uri, span: diagnostic.span } : undefined);
-  return origin ? { ...diagnostic, origin, location } : { ...diagnostic, location };
-};
-
 export const render = (error: Diagnostic, source?: string): string => {
   const context = error.context.length ? `\nWhile checking: ${error.context.join(" > ")}` : "";
   if (source === undefined || error.span === undefined) return error.message + context;

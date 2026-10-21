@@ -52,7 +52,7 @@ Checking a `forall` introduces rigid type variables rather than choosing a conve
 
 ## Imports and standard library
 
-Nothing is loaded implicitly. Add `import "./stdlib.advanced";` to use the standard datatypes `Option(a)` (`None`, `Some`), `Result(a, e)` (`Ok`, `Err`), and `List(a)` (`Nil`, `Cons`), along with `id`, `const`, and `compose`. Imported datatype names cannot be redeclared in the importing file. The shared import loader handles local source files. `compile` inlines imported modules into one program; loaded from TypeScript, each file is its own ES module that imports what it uses from its dependencies.
+Nothing is loaded implicitly. Add `import "./stdlib.advanced";` to use the standard datatypes `Option(a)` (`None`, `Some`), `Result(a, e)` (`Ok`, `Err`), and `List(a)` (`Nil`, `Cons`), along with `id`, `const`, and `compose`. Imported datatype names cannot be redeclared in the importing file. [`advanced-modules.ts`](./advanced-modules.ts) loads local source files. `compile` inlines imported modules into one program; loaded from TypeScript, each file is its own ES module that imports what it uses from its dependencies.
 
 The library also defines these ordinary source-language helpers:
 
