@@ -1,10 +1,10 @@
 import type { Diagnostic } from "langkit";
 import { type HostLanguage, type Piece, verbatim } from "langkit/host";
-import type { Query } from "./queries.ts";
-import { type Base, fieldValue, type Model, type Schema, type Value } from "./schema-model.ts";
+import type { Output, Query, Shape, Statement } from "./queries.ts";
+import { type Base, fieldValue, has, type Model, type Schema, type Value } from "./schema-model.ts";
 import type { Field, Name } from "./schema-syntax.ts";
 import { compile } from "./schema.ts";
-import { plan } from "./sql.ts";
+import { plan, statement } from "./sql.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
 
@@ -17,6 +17,7 @@ const scalars: Readonly<Record<string, string>> = {
 };
 
 const reserved = new Set([
+  "Database",
   "any",
   "bigint",
   "boolean",
@@ -46,8 +47,6 @@ const reserved = new Set([
   "yield",
 ]);
 
-const has = (field: Field, kind: Field["ops"][number]["kind"]): boolean => field.ops.some((op) => op.kind === kind);
-
 const primaryKey = (model: Model): Field | undefined => model.fields.find((field) => has(field, "primaryKey"));
 
 const idName = (model: Model): string => `${model.name.name}Id`;
@@ -59,6 +58,11 @@ const cannot = (name: Name, reason: string): Diagnostic => ({
   context: [],
   span: name.span,
 });
+
+const members = new Set(["transaction", "init", "close"]);
+
+const memberClashes = (queries: readonly Query[]): readonly Diagnostic[] =>
+  queries.flatMap(({ name }) => (members.has(name.name) ? [cannot(name, `${name.name}, a Database member`)] : []));
 
 const nameClashes = ({ models, enums }: Schema): readonly Diagnostic[] => {
   const taken = new Map<string, Name>();
@@ -146,6 +150,96 @@ const insertion = (model: Model, valueOf: ValueOf): string => {
   return `export interface ${insertName(model)} {\n${columns.join("")}}\n`;
 };
 
+const outputType = (output: Output): readonly Piece[] => {
+  switch (output.kind) {
+    case "value":
+      return [tsValue(output.value)];
+    case "object":
+      return [...shapeType(output.shape), output.nullable ? " | null" : ""];
+    case "list":
+      return ["readonly ", ...shapeType(output.shape), "[]"];
+  }
+};
+
+const shapeType = (shape: Shape): readonly Piece[] =>
+  shape.kind === "model"
+    ? [shape.model.name.name]
+    : [
+      "{ ",
+      ...shape.columns.flatMap((column): readonly Piece[] => [
+        "readonly ",
+        verbatim(column.key.name, column.key.span),
+        ": ",
+        ...outputType(column.output),
+        "; ",
+      ]),
+      "}",
+    ];
+
+const resultType = (statement: Statement): readonly Piece[] => {
+  if (statement.kind === "read") {
+    switch (statement.result.kind) {
+      case "rows":
+        return ["readonly ", ...shapeType(statement.result.shape), "[]"];
+      case "first":
+        return [...shapeType(statement.result.shape), " | undefined"];
+      case "single":
+        return shapeType(statement.result.shape);
+      case "count":
+        return ["number"];
+      case "exists":
+        return ["boolean"];
+    }
+  }
+  if (!statement.returning) return ["number"];
+  return statement.kind === "insert"
+    ? shapeType(statement.returning)
+    : ["readonly ", ...shapeType(statement.returning), "[]"];
+};
+
+const documentation = (sql: string): string =>
+  [
+    "  /**",
+    "   * ```sql",
+    ...sql.replaceAll("*/", "*\\/").split("\n").map((line) => `   * ${line}`),
+    "   * ```",
+    "   */",
+    "",
+  ]
+    .join("\n");
+
+const method = (query: Query): readonly Piece[] => [
+  documentation(statement(query)),
+  "  ",
+  verbatim(query.name.name, query.name.span),
+  "(",
+  ...(query.params.length
+    ? [
+      "params: { ",
+      ...query.params.flatMap(({ name, value }): readonly Piece[] => [
+        "readonly ",
+        verbatim(name.name, name.span),
+        `: ${tsValue(value)}; `,
+      ]),
+      "}",
+    ]
+    : []),
+  "): ",
+  ...resultType(query.statement),
+  ";\n",
+];
+
+const database = (queries: readonly Query[]): readonly Piece[] => [
+  "export interface Database {\n",
+  ...queries.flatMap(method),
+  "  transaction<T>(body: (tx: Database) => T): T;\n",
+  "  init(): void;\n",
+  "  close(): void;\n",
+  "}\n",
+  "export declare function open(path: string): Database;\n",
+  `export declare const statements: { ${queries.map((query) => `readonly ${query.name.name}: string; `).join("")}};\n`,
+];
+
 const module = (sql: string, queries: readonly Query[]): string =>
   [
     `import { connect } from ${JSON.stringify(runtime)};`,
@@ -164,7 +258,7 @@ export const host: HostLanguage = {
     const compiled = compile(source);
     if (!compiled.success) return { declarations: [], javascript: undefined, diagnostics: compiled.errors };
     const { schema, sql, queries } = compiled.value;
-    const diagnostics = [...nameClashes(schema), ...cycles(schema)];
+    const diagnostics = [...nameClashes(schema), ...cycles(schema), ...memberClashes(queries)];
     if (diagnostics.length) return { declarations: [], javascript: undefined, diagnostics };
     const valueOf = valuesOf(schema);
     return {
@@ -175,6 +269,7 @@ export const host: HostLanguage = {
           ...row(model, valueOf),
           insertion(model, valueOf),
         ]),
+        ...database(queries),
         "export declare const sql: string;\nexport default sql;\n",
       ],
       javascript: module(sql, queries),

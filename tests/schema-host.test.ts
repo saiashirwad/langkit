@@ -55,3 +55,24 @@ test("schema host: cyclic references have no faithful type", () => {
     "TypeScript cannot represent B.a, whose references form a cycle",
   ]);
 });
+
+test("schema host: queries project onto Database members, which a query name or model cannot shadow", () => {
+  const source = "model Database = { id : Int |> primaryKey }\nquery init = Database |> count\n";
+  const { diagnostics, javascript } = hosted(source);
+  assert.equal(javascript, undefined);
+  assert.deepEqual(
+    diagnostics.map(({ message, span }) => ({ message, at: source.slice(span!.start, span!.end) })),
+    [
+      { message: "TypeScript cannot represent Database, a reserved type name", at: "Database" },
+      { message: "TypeScript cannot represent init, a Database member", at: "init" },
+    ],
+  );
+  const { text } = hosted(
+    "model Note = { id : Int |> primaryKey, body : String? }\nquery note(id: Note.id) = Note |> where .id == id |> select { .body } |> first\n",
+  );
+  assert.ok(
+    text.includes("note(params: { readonly id: NoteId; }): { readonly body: string | null; } | undefined;"),
+    text,
+  );
+  assert.ok(text.includes("   * SELECT \"t0\".\"body\" AS \"body\"\n"), text);
+});

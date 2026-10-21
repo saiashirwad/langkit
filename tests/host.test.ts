@@ -177,6 +177,81 @@ const cases: readonly HostCase[] = [
       message: "Unknown field type: Missing",
     }],
   },
+  {
+    language: "schema queries",
+    consumer: "examples/typescript/blog.ts",
+    output: [
+      "published 1 Draft",
+      "Hello true sai@example.com kim@example.com [ 'kim@example.com: Nice post' ] 1",
+      "Notes Draft unedited",
+      "Hello Published edited by kim@example.com",
+      "Admin undefined Hello",
+      "[ 'sai@example.com has 1 draft' ]",
+      "changed my mind drafts: 1",
+      "[ { id: 1, hidden: true }, { id: 2, hidden: true } ]",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "a parameter typed by a key takes only that model's key",
+        original: "db.postsBy({ author: sai.id, skip: 0 })",
+        replacement: "db.postsBy({ author: hello.id, skip: 0 })",
+        code: "TS2322",
+      },
+      {
+        claim: "a row has only the fields its select names",
+        original: "entry.author.email",
+        replacement: "entry.author.role",
+        code: "TS2339",
+      },
+      {
+        claim: "every declared parameter is required",
+        original: "db.feed({ n: 10, before: null })",
+        replacement: "db.feed({ n: 10 })",
+        code: "TS2741",
+      },
+      {
+        claim: "first may find nothing",
+        original: "me?.role",
+        replacement: "me.role",
+        code: "TS18048",
+      },
+      {
+        claim: "a nullable relation may be null",
+        original: "entry.editor?.email",
+        replacement: "entry.editor.email",
+        code: "TS18047",
+      },
+      {
+        claim: "Bool fields are booleans",
+        original: "const featured: boolean = entry.featured;",
+        replacement: "const featured: number = entry.featured;",
+        code: "TS2322",
+      },
+    ],
+    guestErrors: [
+      {
+        file: "examples/schema/blog.schema",
+        source: "model User = { id : Int |> primaryKey, email : String }\n"
+          + "query byEmail(email: String) = User |> where .emial == email |> first\n",
+        at: "emial",
+        message: "Unknown field: User.emial",
+      },
+      {
+        file: "examples/schema/blog.schema",
+        source: "model User = { id : Int |> primaryKey }\nmodel Post = { id : Int |> primaryKey }\n"
+          + "query mixed(user: User.id) = Post |> where .id == user |> count\n",
+        at: ".id == user",
+        message: "Cannot compare PostId with UserId",
+      },
+      {
+        file: "examples/schema/blog.schema",
+        source: "model User = { id : Int |> primaryKey }\nquery transaction = User |> count\n",
+        at: "transaction",
+        message: "TypeScript cannot represent transaction, a Database member",
+      },
+    ],
+  },
 ];
 
 const project = <A>(consumer: string, edits: Readonly<Record<string, string>>, use: (directory: string) => A): A => {
