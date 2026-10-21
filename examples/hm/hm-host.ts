@@ -1,42 +1,10 @@
 import { atom, type HostLanguage, unhosted } from "langkit/host";
 import { emitModule } from "langkit/javascript";
-import { free, type FreeVariable, prune, type Type, variableNames } from "langkit/types/higher-rank";
+import { prune } from "langkit/types/higher-rank";
+import { printer } from "langkit/types/typescript";
 import { checkSource } from "./hm.ts";
 
-const parameterNames = (type: Type): readonly FreeVariable[] => {
-  const pruned = prune(type);
-  return pruned.kind === "function" ? [...free(pruned.param), ...parameterNames(pruned.result)] : [];
-};
-
-const typescript = (type: Type): string => {
-  const name = variableNames<FreeVariable>("A");
-  const bound = new Set<FreeVariable>();
-  const quantifier = (introduced: readonly FreeVariable[]): string => {
-    const fresh = [...new Set(introduced)].filter((variable) => !bound.has(variable));
-    for (const variable of fresh) bound.add(variable);
-    return fresh.length ? `<${fresh.map(name).join(", ")}>` : "";
-  };
-  const visit = (input: Type, outermost: boolean): string => {
-    const type = prune(input);
-    switch (type.kind) {
-      case "number":
-      case "boolean":
-        return type.kind;
-      case "variable":
-        return name(type);
-      case "function": {
-        const unmentioned = outermost
-          ? [...free(type)].filter((variable) => !parameterNames(type).includes(variable))
-          : [];
-        const generics = quantifier([...free(type.param), ...unmentioned]);
-        return `${generics}(x: ${visit(type.param, false)}) => ${visit(type.result, false)}`;
-      }
-      default:
-        throw new Error(`HM cannot produce a ${type.kind} type`);
-    }
-  };
-  return visit(type, true);
-};
+const typescript = printer();
 
 export const host: HostLanguage = {
   extension: ".hm",
@@ -51,8 +19,16 @@ export const host: HostLanguage = {
         span: result,
       }]);
     }
+    const printed = typescript(type);
+    if (printed.problem) {
+      return unhosted([{
+        message: `TypeScript cannot represent the result: ${printed.problem}`,
+        context: ["hosting"],
+        span: result,
+      }]);
+    }
     return {
-      declarations: ["declare const ", atom("main", result), `: ${typescript(type)};\nexport default main;\n`],
+      declarations: ["declare const ", atom("main", result), `: ${printed.text};\nexport default main;\n`],
       javascript: () => emitModule({ imports: [], body: checked.value.body, exports: [] }),
       diagnostics: [],
     };
