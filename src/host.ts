@@ -20,7 +20,7 @@ export type Piece = string | {
 
 export type Hosted = {
   readonly declarations: readonly Piece[];
-  readonly javascript: string | undefined;
+  readonly javascript: (() => string) | undefined;
   readonly diagnostics: readonly Diagnostic[];
 };
 

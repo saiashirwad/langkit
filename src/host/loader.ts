@@ -13,10 +13,6 @@ const describe = (diagnostic: Diagnostic, url: string, source: string): string =
 export const registerHostLanguages = (languages: readonly HostLanguage[]): void => {
   const language = hostFor(languages);
   registerHooks({
-    resolve(specifier, context, nextResolve) {
-      if (!language(specifier) || context.parentURL === undefined) return nextResolve(specifier, context);
-      return { url: new URL(specifier, context.parentURL).href, format: "module", shortCircuit: true };
-    },
     load(url, context, nextLoad) {
       const host = url.startsWith("file:") ? language(fileURLToPath(url)) : undefined;
       if (!host) return nextLoad(url, context);
@@ -25,7 +21,7 @@ export const registerHostLanguages = (languages: readonly HostLanguage[]): void 
       if (hosted.javascript === undefined || hosted.diagnostics.length > 0) {
         throw new SyntaxError(hosted.diagnostics.map((diagnostic) => describe(diagnostic, url, source)).join("\n"));
       }
-      return { format: "module", source: hosted.javascript, shortCircuit: true };
+      return { format: "module", source: hosted.javascript(), shortCircuit: true };
     },
   });
 };

@@ -4,7 +4,7 @@ import { flatten, free, type FreeVariable, type Generic, prune, type Row, type T
 import { dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { DataDecl, Expr } from "./advanced-syntax.ts";
-import { compile } from "./advanced.ts";
+import { checkModule, emit } from "./advanced.ts";
 
 type Printed = { readonly text: string; readonly problem: string | undefined; };
 
@@ -140,9 +140,9 @@ const unrepresentable = (name: string, reason: string, span: Span): Diagnostic =
 export const host: HostLanguage = {
   extension: ".advanced",
   host: (source, uri) => {
-    const compiled = compile(source, { uri });
-    if (!compiled.success) return unhosted(compiled.errors);
-    const { type, syntax, datatypes, javascript } = compiled.value;
+    const checked = checkModule(source, { uri });
+    if (!checked.success) return unhosted(checked.errors);
+    const { type, syntax, datatypes } = checked.value;
     const referenced = new Map<string, string>();
     const typescript = printer(datatypes, referenced);
     const { result, origin } = exported(syntax.body);
@@ -186,7 +186,7 @@ export const host: HostLanguage = {
         ),
         ...declarations,
       ],
-      javascript: diagnostics.length ? undefined : esm(javascript, fields.map(([name]) => name)),
+      javascript: diagnostics.length ? undefined : () => esm(emit(checked.value), fields.map(([name]) => name)),
       diagnostics,
     };
   },

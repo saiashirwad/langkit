@@ -1,7 +1,7 @@
 import { atom, esm, type HostLanguage, unhosted } from "langkit/host";
 import { variableNames } from "langkit/inference";
 import { free, prune, type Type, type Variable } from "langkit/types/hm";
-import { compile } from "./hm.ts";
+import { checkSource, emit } from "./hm.ts";
 
 const parameterNames = (type: Type): readonly Variable[] => {
   const pruned = prune(type);
@@ -39,9 +39,9 @@ const typescript = (type: Type): string => {
 export const host: HostLanguage = {
   extension: ".hm",
   host: (source) => {
-    const compiled = compile(source);
-    if (!compiled.success) return unhosted(compiled.errors);
-    const { type, result, javascript } = compiled.value;
+    const checked = checkSource(source);
+    if (!checked.success) return unhosted(checked.errors);
+    const { type, result } = checked.value;
     if (prune(type).kind === "variable") {
       return unhosted([{
         message: "TypeScript cannot represent a result whose type is an unconstrained variable",
@@ -51,7 +51,7 @@ export const host: HostLanguage = {
     }
     return {
       declarations: ["declare const ", atom("main", result), `: ${typescript(type)};\nexport default main;\n`],
-      javascript: esm(javascript, []),
+      javascript: () => esm(emit(checked.value), []),
       diagnostics: [],
     };
   },

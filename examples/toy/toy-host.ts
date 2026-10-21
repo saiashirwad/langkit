@@ -1,5 +1,5 @@
 import { atom, esm, type HostLanguage, unhosted } from "langkit/host";
-import { compile, type Type } from "./toy.ts";
+import { checkSource, emit, type Type } from "./toy.ts";
 
 const typescript = (type: Type): string => {
   switch (type.kind) {
@@ -14,15 +14,15 @@ const typescript = (type: Type): string => {
 export const host: HostLanguage = {
   extension: ".toy",
   host: (source) => {
-    const compiled = compile(source);
-    if (!compiled.success) return unhosted(compiled.errors);
+    const checked = checkSource(source);
+    if (!checked.success) return unhosted(checked.errors);
     return {
       declarations: [
         "declare const ",
         atom("main", { start: 0, end: source.length }),
-        `: ${typescript(compiled.value.type)};\nexport default main;\n`,
+        `: ${typescript(checked.value.type)};\nexport default main;\n`,
       ],
-      javascript: esm(compiled.value.javascript, []),
+      javascript: () => esm(emit(checked.value), []),
       diagnostics: [],
     };
   },

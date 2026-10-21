@@ -31,7 +31,8 @@ export type Type = string;
 
 export const show = (type: Type): string => type;
 
-export type Compiled = { readonly schema: Schema; readonly sql: string; readonly queries: readonly Query[]; };
+export type Checked = { readonly schema: Schema; readonly queries: readonly Query[]; };
+export type Compiled = Checked & { readonly sql: string; };
 
 const facts = createAnalysis<Type>();
 
@@ -531,13 +532,15 @@ export const emit = (schema: Schema): string => {
   return statements.join("\n\n") + "\n";
 };
 
-export const compile = (source: string): Result<Compiled> => {
+export const checkSource = (source: string): Result<Checked> => {
   const parsed = parse(source);
   if (!parsed.success) return parsed;
-  const result = run(elaborate(parsed.value));
-  return result.success
-    ? { success: true, value: { ...result.value, sql: emit(result.value.schema) } }
-    : result;
+  return run(elaborate(parsed.value));
+};
+
+export const compile = (source: string): Result<Compiled> => {
+  const checked = checkSource(source);
+  return checked.success ? { success: true, value: { ...checked.value, sql: emit(checked.value.schema) } } : checked;
 };
 
 export const analyze = (source: string): Analysis<Type> => {

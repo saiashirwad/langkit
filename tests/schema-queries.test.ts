@@ -262,7 +262,7 @@ const load = async (source: string): Promise<Loaded> => {
   const { javascript, diagnostics } = host.host(source, "file:///blog.schema");
   assert.deepEqual(diagnostics, []);
   const file = join(scratch, `module-${modules++}.mjs`);
-  writeFileSync(file, javascript!);
+  writeFileSync(file, javascript!());
   return import(pathToFileURL(file).href);
 };
 

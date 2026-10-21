@@ -13,7 +13,7 @@ import {
   type Value,
 } from "./schema-model.ts";
 import type { Field, Name } from "./schema-syntax.ts";
-import { compile } from "./schema.ts";
+import { checkSource, emit } from "./schema.ts";
 import { plan, statement } from "./sql.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
@@ -257,9 +257,9 @@ const module = (sql: string, queries: readonly Query[]): string =>
 export const host: HostLanguage = {
   extension: ".schema",
   host: (source) => {
-    const compiled = compile(source);
-    if (!compiled.success) return unhosted(compiled.errors);
-    const { schema, sql, queries } = compiled.value;
+    const checked = checkSource(source);
+    if (!checked.success) return unhosted(checked.errors);
+    const { schema, queries } = checked.value;
     const diagnostics = [...nameClashes(schema), ...cycles(schema), ...memberClashes(queries)];
     if (diagnostics.length) return unhosted(diagnostics);
     const valueOf = valuesOf(schema);
@@ -274,7 +274,7 @@ export const host: HostLanguage = {
         ...database(queries),
         "export declare const sql: string;\nexport default sql;\n",
       ],
-      javascript: module(sql, queries),
+      javascript: () => module(emit(schema), queries),
       diagnostics: [],
     };
   },

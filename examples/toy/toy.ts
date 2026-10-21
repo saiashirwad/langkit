@@ -282,11 +282,8 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
   ).at(expr.span);
 export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
 
-export type Compiled = {
-  readonly type: Type;
-  readonly ir: Program<Type>;
-  readonly javascript: string;
-};
+export type Checked = { readonly type: Type; readonly body: Body<Type>; };
+export type Compiled = Checked & { readonly ir: Program<Type>; readonly javascript: string; };
 
 const parse = (source: string): Result<Expr> => parseResult(program, source);
 
@@ -297,20 +294,20 @@ export const analyze = (source: string): Analysis<Type> => {
   return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 
-export const compile = (source: string): Result<Compiled> => {
+export const checkSource = (source: string): Result<Checked> => {
   const parsed = parse(source);
   if (!parsed.success) return parsed;
   const built = run(elaborateBody(parsed.value));
-  if (!built.success) return built;
-  const ir = code.program(built.value);
-  return {
-    success: true,
-    value: {
-      type: built.value.result.type,
-      ir,
-      javascript: javascript.emit(ir),
-    },
-  };
+  return built.success ? { success: true, value: { type: built.value.result.type, body: built.value } } : built;
+};
+
+export const emit = ({ body }: Checked): string => javascript.emit(code.program(body));
+
+export const compile = (source: string): Result<Compiled> => {
+  const checked = checkSource(source);
+  if (!checked.success) return checked;
+  const ir = code.program(checked.value.body);
+  return { success: true, value: { ...checked.value, ir, javascript: javascript.emit(ir) } };
 };
 
 if (import.meta.main) {

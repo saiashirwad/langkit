@@ -515,15 +515,15 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
     );
   });
 
-export type Compiled = {
+export type Checked = {
   readonly type: Type;
-  readonly ir: Program<Type>;
-  readonly javascript: string;
+  readonly body: Body<Type>;
   readonly syntax: Module;
   readonly datatypes: ReadonlyMap<string, string>;
 };
+export type Compiled = Checked & { readonly ir: Program<Type>; readonly javascript: string; };
 
-type Root = Pick<Compiled, "syntax" | "datatypes">;
+type Root = Pick<Checked, "syntax" | "datatypes">;
 
 const parse = (source: string): Result<Module> => parseResult(program, source);
 
@@ -746,7 +746,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   };
 };
 
-export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
+export const checkModule = (source: string, options: ModuleOptions = {}): Result<Checked> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   if (!graph.success) return graph;
   let root: Root | undefined;
@@ -759,16 +759,16 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
     return { success: false, errors };
   }
   if (!root) throw new Error("Module graph has no root");
-  const ir = code.program(built.value);
-  return {
-    success: true,
-    value: {
-      type: built.value.result.type,
-      ir,
-      javascript: javascript.emit(ir),
-      ...root,
-    },
-  };
+  return { success: true, value: { type: built.value.result.type, body: built.value, ...root } };
+};
+
+export const emit = ({ body }: Checked): string => javascript.emit(code.program(body));
+
+export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
+  const checked = checkModule(source, options);
+  if (!checked.success) return checked;
+  const ir = code.program(checked.value.body);
+  return { success: true, value: { ...checked.value, ir, javascript: javascript.emit(ir) } };
 };
 
 if (import.meta.main) {
