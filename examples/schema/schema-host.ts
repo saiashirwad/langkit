@@ -1,5 +1,7 @@
 import type { Diagnostic } from "langkit";
-import { type HostLanguage, type Piece, unhosted, verbatim } from "langkit/host";
+import { type HostLanguage, type Piece, specifier, unhosted, verbatim } from "langkit/host";
+import { binding, call, data, field, type Module, ref } from "langkit/ir";
+import { emitModule } from "langkit/javascript";
 import type { Output, Query, Shape, Statement } from "./queries.ts";
 import {
   type Base,
@@ -17,6 +19,28 @@ import { checkSource, ddl } from "./schema.ts";
 import { plan, statement } from "./sql.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
+
+const program = (uri: string, ddl: string, queries: readonly Query[]): Module<undefined> => {
+  const local = (name: string) => binding(name, undefined);
+  const connect = local("connect");
+  const statements = local("statements");
+  const schema = local("schema");
+  const exported = { sql: local("sql"), statements: local("statements"), open: local("open") };
+  const plans = Object.fromEntries(queries.map((query) => [query.name.name, plan(query)]));
+  return {
+    imports: [{ from: specifier(uri, runtime), names: [["connect", connect], ["statements", statements]] }],
+    body: {
+      declarations: [
+        { binding: schema, value: data(undefined, { ddl, plans }) },
+        { binding: exported.sql, value: field(undefined, ref(schema), "ddl") },
+        { binding: exported.statements, value: call(undefined, ref(statements), ref(schema)) },
+        { binding: exported.open, value: call(undefined, ref(connect), ref(schema)) },
+      ],
+      result: ref(exported.sql),
+    },
+    exports: Object.entries(exported),
+  };
+};
 
 const reserved = new Set([
   "Database",
@@ -242,21 +266,9 @@ const database = (queries: readonly Query[]): readonly Piece[] => [
   `export declare const statements: { ${queries.map((query) => `readonly ${query.name.name}: string; `).join("")}};\n`,
 ];
 
-const module = (sql: string, queries: readonly Query[]): string =>
-  [
-    `import { connect } from ${JSON.stringify(runtime)};`,
-    `const sql = ${JSON.stringify(sql)};`,
-    `const plans = ${JSON.stringify(Object.fromEntries(queries.map((query) => [query.name.name, plan(query)])))};`,
-    "export const statements = Object.freeze(Object.fromEntries(Object.entries(plans).map(([name, plan]) => [name, plan.sql])));",
-    "export const open = (path) => connect(path, sql, plans);",
-    "export { sql };",
-    "export default sql;",
-    "",
-  ].join("\n");
-
 export const host: HostLanguage = {
   extension: ".schema",
-  host: (source) => {
+  host: (source, uri) => {
     const checked = checkSource(source);
     if (!checked.success) return unhosted(checked.errors);
     const { schema, queries } = checked.value;
@@ -274,7 +286,7 @@ export const host: HostLanguage = {
         ...database(queries),
         "export declare const sql: string;\nexport default sql;\n",
       ],
-      javascript: () => module(ddl(schema), queries),
+      javascript: () => emitModule(program(uri, ddl(schema), queries)),
       diagnostics: [],
     };
   },

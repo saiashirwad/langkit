@@ -737,12 +737,10 @@ export const checkSource = (source: string, options: ModuleOptions = {}): Result
   return { success: true, value: { type: built.value.result.type, body: built.value, ...root } };
 };
 
-export const emit = ({ body }: Checked): string => javascript.emit(body);
-
 export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
   const checked = checkSource(source, options);
   if (!checked.success) return checked;
-  return { success: true, value: { ...checked.value, javascript: emit(checked.value) } };
+  return { success: true, value: { ...checked.value, javascript: javascript.emit(checked.value.body) } };
 };
 
 if (import.meta.main) {

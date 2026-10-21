@@ -1,5 +1,6 @@
-import { atom, esm, type HostLanguage, unhosted } from "langkit/host";
-import { checkSource, emit, type Type } from "./toy.ts";
+import { atom, type HostLanguage, unhosted } from "langkit/host";
+import { emitModule } from "langkit/javascript";
+import { checkSource, type Type } from "./toy.ts";
 
 const typescript = (type: Type): string => {
   switch (type.kind) {
@@ -22,7 +23,7 @@ export const host: HostLanguage = {
         atom("main", { start: 0, end: source.length }),
         `: ${typescript(checked.value.type)};\nexport default main;\n`,
       ],
-      javascript: () => esm(emit(checked.value), []),
+      javascript: () => emitModule({ imports: [], body: checked.value.body, exports: [] }),
       diagnostics: [],
     };
   },

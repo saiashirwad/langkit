@@ -271,12 +271,10 @@ export const checkSource = (source: string): Result<Checked> => {
   };
 };
 
-export const emit = ({ body }: Checked): string => javascript.emit(body);
-
 export const compile = (source: string): Result<Compiled> => {
   const checked = checkSource(source);
   if (!checked.success) return checked;
-  return { success: true, value: { ...checked.value, javascript: emit(checked.value) } };
+  return { success: true, value: { ...checked.value, javascript: javascript.emit(checked.value.body) } };
 };
 
 if (import.meta.main) {

@@ -8,11 +8,23 @@ export type Body<T> = { readonly declarations: readonly Declaration<T>[]; readon
 export type RecordField<T> = { readonly name: string; readonly value: Value<T>; };
 export type MatchCase<T> = { readonly tag: string; readonly bindings: readonly Binding<T>[]; readonly body: Body<T>; };
 export type MatchFallback<T> = { readonly binding?: Binding<T>; readonly body: Body<T>; };
+export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json; };
+export type Import<T> = {
+  readonly from: string;
+  readonly names: readonly (readonly [exported: string, binding: Binding<T>])[];
+};
+/** An ES module whose `body.result` is its default export. */
+export type Module<T> = {
+  readonly imports: readonly Import<T>[];
+  readonly body: Body<T>;
+  readonly exports: readonly (readonly [name: string, binding: Binding<T>])[];
+};
 
 export type Value<T> =
   & { readonly type: T; readonly span?: Span; }
   & (
     | { readonly kind: "literal"; readonly value: number | boolean | string; }
+    | { readonly kind: "data"; readonly value: Json; }
     | { readonly kind: "ref"; readonly binding: Binding<T>; }
     | { readonly kind: "binary"; readonly op: Operator; readonly left: Value<T>; readonly right: Value<T>; }
     | { readonly kind: "call"; readonly fn: Value<T>; readonly arg: Value<T>; }
@@ -39,6 +51,7 @@ export const ref = <T>(target: Binding<T>, type: T = target.type): Reference<T> 
   binding: target,
 });
 export const literal = <T>(type: T, value: number | boolean | string): Value<T> => ({ type, kind: "literal", value });
+export const data = <T>(type: T, value: Json): Value<T> => ({ type, kind: "data", value });
 export const binary = <T>(type: T, op: Operator, left: Value<T>, right: Value<T>): Value<T> => ({
   type,
   kind: "binary",

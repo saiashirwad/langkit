@@ -1,4 +1,4 @@
-import type { Binding, Body, Value } from "./ir.ts";
+import type { Binding, Body, Import, Module, Value } from "./ir.ts";
 
 const literal = (value: number | boolean | string): string => {
   if (typeof value === "string") return JSON.stringify(value);
@@ -10,7 +10,7 @@ const literal = (value: number | boolean | string): string => {
   return String(value);
 };
 
-export const emit = <T>(root: Body<T>): string => {
+const emitter = <T>() => {
   const names = new Map<symbol, string>();
   const name = (binding: Binding<T>): string => {
     const known = names.get(binding.id);
@@ -34,6 +34,8 @@ export const emit = <T>(root: Body<T>): string => {
     switch (value.kind) {
       case "literal":
         return literal(value.value);
+      case "data":
+        return JSON.stringify(value.value);
       case "ref":
         return name(value.binding);
       case "binary":
@@ -89,5 +91,28 @@ export const emit = <T>(root: Body<T>): string => {
         return `(console.log(${expr(value.value, depth)}), { __proto__: null })`;
     }
   };
-  return `${iife(root, 0)}\n`;
+  return { name, iife, expr };
+};
+
+export const emit = <T>(root: Body<T>): string => `${emitter<T>().iife(root, 0)}\n`;
+
+export const emitModule = <T>({ imports, body, exports }: Module<T>): string => {
+  const { name, expr } = emitter<T>();
+  const imported = ({ from, names }: Import<T>) =>
+    `import { ${
+      names.map(([exported, binding]) => `${JSON.stringify(exported)} as ${name(binding)}`).join(", ")
+    } } from ${JSON.stringify(from)};`;
+  return [
+    ...imports.map(imported),
+    ...body.declarations.map(({ binding, value }) => `const ${name(binding)} = ${expr(value, 0)};`),
+    ...(exports.length
+      ? [
+        `export { ${
+          exports.map(([exported, binding]) => `${name(binding)} as ${JSON.stringify(exported)}`).join(", ")
+        } };`,
+      ]
+      : []),
+    `export default ${expr(body.result, 0)};`,
+    "",
+  ].join("\n");
 };

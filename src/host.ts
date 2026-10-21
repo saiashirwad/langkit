@@ -1,4 +1,5 @@
-import { extname } from "node:path";
+import { dirname, extname, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Diagnostic, Span } from "./diagnostic.ts";
 
 export type Mapping = readonly [
@@ -72,15 +73,7 @@ export const project = (pieces: readonly Piece[]): Projection => {
   return { text, mappings };
 };
 
-export const esm = (expression: string, exports: readonly string[]): string =>
-  [
-    `const module = ${expression.trim()};`,
-    "export default module;",
-    ...(exports.length
-      ? [
-        `const { ${exports.map((name, index) => `${JSON.stringify(name)}: $${index}`).join(", ")} } = module;`,
-        `export { ${exports.map((name, index) => `$${index} as ${JSON.stringify(name)}`).join(", ")} };`,
-      ]
-      : []),
-    "",
-  ].join("\n");
+export const specifier = (from: string, to: string): string => {
+  const path = relative(dirname(fileURLToPath(from)), fileURLToPath(to)).split(sep).join("/");
+  return path.startsWith(".") ? path : `./${path}`;
+};

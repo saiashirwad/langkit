@@ -1,10 +1,10 @@
 import type { Diagnostic, Span } from "langkit";
-import { atom, esm, type HostLanguage, type Piece, unhosted, verbatim } from "langkit/host";
+import { atom, type HostLanguage, type Piece, specifier, unhosted, verbatim } from "langkit/host";
+import { binding, type Body, field, type Module, ref } from "langkit/ir";
+import { emitModule } from "langkit/javascript";
 import { flatten, free, type FreeVariable, type Generic, prune, type Row, type Type } from "langkit/types/higher-rank";
-import { dirname, relative, sep } from "node:path";
-import { fileURLToPath } from "node:url";
 import type { DataDecl, Expr } from "./advanced-syntax.ts";
-import { checkSource, emit } from "./advanced.ts";
+import { checkSource } from "./advanced.ts";
 
 type Printed = { readonly text: string; readonly problem: string | undefined; };
 
@@ -110,11 +110,6 @@ const brand = (declaration: DataDecl, datatypes: ReadonlyMap<string, string>): P
   ];
 };
 
-const specifier = (from: string, to: string): string => {
-  const path = relative(dirname(fileURLToPath(from)), fileURLToPath(to)).split(sep).join("/");
-  return path.startsWith(".") ? path : `./${path}`;
-};
-
 const exported = (body: Expr) => {
   const binders = new Map<string, Span>();
   let result = body;
@@ -129,6 +124,23 @@ const exported = (body: Expr) => {
     return binder ?? field.nameSpan;
   };
   return { result, origin };
+};
+
+const program = (body: Body<Type>, fields: readonly (readonly [string, Type])[]): Module<Type> => {
+  const main = binding("main", body.result.type);
+  const exports = fields.map(([name, type]) => [name, binding(name, type)] as const);
+  return {
+    imports: [],
+    body: {
+      declarations: [
+        ...body.declarations,
+        { binding: main, value: body.result },
+        ...exports.map(([name, exported]) => ({ binding: exported, value: field(exported.type, ref(main), name) })),
+      ],
+      result: ref(main),
+    },
+    exports,
+  };
 };
 
 const unrepresentable = (name: string, reason: string, span: Span): Diagnostic => ({
@@ -186,7 +198,7 @@ export const host: HostLanguage = {
         ),
         ...declarations,
       ],
-      javascript: diagnostics.length ? undefined : () => esm(emit(checked.value), fields.map(([name]) => name)),
+      javascript: diagnostics.length ? undefined : () => emitModule(program(checked.value.body, fields)),
       diagnostics,
     };
   },

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync, type SQLOutputValue } from "node:sqlite";
@@ -254,16 +254,16 @@ type Loaded = {
   readonly statements: Readonly<Record<string, string>>;
 };
 
-const scratch = mkdtempSync(join(tmpdir(), "schema-queries-"));
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), "schema-queries-")));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
 let modules = 0;
 const load = async (source: string): Promise<Loaded> => {
-  const { javascript, diagnostics } = host.host(source, "file:///blog.schema");
+  const file = pathToFileURL(join(scratch, `module-${modules++}.mjs`));
+  const { javascript, diagnostics } = host.host(source, file.href);
   assert.deepEqual(diagnostics, []);
-  const file = join(scratch, `module-${modules++}.mjs`);
   writeFileSync(file, javascript!());
-  return import(pathToFileURL(file).href);
+  return import(file.href);
 };
 
 const seeded = async () => {

@@ -1,6 +1,7 @@
-import { atom, esm, type HostLanguage, unhosted } from "langkit/host";
+import { atom, type HostLanguage, unhosted } from "langkit/host";
+import { emitModule } from "langkit/javascript";
 import { free, type FreeVariable, prune, type Type, variableNames } from "langkit/types/higher-rank";
-import { checkSource, emit } from "./hm.ts";
+import { checkSource } from "./hm.ts";
 
 const parameterNames = (type: Type): readonly FreeVariable[] => {
   const pruned = prune(type);
@@ -52,7 +53,7 @@ export const host: HostLanguage = {
     }
     return {
       declarations: ["declare const ", atom("main", result), `: ${typescript(type)};\nexport default main;\n`],
-      javascript: () => esm(emit(checked.value), []),
+      javascript: () => emitModule({ imports: [], body: checked.value.body, exports: [] }),
       diagnostics: [],
     };
   },

@@ -9,6 +9,8 @@ export type Decode =
 
 export type Plan = { readonly sql: string; readonly params: readonly string[]; readonly decode: Decode; };
 
+export type Compiled = { readonly ddl: string; readonly plans: Readonly<Record<string, Plan>>; };
+
 type Params = Readonly<Record<string, SQLInputValue | boolean>>;
 
 type Row = Record<string, SQLOutputValue>;
@@ -66,7 +68,10 @@ const execute = (plan: Plan, statement: StatementSync, params: Params | undefine
 const isThenable = (value: unknown): boolean =>
   typeof value === "object" && value !== null && "then" in value && typeof value.then === "function";
 
-export const connect = (path: string, ddl: string, plans: Readonly<Record<string, Plan>>): Database => {
+export const statements = ({ plans }: Compiled): Readonly<Record<string, string>> =>
+  Object.freeze(Object.fromEntries(Object.entries(plans).map(([name, plan]) => [name, plan.sql])));
+
+export const connect = ({ ddl, plans }: Compiled) => (path: string): Database => {
   const connection = new DatabaseSync(path);
   connection.exec("PRAGMA foreign_keys = ON");
   const stamp = fingerprint(ddl);
