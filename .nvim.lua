@@ -29,3 +29,11 @@ for _, language in ipairs({ "toy", "hm", "rows", "advanced", "strict", "schema",
   })
   vim.lsp.enable(language)
 end
+
+vim.lsp.config("tsc", {
+  before_init = function(params, config)
+    if config.root_dir == root then
+      params.initializationOptions = vim.tbl_extend("force", params.initializationOptions or {}, { runExternalCode = true })
+    end
+  end,
+})
