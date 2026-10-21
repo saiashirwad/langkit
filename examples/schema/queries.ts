@@ -25,7 +25,6 @@ import type {
   OrderKey,
   ParamType,
   Path,
-  Pipeline,
   Stage,
 } from "./schema-syntax.ts";
 
@@ -156,7 +155,11 @@ const rank: Readonly<Record<string, number>> = {
   exists: 4,
 };
 
+type WriteStage = Extract<Stage, { kind: "insert" | "update" | "delete"; }>;
+
 const writes: ReadonlySet<Op["kind"]> = new Set(["insert", "update", "delete"]);
+
+const isWrite = (stage: Stage): stage is WriteStage => writes.has(stage.kind);
 
 type Located = { readonly stage: Stage; readonly labels: readonly string[]; };
 
@@ -279,55 +282,45 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
         return located;
       });
 
-    const path = (segments: Path["segments"], row: Row, expr: Expr): Check<Typed> =>
-      check(function*() {
-        const hops: { readonly depth: number; readonly relation: Relation; }[] = [];
-        let current = row;
-        let nullable = false;
-        for (const [index, segment] of segments.entries()) {
-          const owner = current.model.name.name;
-          const field = current.model.fields.find((candidate) => candidate.name.name === segment.name);
-          const last = index === segments.length - 1;
-          if (field) {
-            if (!last) {
-              return yield* error(
-                segment,
-                `${owner}.${segment.name} is a field, not a relation; only relations can be followed`,
-              );
-            }
-            yield* reference(scope.field(current.model, segment.name), segment);
-            const value = valueOf(current.model, field);
-            const term = hops.reduceRight<Term>(
-              (then, hop) => ({ kind: "follow", depth: hop.depth, relation: hop.relation, then }),
-              { kind: "column", depth: current.depth, column: segment.name },
-            );
-            return {
-              term,
-              type: { kind: "value", value: { ...value, nullable: value.nullable || nullable } },
-              expr,
-              label: `${owner}.${segment.name}`,
-            };
-          }
-          const relation = relations.get(owner)?.get(segment.name);
-          if (!relation) return yield* error(segment, `Unknown field: ${owner}.${segment.name}`);
-          yield* reference(relationBinding(relation), segment);
-          if (last) {
+    const path = ([segment, ...rest]: Path["segments"], row: Row, expr: Expr, nullable = false): Check<Typed> =>
+      check(function*(): Generator<Check<unknown>, Typed, never> {
+        const owner = row.model.name.name;
+        const field = row.model.fields.find((candidate) => candidate.name.name === segment.name);
+        if (field) {
+          if (rest.length) {
             return yield* error(
               segment,
-              `${owner}.${segment.name} is a relation; select from it with .${segment.name} |> select { ... }`,
+              `${owner}.${segment.name} is a field, not a relation; only relations can be followed`,
             );
           }
-          if (relation.arity === "many") {
-            return yield* error(
-              segment,
-              `${owner}.${segment.name} is a list of ${relation.target}; use .${segment.name} |> count, exists, first or select`,
-            );
-          }
-          nullable ||= relation.arity === "optional";
-          hops.push({ depth: current.depth, relation });
-          current = { model: models.get(relation.target)!, depth: current.depth + 1 };
+          yield* reference(scope.field(row.model, segment.name), segment);
+          const value = valueOf(row.model, field);
+          return {
+            term: { kind: "column", depth: row.depth, column: segment.name },
+            type: { kind: "value", value: { ...value, nullable: value.nullable || nullable } },
+            expr,
+            label: `${owner}.${segment.name}`,
+          };
         }
-        throw new Error("unreachable: paths have at least one segment");
+        const relation = relations.get(owner)?.get(segment.name);
+        if (!relation) return yield* error(segment, `Unknown field: ${owner}.${segment.name}`);
+        yield* reference(relationBinding(relation), segment);
+        const [next, ...after] = rest;
+        if (!next) {
+          return yield* error(
+            segment,
+            `${owner}.${segment.name} is a relation; select from it with .${segment.name} |> select { ... }`,
+          );
+        }
+        if (relation.arity === "many") {
+          return yield* error(
+            segment,
+            `${owner}.${segment.name} is a list of ${relation.target}; use .${segment.name} |> count, exists, first or select`,
+          );
+        }
+        const target = { model: models.get(relation.target)!, depth: row.depth + 1 };
+        const inner = yield* path([next, ...after], target, expr, nullable || relation.arity === "optional");
+        return { ...inner, term: { kind: "follow", depth: row.depth, relation, then: inner.term } };
       });
 
     const boolean = (typed: Typed, what: string): Check<Term> =>
@@ -446,7 +439,7 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
             return yield* compare(expr, row);
           case "pipeline": {
             if (!row) return yield* error(expr, "An insert has no current row to follow");
-            const read = yield* nested(expr.pipeline, row);
+            const read = yield* nested(expr, row);
             return { term: { kind: "read", read }, type: output(read), expr, label: undefined };
           }
         }
@@ -612,14 +605,12 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
         };
       });
 
-    const nested = (pipeline: Pipeline, row: Row): Check<Read> =>
+    const nested = ({ relation: path, ops }: Extract<Expr, { kind: "pipeline"; }>, row: Row): Check<Read> =>
       check(function*() {
-        const source = pipeline.source;
-        if (source.kind !== "relation") throw new Error("unreachable: nested pipelines start at a relation");
-        if (source.path.segments.length !== 1) {
-          return yield* error(source.path, "A nested pipeline starts at one relation, like .posts");
+        if (path.segments.length !== 1) {
+          return yield* error(path, "A nested pipeline starts at one relation, like .posts");
         }
-        const segment = source.path.segments[0];
+        const segment = path.segments[0];
         const owner = row.model.name.name;
         const relation = relations.get(owner)?.get(segment.name);
         if (!relation) {
@@ -632,7 +623,7 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
         }
         yield* reference(relationBinding(relation), segment);
         const target = { model: models.get(relation.target)!, depth: row.depth + 1 };
-        return yield* read(target, relation, yield* expand(pipeline.ops, []));
+        return yield* read(target, relation, yield* expand(ops, []));
       });
 
     const assignments = (
@@ -674,19 +665,23 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
         return values;
       });
 
-    const write = (model: Model, located: readonly Located[], at: number): Check<Write> =>
+    const write = (
+      model: Model,
+      stage: WriteStage,
+      preceding: readonly Located[],
+      following: readonly Located[],
+    ): Check<Write> =>
       check(function*() {
-        const { stage } = located[at]!;
         const row: Row = { model, depth: 0 };
         const where: Term[] = [];
-        for (const { stage: before, labels } of located.slice(0, at)) {
+        for (const { stage: before, labels } of preceding) {
           if (stage.kind === "insert" || before.kind !== "where") {
             return yield* within(labels, error(before.name, `${before.kind} cannot come before ${stage.kind}`));
           }
           where.push(...conjuncts(yield* within(labels, boolean(yield* typed(before.condition, row), "where"))));
         }
         let returning: Shape | undefined;
-        for (const { stage: after, labels } of located.slice(at + 1)) {
+        for (const { stage: after, labels } of following) {
           if (after.kind !== "returning" || returning) {
             return yield* within(labels, error(after.name, `${after.kind} cannot follow ${stage.kind}`));
           }
@@ -721,20 +716,18 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
               return yield* error(stage.name, `delete without where removes every ${table}; write where true`);
             }
             return { kind: "delete", model, where, returning };
-          default:
-            throw new Error(`unreachable: ${stage.kind} is not a write`);
         }
       });
 
-    const source = declaration.body.source;
-    if (source.kind !== "model") throw new Error("unreachable: queries start at a model");
-    const model = models.get(source.name.name);
-    if (!model) return yield* error(source.name, `Unknown model: ${source.name.name}`);
-    yield* reference(scope.declared(source.name.name), source.name);
+    const source = declaration.body.model;
+    const model = models.get(source.name);
+    if (!model) return yield* error(source, `Unknown model: ${source.name}`);
+    yield* reference(scope.declared(source.name), source);
     const located = yield* expand(declaration.body.ops, []);
-    const at = located.findIndex(({ stage }) => writes.has(stage.kind));
-    const statement: Statement = at >= 0
-      ? yield* write(model, located, at)
+    const at = located.findIndex(({ stage }) => isWrite(stage));
+    const stage = located[at]?.stage;
+    const statement: Statement = stage && isWrite(stage)
+      ? yield* write(model, stage, located.slice(0, at), located.slice(at + 1))
       : yield* read({ model, depth: 0 }, undefined, located);
     for (const { param } of params.values()) {
       if (!used.has(param.name.name)) yield* error(param.name, `Unused parameter: ${param.name.name}`).recover();

@@ -68,7 +68,7 @@ export type Expr =
     | { readonly kind: "not"; readonly operand: Expr; }
     | { readonly kind: "and" | "or"; readonly left: Expr; readonly right: Expr; }
     | { readonly kind: "compare"; readonly op: Comparison; readonly left: Expr; readonly right: Expr; }
-    | { readonly kind: "pipeline"; readonly pipeline: Pipeline; }
+    | { readonly kind: "pipeline"; readonly relation: Path; readonly ops: readonly Op[]; }
   );
 
 export type Entry = { readonly key: Name; readonly value: Expr; };
@@ -81,20 +81,16 @@ export type Stage =
     | { readonly kind: "where"; readonly condition: Expr; }
     | { readonly kind: "orderBy"; readonly keys: readonly OrderKey[]; }
     | { readonly kind: "offset" | "limit"; readonly count: Expr; }
-    | { readonly kind: "select" | "returning" | "insert" | "update"; readonly entries: readonly Entry[]; }
-    | { readonly kind: "first" | "count" | "exists" | "delete"; }
+    | { readonly kind: "select" | "returning"; readonly entries: readonly Entry[]; }
+    | { readonly kind: "insert" | "update"; readonly entries: readonly Entry[]; }
+    | { readonly kind: "first" | "count" | "exists"; }
+    | { readonly kind: "delete"; }
   );
 
 /** Model operations and query stages share one pipe; the checker decides which a context accepts. */
 export type Op = ModelOp | Stage;
 
-export type Pipeline = {
-  readonly source: { readonly kind: "model"; readonly name: Name; } | {
-    readonly kind: "relation";
-    readonly path: Path;
-  };
-  readonly ops: readonly Op[];
-};
+export type Pipeline = { readonly model: Name; readonly ops: readonly Op[]; };
 
 export type ParamType =
   | { readonly kind: "named"; readonly name: Name; readonly optional: boolean; }
@@ -292,7 +288,8 @@ const nested: Parser<Expr> = parser(function*() {
   const last = ops.at(-1)!;
   return {
     kind: "pipeline" as const,
-    pipeline: { source: { kind: "relation" as const, path: value.path }, ops },
+    relation: value.path,
+    ops,
     span: { start: value.span.start, end: last.name.span.end },
   };
 });
@@ -302,9 +299,7 @@ const entry: Parser<Entry> = choice(
     yield* lookahead(symbol("."));
     const value = yield* nested;
     if (value.kind === "path") return { key: value.path.segments.at(-1)!, value };
-    if (value.kind === "pipeline" && value.pipeline.source.kind === "relation") {
-      return { key: value.pipeline.source.path.segments.at(-1)!, value };
-    }
+    if (value.kind === "pipeline") return { key: value.relation.segments.at(-1)!, value };
     return yield* fail("A record entry needs a key, like name: value");
   }),
   parser(function*() {
@@ -434,7 +429,7 @@ const declaration: Parser<Declaration> = choice(
       kind: "query" as const,
       name: id,
       params: params ?? [],
-      body: { source: { kind: "model" as const, name: model }, ops: yield* many(op) },
+      body: { model, ops: yield* many(op) },
     };
   }),
 );
