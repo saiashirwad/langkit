@@ -16,13 +16,13 @@ type Params = Readonly<Record<string, SQLInputValue | boolean>>;
 type Row = Record<string, SQLOutputValue>;
 
 /** What every schema's database offers; each projection extends it with its queries. */
-export interface Connection<Database> {
-  transaction<T>(body: (tx: Database) => T): T;
+export interface Connection {
+  transaction<T>(body: () => T): T;
   init(): void;
   close(): void;
 }
 
-interface Database extends Connection<Database>, Readonly<Record<string, unknown>> {}
+interface Database extends Connection, Readonly<Record<string, unknown>> {}
 
 /** A 31-bit FNV-1a hash of the DDL, stored in PRAGMA user_version. Never 0, which marks a fresh file. */
 export const fingerprint = (ddl: string): number => {
@@ -48,6 +48,7 @@ const cell = (kind: Cell, value: SQLOutputValue | undefined): unknown => {
 const row = (cells: readonly (readonly [string, Cell])[], values: Row): Readonly<Record<string, unknown>> =>
   Object.fromEntries(cells.map(([key, kind]) => [key, cell(kind, values[key])]));
 
+/** A missing parameter binds as null; the projected type makes every parameter required. */
 const bind = (plan: Plan, params: Params | undefined): Record<string, SQLInputValue> =>
   Object.fromEntries(plan.params.map((name) => {
     const value = params?.[name];
@@ -97,12 +98,12 @@ export const connect = ({ ddl, plans }: Compiled) => (path: string): Database =>
     return statement;
   };
   let depth = 0;
-  const transaction = <T>(body: (tx: Database) => T): T => {
+  const transaction = <T>(body: () => T): T => {
     const savepoint = depth ? `"langkit_${depth}"` : undefined;
     connection.exec(savepoint ? `SAVEPOINT ${savepoint}` : "BEGIN IMMEDIATE");
     depth++;
     try {
-      const result = body(database);
+      const result = body();
       if (isThenable(result)) {
         throw new TypeError(
           "A transaction body must be synchronous: node:sqlite cannot hold a transaction across await",

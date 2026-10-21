@@ -26,8 +26,8 @@ console.log(me?.role, db.userByEmail({ email: "nobody@example.com" }), db.latest
 console.log(db.activeAuthors({ role: "Admin" }).map((author) => `${author.email} has ${author.drafts} draft`));
 
 try {
-  db.transaction((tx) => {
-    tx.purgeDrafts({ author: sai.id });
+  db.transaction(() => {
+    db.purgeDrafts({ author: sai.id });
     throw new Error("changed my mind");
   });
 } catch (error) {

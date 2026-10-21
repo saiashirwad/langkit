@@ -149,6 +149,7 @@ export const isStage = (op: Op): op is Stage => stages.has(op.kind);
 export const isFilter = (op: Op): op is Extract<Stage, { kind: "where" | "orderBy" | "offset" | "limit"; }> =>
   filters.has(op.kind);
 
+/** Read stages by position; equal ranks are alternatives, except where, which accumulates. */
 const rank: Readonly<Record<string, number>> = {
   where: 0,
   orderBy: 0,

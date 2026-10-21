@@ -83,6 +83,7 @@ const cannot = (name: Name, reason: string): Diagnostic => ({
   span: name.span,
 });
 
+/** Names the projected Database already carries; keep in sync with Connection in runtime.ts. */
 const members = new Set(["transaction", "init", "close"]);
 
 const memberClashes = (queries: readonly Query[]): readonly Diagnostic[] =>
@@ -107,22 +108,25 @@ const nameClashes = ({ models, enums }: Schema): readonly Diagnostic[] => {
   return diagnostics;
 };
 
-type ValueOf = (model: Model, field: Field) => Value;
+type ValueOf = (field: Field) => Value;
 
-const cycles = ({ models }: Schema): readonly Diagnostic[] => {
+/** Resolve each field's value once; a reference cycle has no value and becomes a diagnostic. */
+const fieldValues = (
+  { models }: Schema,
+): { readonly valueOf: ValueOf; readonly diagnostics: readonly Diagnostic[]; } => {
   const byName = new Map(models.map((model) => [model.name.name, model]));
-  return models.flatMap((model) =>
-    model.fields.flatMap((field) =>
-      fieldValue(byName, model, field)
-        ? []
-        : [cannot(field.name, `${model.name.name}.${field.name.name}, whose references form a cycle`)]
-    )
-  );
-};
-
-const valuesOf = ({ models }: Schema): ValueOf => {
-  const byName = new Map(models.map((model) => [model.name.name, model]));
-  return (model, field) => fieldValue(byName, model, field)!;
+  const values = new Map<Field, Value>();
+  const diagnostics: Diagnostic[] = [];
+  for (const model of models) {
+    for (const field of model.fields) {
+      const value = fieldValue(byName, model, field);
+      if (value) values.set(field, value);
+      else diagnostics.push(cannot(field.name, `${model.name.name}.${field.name.name}, whose references form a cycle`));
+    }
+  }
+  // The host stops on diagnostics, so every field is present here.
+  const valueOf = (field: Field): Value => values.get(field)!;
+  return { valueOf, diagnostics };
 };
 
 const base = (value: Base): string =>
@@ -147,7 +151,7 @@ const identity = (model: Model, valueOf: ValueOf): readonly Piece[] => {
   const key = primaryKey(model);
   if (!key) return [];
   const type = has(key, "references")
-    ? tsValue(valueOf(model, key))
+    ? tsValue(valueOf(key))
     : `${isScalar(key.type.name) ? scalars[key.type.name].ts : key.type.name} & { readonly __brand: "${
       idName(model)
     }" }`;
@@ -161,7 +165,7 @@ const row = (model: Model, valueOf: ValueOf): readonly Piece[] => [
   ...model.fields.flatMap((field): readonly Piece[] => [
     "  readonly ",
     verbatim(field.name.name, field.name.span),
-    `: ${tsValue(valueOf(model, field))};\n`,
+    `: ${tsValue(valueOf(field))};\n`,
   ]),
   "}\n",
 ];
@@ -171,7 +175,7 @@ const insertion = (model: Model, valueOf: ValueOf): string => {
     .filter((field) => !has(field, "autoIncrement"))
     .map((field) => {
       const optional = field.optional || has(field, "default") ? "?" : "";
-      return `  readonly ${field.name.name}${optional}: ${tsValue(valueOf(model, field))};\n`;
+      return `  readonly ${field.name.name}${optional}: ${tsValue(valueOf(field))};\n`;
     });
   return `export interface ${insertName(model)} {\n${columns.join("")}}\n`;
 };
@@ -256,7 +260,7 @@ const method = (query: Query): readonly Piece[] => [
 ];
 
 const database = (queries: readonly Query[]): readonly Piece[] => [
-  "export interface Database extends $Connection<Database> {\n",
+  "export interface Database extends $Connection {\n",
   ...queries.flatMap(method),
   "}\n",
   "export declare function open(path: string): Database;\n",
@@ -269,9 +273,9 @@ export const host: HostLanguage = {
     const checked = checkSource(source);
     if (!checked.success) return unhosted(checked.errors);
     const { schema, queries } = checked.value;
-    const diagnostics = [...nameClashes(schema), ...cycles(schema), ...memberClashes(queries)];
+    const { valueOf, diagnostics: cycles } = fieldValues(schema);
+    const diagnostics = [...nameClashes(schema), ...cycles, ...memberClashes(queries)];
     if (diagnostics.length) return unhosted(diagnostics);
-    const valueOf = valuesOf(schema);
     return {
       declarations: [
         `import type { Connection as $Connection } from ${JSON.stringify(specifier(uri, runtime))};\n`,

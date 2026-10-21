@@ -437,6 +437,8 @@ const relate = (
         }
       }
     }
+    // Reverse links resolve against the snapshot of field-declared relations, so a reverse
+    // link cannot name another reverse link.
     const forward = new Map([...relations].map(([model, owned]) => [model, new Map(owned)]));
     for (const model of models.values()) {
       for (const link of model.links) {
