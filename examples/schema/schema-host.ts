@@ -1,7 +1,7 @@
 import type { Diagnostic } from "langkit";
 import { type HostLanguage, type Piece, verbatim } from "langkit/host";
 import type { Field, Name } from "./schema-syntax.ts";
-import { compile, type Model, type Schema } from "./schema.ts";
+import { type Base, compile, fieldValue, type Model, type Schema, type Value } from "./schema.ts";
 
 const scalars: Readonly<Record<string, string>> = {
   Int: "number",
@@ -74,34 +74,28 @@ const nameClashes = ({ models, enums }: Schema): readonly Diagnostic[] => {
   return diagnostics;
 };
 
-type Typing = { readonly types: ReadonlyMap<Field, string>; readonly diagnostics: readonly Diagnostic[]; };
+type ValueOf = (model: Model, field: Field) => Value;
 
-const typing = ({ models }: Schema): Typing => {
+const cycles = ({ models }: Schema): readonly Diagnostic[] => {
   const byName = new Map(models.map((model) => [model.name.name, model]));
-  const types = new Map<Field, string>();
-  const diagnostics: Diagnostic[] = [];
-  const resolve = (model: Model, field: Field, visiting: readonly Field[]): string | undefined => {
-    if (visiting.includes(field)) return undefined;
-    const reference = field.ops.find((op) => op.kind === "references");
-    if (reference) {
-      const target = byName.get(reference.model.name);
-      const targetField = target?.fields.find((candidate) => candidate.name.name === reference.field.name);
-      return target && targetField ? resolve(target, targetField, [...visiting, field]) : undefined;
-    }
-    return has(field, "primaryKey") ? idName(model) : scalars[field.type.name] ?? field.type.name;
-  };
-  for (const model of models) {
-    for (const field of model.fields) {
-      const type = resolve(model, field, []);
-      if (type === undefined) {
-        diagnostics.push(cannot(field.name, `${model.name.name}.${field.name.name}, whose references form a cycle`));
-      } else types.set(field, type);
-    }
-  }
-  return { types, diagnostics };
+  return models.flatMap((model) =>
+    model.fields.flatMap((field) =>
+      fieldValue(byName, model, field)
+        ? []
+        : [cannot(field.name, `${model.name.name}.${field.name.name}, whose references form a cycle`)]
+    )
+  );
 };
 
-const nullable = (field: Field, type: string): string => (field.optional ? `${type} | null` : type);
+const valuesOf = ({ models }: Schema): ValueOf => {
+  const byName = new Map(models.map((model) => [model.name.name, model]));
+  return (model, field) => fieldValue(byName, model, field)!;
+};
+
+const base = (value: Base): string =>
+  value.kind === "scalar" ? scalars[value.name]! : value.kind === "enum" ? value.name : `${value.model}Id`;
+
+const tsValue = ({ base: type, nullable }: Value): string => (nullable ? `${base(type)} | null` : base(type));
 
 const enumeration = ({ name, members }: Schema["enums"][number]): readonly Piece[] => [
   "export type ",
@@ -116,33 +110,33 @@ const enumeration = ({ name, members }: Schema["enums"][number]): readonly Piece
   ";\n",
 ];
 
-const identity = (model: Model, types: ReadonlyMap<Field, string>): readonly Piece[] => {
+const identity = (model: Model, valueOf: ValueOf): readonly Piece[] => {
   const key = primaryKey(model);
   if (!key) return [];
-  const base = has(key, "references")
-    ? types.get(key)!
+  const type = has(key, "references")
+    ? tsValue(valueOf(model, key))
     : `${scalars[key.type.name] ?? key.type.name} & { readonly __brand: "${idName(model)}" }`;
-  return [`export type ${idName(model)} = ${base};\n`];
+  return [`export type ${idName(model)} = ${type};\n`];
 };
 
-const row = (model: Model, types: ReadonlyMap<Field, string>): readonly Piece[] => [
+const row = (model: Model, valueOf: ValueOf): readonly Piece[] => [
   "export interface ",
   verbatim(model.name.name, model.name.span),
   " {\n",
   ...model.fields.flatMap((field): readonly Piece[] => [
     "  readonly ",
     verbatim(field.name.name, field.name.span),
-    `: ${nullable(field, types.get(field)!)};\n`,
+    `: ${tsValue(valueOf(model, field))};\n`,
   ]),
   "}\n",
 ];
 
-const insertion = (model: Model, types: ReadonlyMap<Field, string>): string => {
+const insertion = (model: Model, valueOf: ValueOf): string => {
   const columns = model.fields
     .filter((field) => !has(field, "autoIncrement"))
     .map((field) => {
       const optional = field.optional || has(field, "default") ? "?" : "";
-      return `  readonly ${field.name.name}${optional}: ${nullable(field, types.get(field)!)};\n`;
+      return `  readonly ${field.name.name}${optional}: ${tsValue(valueOf(model, field))};\n`;
     });
   return `export interface ${insertName(model)} {\n${columns.join("")}}\n`;
 };
@@ -153,16 +147,16 @@ export const host: HostLanguage = {
     const compiled = compile(source);
     if (!compiled.success) return { declarations: [], javascript: undefined, diagnostics: compiled.errors };
     const { schema, sql } = compiled.value;
-    const { types, diagnostics: typeErrors } = typing(schema);
-    const diagnostics = [...nameClashes(schema), ...typeErrors];
+    const diagnostics = [...nameClashes(schema), ...cycles(schema)];
     if (diagnostics.length) return { declarations: [], javascript: undefined, diagnostics };
+    const valueOf = valuesOf(schema);
     return {
       declarations: [
         ...schema.enums.flatMap(enumeration),
         ...schema.models.flatMap((model) => [
-          ...identity(model, types),
-          ...row(model, types),
-          insertion(model, types),
+          ...identity(model, valueOf),
+          ...row(model, valueOf),
+          insertion(model, valueOf),
         ]),
         "export declare const sql: string;\nexport default sql;\n",
       ],

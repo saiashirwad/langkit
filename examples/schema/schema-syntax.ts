@@ -27,7 +27,12 @@ export type FieldOp =
   & (
     | { readonly kind: "primaryKey" | "autoIncrement" | "unique"; }
     | { readonly kind: "default"; readonly value: Default; }
-    | { readonly kind: "references"; readonly model: Name; readonly field: Name; }
+    | {
+      readonly kind: "references";
+      readonly model: Name;
+      readonly field: Name;
+      readonly relation: Name | undefined;
+    }
   );
 
 export type Field = {
@@ -42,6 +47,7 @@ export type ModelOp =
   & (
     | { readonly kind: "extend"; readonly fields: readonly Field[]; }
     | { readonly kind: "index" | "unique"; readonly fields: readonly Name[]; }
+    | { readonly kind: "many" | "one"; readonly relation: Name; readonly model: Name; readonly inverse: Name; }
     | { readonly kind: "helper"; }
   );
 
@@ -63,7 +69,7 @@ export type Declaration =
 const words = /[a-zA-Z_][a-zA-Z_0-9]*/;
 const strings = /"(?:[^"\\\x00-\x1f]|\\["\\/bfnrt]|\\u[0-9a-fA-F]{4})*"/;
 const digits = /-?\d+(?:\.\d+)?/;
-const keywords = ["model", "type", "let", "fn", "true", "false"] as const;
+const keywords = ["model", "type", "let", "fn", "true", "false", "as"] as const;
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
@@ -111,7 +117,9 @@ const fieldOp: Parser<FieldOp> = parser(function*() {
     case "references": {
       const model = yield* name;
       yield* symbol(".");
-      return { kind: "references", name: op, model, field: yield* name };
+      const field = yield* name;
+      const relation = yield* optional(keyword("as").zipRight(name));
+      return { kind: "references", name: op, model, field, relation };
     }
     default:
       return yield* fail(`Unknown field operation: ${op.name}`);
@@ -140,6 +148,13 @@ const modelOp: Parser<ModelOp> = parser(function*() {
       name: op,
       fields: yield* between(symbol("["), symbol("]"), sepBy1(selector, symbol(","))),
     };
+  }
+  if (op.name === "many" || op.name === "one") {
+    const relation = yield* name;
+    yield* symbol("=");
+    const model = yield* name;
+    yield* symbol(".");
+    return { kind: op.name, name: op, relation, model, inverse: yield* name };
   }
   return { kind: "helper", name: op };
 });

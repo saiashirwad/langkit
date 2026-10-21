@@ -20,12 +20,35 @@ export type Model = {
   readonly name: Name;
   readonly fields: readonly Field[];
   readonly constraints: readonly Extract<ModelOp, { kind: "index" | "unique"; }>[];
+  readonly links: readonly Extract<ModelOp, { kind: "many" | "one"; }>[];
+};
+
+export type Arity = "one" | "optional" | "many";
+
+/** A traversable edge: rows of `target` whose `inner` column equals the owner's `outer` column. */
+export type Relation = {
+  readonly id: symbol;
+  readonly name: Name;
+  readonly target: string;
+  readonly outer: string;
+  readonly inner: string;
+  readonly arity: Arity;
 };
 
 export type Schema = {
   readonly models: readonly Model[];
   readonly enums: readonly Extract<Declaration, { kind: "enum"; }>[];
+  readonly relations: ReadonlyMap<string, ReadonlyMap<string, Relation>>;
 };
+
+export type Scalar = "Int" | "Float" | "String" | "Bool" | "DateTime";
+
+export type Base =
+  | { readonly kind: "scalar"; readonly name: Scalar; }
+  | { readonly kind: "enum"; readonly name: string; }
+  | { readonly kind: "key"; readonly model: string; };
+
+export type Value = { readonly base: Base; readonly nullable: boolean; };
 
 export type Compiled = { readonly schema: Schema; readonly sql: string; };
 
@@ -33,7 +56,7 @@ type Binding = { readonly id: symbol; readonly name: string; readonly type: Type
 
 const facts = createAnalysis<Type>();
 
-const scalars = new Map([
+const scalars = new Map<string, string>([
   ["Int", "INTEGER"],
   ["Float", "REAL"],
   ["String", "TEXT"],
@@ -49,6 +72,8 @@ const operations = new Set([
   "autoIncrement",
   "default",
   "references",
+  "many",
+  "one",
   "now",
 ]);
 
@@ -58,6 +83,37 @@ const fieldType = (field: Field): string => field.type.name + (field.optional ? 
 
 const key = (name: string): string => name.toLowerCase();
 
+export const isScalar = (name: string): name is Scalar => scalars.has(name);
+
+export const unique = (model: Model, field: Field): boolean =>
+  has(field, "primaryKey") || has(field, "unique")
+  || model.constraints.some((c) =>
+    c.kind === "unique" && c.fields.length === 1 && c.fields[0]!.name === field.name.name
+  );
+
+/** The value a field holds: a reference takes the value of the key it references. Undefined on a reference cycle. */
+export const fieldValue = (
+  models: ReadonlyMap<string, Model>,
+  model: Model,
+  field: Field,
+): Value | undefined => {
+  const resolve = (model: Model, field: Field, visiting: readonly Field[]): Base | undefined => {
+    if (visiting.includes(field)) return undefined;
+    const reference = field.ops.find((op) => op.kind === "references");
+    if (reference) {
+      const target = models.get(reference.model.name);
+      const targetField = target?.fields.find((candidate) => candidate.name.name === reference.field.name);
+      return target && targetField ? resolve(target, targetField, [...visiting, field]) : undefined;
+    }
+    if (has(field, "primaryKey")) return { kind: "key", model: model.name.name };
+    return isScalar(field.type.name)
+      ? { kind: "scalar", name: field.type.name }
+      : { kind: "enum", name: field.type.name };
+  };
+  const base = resolve(model, field, []);
+  return base && { base, nullable: field.optional };
+};
+
 const binding = (name: Name, type: Type): Binding => ({
   id: Symbol(name.name),
   name: name.name,
@@ -66,7 +122,7 @@ const binding = (name: Name, type: Type): Binding => ({
 
 const error = (name: Name, message: string): Check<never> => fail(message).at(name.span);
 
-const reference = (target: Binding, name: Name): Check<void> =>
+const reference = (target: { readonly id: symbol; readonly type: Type; }, name: Name): Check<void> =>
   check(function*() {
     yield* facts.reference(target, name.span);
     yield* facts.typed(target.type, name.span);
@@ -182,13 +238,24 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
       check(function*() {
         let model = initial;
         for (const op of ops) {
-          if (op.kind === "extend") model = yield* extend(model, op.fields);
-          else if (op.kind === "helper") {
-            const helper = helpers.get(op.name.name);
-            if (!helper) return yield* error(op.name, `Unknown model helper: ${op.name.name}`);
-            yield* reference(bindings.get(helper)!, op.name);
-            model = yield* apply(model, helper.body.ops);
-          } else model = { ...model, constraints: [...model.constraints, op] };
+          switch (op.kind) {
+            case "extend":
+              model = yield* extend(model, op.fields);
+              break;
+            case "helper": {
+              const helper = helpers.get(op.name.name);
+              if (!helper) return yield* error(op.name, `Unknown model helper: ${op.name.name}`);
+              yield* reference(bindings.get(helper)!, op.name);
+              model = yield* apply(model, helper.body.ops);
+              break;
+            }
+            case "many":
+            case "one":
+              model = { ...model, links: [...model.links, op] };
+              break;
+            default:
+              model = { ...model, constraints: [...model.constraints, op] };
+          }
         }
         return model;
       });
@@ -201,7 +268,7 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
         return yield* error(declaration.body.base.name, "A model must start with a field block");
       }
       const base = yield* extend(
-        { name: declaration.name, fields: [], constraints: [] },
+        { name: declaration.name, fields: [], constraints: [], links: [] },
         declaration.body.base.fields,
       );
       const model = yield* apply(base, declaration.body.ops).context(
@@ -282,13 +349,7 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
                 `Foreign key types differ: ${field.type.name} and ${targetField.type.name}`,
               );
             }
-            const singleUnique = target.constraints.some(
-              (c) =>
-                c.kind === "unique"
-                && c.fields.length === 1
-                && c.fields[0]!.name === targetField.name.name,
-            );
-            if (!has(targetField, "primaryKey") && !has(targetField, "unique") && !singleUnique) {
+            if (!unique(target, targetField)) {
               return yield* error(
                 op.field,
                 "A foreign key must reference a primary key or unique field",
@@ -353,8 +414,87 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
         }
       }
     }
-    return { models: [...models.values()], enums: [...enums.values()] };
+    const relations = yield* relate(models, (declaration) => bindings.get(names.get(declaration)!)!);
+    return { models: [...models.values()], enums: [...enums.values()], relations };
   });
+
+const relate = (
+  models: ReadonlyMap<string, Model>,
+  declared: (model: string) => Binding,
+): Check<Schema["relations"]> =>
+  check(function*() {
+    const relations = new Map<string, Map<string, Relation>>();
+    const add = (model: Model, relation: Relation): Check<void> =>
+      check(function*() {
+        const owned = relations.get(model.name.name) ?? new Map<string, Relation>();
+        relations.set(model.name.name, owned);
+        const name = relation.name.name;
+        if (owned.has(name) || model.fields.some((field) => field.name.name === name)) {
+          return yield* error(relation.name, `Duplicate field or relation: ${model.name.name}.${name}`);
+        }
+        owned.set(name, relation);
+        yield* facts.define(
+          { id: relation.id, name, type: relationType(relation) },
+          relation.name.span,
+          "field",
+        );
+      });
+    for (const model of models.values()) {
+      for (const field of model.fields) {
+        for (const op of field.ops) {
+          if (op.kind !== "references" || !op.relation || !models.has(op.model.name)) continue;
+          yield* add(model, {
+            id: Symbol(op.relation.name),
+            name: op.relation,
+            target: op.model.name,
+            outer: field.name.name,
+            inner: op.field.name,
+            arity: field.optional ? "optional" : "one",
+          }).context(`model ${model.name.name}`).recover();
+        }
+      }
+    }
+    const forward = new Map([...relations].map(([model, owned]) => [model, new Map(owned)]));
+    for (const model of models.values()) {
+      for (const link of model.links) {
+        const linked = check(function*() {
+          const target = models.get(link.model.name);
+          if (!target) return yield* error(link.model, `Unknown model: ${link.model.name}`);
+          yield* reference(declared(link.model.name), link.model);
+          const inverse = forward.get(target.name.name)?.get(link.inverse.name);
+          if (!inverse) return yield* error(link.inverse, `Unknown relation: ${target.name.name}.${link.inverse.name}`);
+          yield* reference({ id: inverse.id, type: relationType(inverse) }, link.inverse);
+          if (inverse.target !== model.name.name) {
+            return yield* error(
+              link.inverse,
+              `${target.name.name}.${link.inverse.name} points at ${inverse.target}, not ${model.name.name}`,
+            );
+          }
+          const key = target.fields.find((field) => field.name.name === inverse.outer)!;
+          if (link.kind === "one" && !unique(target, key)) {
+            return yield* error(link.name, `${target.name.name}.${inverse.outer} is not unique; use many`);
+          }
+          yield* add(model, {
+            id: Symbol(link.relation.name),
+            name: link.relation,
+            target: target.name.name,
+            outer: inverse.inner,
+            inner: inverse.outer,
+            arity: link.kind === "one" ? "optional" : "many",
+          });
+        });
+        yield* linked.context(`model ${model.name.name}`).recover();
+      }
+    }
+    return relations;
+  });
+
+const relationType = (relation: Relation): Type =>
+  relation.arity === "many"
+    ? `${relation.target}[]`
+    : relation.arity === "optional"
+    ? `${relation.target}?`
+    : relation.target;
 
 const quote = (name: string): string => `"${name.replaceAll("\"", "\"\"")}"`;
 
