@@ -214,9 +214,18 @@ try {
       offset: 7,
       type: "main: number",
       guest: "examples/toy/main.toy",
+      binder: "let twice",
+    },
+    {
+      consumer: "examples/typescript/advanced.ts",
+      anchor: "both, fromList",
+      offset: 0,
+      type: "both: (x: <A>(x: A) => A) =>",
+      guest: "examples/advanced/trees.advanced",
+      binder: "both = fn",
     },
   ];
-  for (const { consumer, anchor, offset, type, guest } of hosted) {
+  for (const { consumer, anchor, offset, type, guest, binder } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");
     const textDocument = { uri: pathToFileURL(join(root, consumer)).href };
     send({
@@ -234,10 +243,20 @@ try {
     assert.ok(Array.isArray(definitions), `${consumer}: invalid definition result`);
     const targets = definitions.map((location: unknown) => {
       record(location, `${consumer}: invalid definition location`);
-      return location.targetUri ?? location.uri;
+      const range = location.targetSelectionRange ?? location.range;
+      record(range, `${consumer}: invalid definition range`);
+      return { uri: location.targetUri ?? location.uri, start: range.start };
     });
-    assert.deepEqual(targets, [pathToFileURL(join(root, guest)).href], `${consumer}: definition must land in ${guest}`);
-    console.log(`Real LSP ${consumer}: hover ${JSON.stringify(hover.text)}, definition in ${guest}`);
+    const binding: Probe = { id: guest, method: "hover", anchor: binder, offset: 0, require: [] };
+    assert.deepEqual(
+      targets,
+      [{
+        uri: pathToFileURL(join(root, guest)).href,
+        start: position(readFileSync(join(root, guest), "utf8"), binding),
+      }],
+      `${consumer}: definition must land on ${binder} in ${guest}`,
+    );
+    console.log(`Real LSP ${consumer}: hover ${JSON.stringify(hover.text)}, definition on ${binder} in ${guest}`);
   }
   const snapshot = { compilerVersion: version, observations };
   if (args.includes("--update")) writeFileSync(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`);
