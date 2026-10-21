@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { compile } from "../examples/schema/schema.ts";
 
@@ -57,4 +58,110 @@ test("relations: each declaration error lands on the guest name it is about", ()
 test("relations: a reverse relation must point back at its owner", () => {
   const source = models + "model Team = { id : Int |> primaryKey } |> many members = Post.author\n";
   assert.deepEqual(errors(source), [{ message: "Post.author points at User, not Team", at: "author" }]);
+});
+
+const blog = readFileSync(new URL("../examples/schema/blog.schema", import.meta.url), "utf8");
+
+type Mistake = {
+  readonly original: string;
+  readonly replacement: string;
+  readonly message: string;
+  readonly at: string;
+};
+
+const mistakes: readonly Mistake[] = [
+  {
+    original: "|> select { .title }",
+    replacement: "|> select { .titel }",
+    message: "Unknown field: Post.titel",
+    at: "titel",
+  },
+  {
+    original: "commentCount: .comments |>",
+    replacement: "commentCount: .commments |>",
+    message: "Unknown relation: Post.commments",
+    at: "commments",
+  },
+  {
+    original: "where .authorId == author and .status == PostStatus.Draft |> delete",
+    replacement: "where .id == author and .status == PostStatus.Draft |> delete",
+    message: "Cannot compare PostId with UserId",
+    at: ".id == author",
+  },
+  {
+    original: "where before == null or",
+    replacement: "where .title == null or",
+    message: "Post.title is never null",
+    at: ".title == null",
+  },
+  {
+    original: "PostStatus.Draft |> newestFirst |> first",
+    replacement: "PostStatus.Draft |> first",
+    message: "first picks an arbitrary Post; add orderBy or match a unique field",
+    at: "first",
+  },
+  {
+    original: "Comment |> where .authorId == author |> update",
+    replacement: "Comment |> update",
+    message: "update without where changes every Comment; write where true",
+    at: "update",
+  },
+  {
+    original: "query draftCount",
+    replacement: "query invite(role: Role) = User |> insert { role }\n\nquery draftCount",
+    message: "insert User is missing email",
+    at: "insert { role }",
+  },
+  {
+    original: "query staffPicks(skip: Int)",
+    replacement: "query staffPicks(skip: Int, page: Int)",
+    message: "Unused parameter: page",
+    at: "page",
+  },
+  {
+    original: "  |> authored\n  |> timestamps\n  |> index [.postId",
+    replacement: "  |> authored\n  |> published\n  |> index [.postId",
+    message: "published is a query helper; it cannot apply to model Comment",
+    at: "published\n  |> index",
+  },
+  {
+    original: "|> published\n    |> where before",
+    replacement: "|> timestamps\n    |> where before",
+    message: "timestamps is a model helper; it cannot apply to a query",
+    at: "timestamps",
+  },
+  {
+    original: "where .featured and",
+    replacement: "where .title and",
+    message: "and needs Bool, got String",
+    at: ".title and",
+  },
+  {
+    original: "where .featured and .author.role == Role.Admin",
+    replacement: "where .featured and .authorId == 1",
+    message: "A UserId comes from a User.id parameter, not a literal",
+    at: "1",
+  },
+  {
+    original: "|> limit n\n    |> select",
+    replacement: "|> select { .id }\n    |> limit n\n    |> select",
+    message: "limit cannot follow select",
+    at: "limit n",
+  },
+];
+
+test("queries: each mistake is one guest diagnostic at the guest span it is about", () => {
+  assert.equal(compile(blog).success, true);
+  for (const { original, replacement, message, at } of mistakes) {
+    assert.ok(blog.includes(original), original);
+    const source = blog.replace(original, replacement);
+    const expected = source.indexOf(at.split("\n")[0]!, source.indexOf(replacement));
+    const result = compile(source);
+    assert.ok(!result.success, replacement);
+    assert.deepEqual(
+      result.errors.map((error) => ({ message: error.message, start: error.span?.start })),
+      [{ message, start: expected }],
+      replacement,
+    );
+  }
 });

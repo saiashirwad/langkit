@@ -1,6 +1,8 @@
 import { type Check, check, fail, render, type Result, run } from "langkit";
 import { type Analysis, create as createAnalysis, highlight } from "langkit/analysis";
 import { readFileSync } from "node:fs";
+import { checkQueries, type HelperKind, isFilter, isStage, type Query } from "./queries.ts";
+import { type Binding, has, type Model, type Relation, type Schema, unique } from "./schema-model.ts";
 import {
   type Declaration,
   type Default,
@@ -16,43 +18,7 @@ export type Type = string;
 
 export const show = (type: Type): string => type;
 
-export type Model = {
-  readonly name: Name;
-  readonly fields: readonly Field[];
-  readonly constraints: readonly Extract<ModelOp, { kind: "index" | "unique"; }>[];
-  readonly links: readonly Extract<ModelOp, { kind: "many" | "one"; }>[];
-};
-
-export type Arity = "one" | "optional" | "many";
-
-/** A traversable edge: rows of `target` whose `inner` column equals the owner's `outer` column. */
-export type Relation = {
-  readonly id: symbol;
-  readonly name: Name;
-  readonly target: string;
-  readonly outer: string;
-  readonly inner: string;
-  readonly arity: Arity;
-};
-
-export type Schema = {
-  readonly models: readonly Model[];
-  readonly enums: readonly Extract<Declaration, { kind: "enum"; }>[];
-  readonly relations: ReadonlyMap<string, ReadonlyMap<string, Relation>>;
-};
-
-export type Scalar = "Int" | "Float" | "String" | "Bool" | "DateTime";
-
-export type Base =
-  | { readonly kind: "scalar"; readonly name: Scalar; }
-  | { readonly kind: "enum"; readonly name: string; }
-  | { readonly kind: "key"; readonly model: string; };
-
-export type Value = { readonly base: Base; readonly nullable: boolean; };
-
-export type Compiled = { readonly schema: Schema; readonly sql: string; };
-
-type Binding = { readonly id: symbol; readonly name: string; readonly type: Type; };
+export type Compiled = { readonly schema: Schema; readonly sql: string; readonly queries: readonly Query[]; };
 
 const facts = createAnalysis<Type>();
 
@@ -75,44 +41,23 @@ const operations = new Set([
   "many",
   "one",
   "now",
+  "where",
+  "orderBy",
+  "offset",
+  "limit",
+  "select",
+  "returning",
+  "insert",
+  "update",
+  "first",
+  "count",
+  "exists",
+  "delete",
 ]);
-
-const has = (field: Field, kind: Field["ops"][number]["kind"]): boolean => field.ops.some((op) => op.kind === kind);
 
 const fieldType = (field: Field): string => field.type.name + (field.optional ? "?" : "");
 
 const key = (name: string): string => name.toLowerCase();
-
-export const isScalar = (name: string): name is Scalar => scalars.has(name);
-
-export const unique = (model: Model, field: Field): boolean =>
-  has(field, "primaryKey") || has(field, "unique")
-  || model.constraints.some((c) =>
-    c.kind === "unique" && c.fields.length === 1 && c.fields[0]!.name === field.name.name
-  );
-
-/** The value a field holds: a reference takes the value of the key it references. Undefined on a reference cycle. */
-export const fieldValue = (
-  models: ReadonlyMap<string, Model>,
-  model: Model,
-  field: Field,
-): Value | undefined => {
-  const resolve = (model: Model, field: Field, visiting: readonly Field[]): Base | undefined => {
-    if (visiting.includes(field)) return undefined;
-    const reference = field.ops.find((op) => op.kind === "references");
-    if (reference) {
-      const target = models.get(reference.model.name);
-      const targetField = target?.fields.find((candidate) => candidate.name.name === reference.field.name);
-      return target && targetField ? resolve(target, targetField, [...visiting, field]) : undefined;
-    }
-    if (has(field, "primaryKey")) return { kind: "key", model: model.name.name };
-    return isScalar(field.type.name)
-      ? { kind: "scalar", name: field.type.name }
-      : { kind: "enum", name: field.type.name };
-  };
-  const base = resolve(model, field, []);
-  return base && { base, nullable: field.optional };
-};
 
 const binding = (name: Name, type: Type): Binding => ({
   id: Symbol(name.name),
@@ -128,7 +73,9 @@ const reference = (target: { readonly id: symbol; readonly type: Type; }, name: 
     yield* facts.typed(target.type, name.span);
   });
 
-const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
+const elaborate = (
+  declarations: readonly Declaration[],
+): Check<{ readonly schema: Schema; readonly queries: readonly Query[]; }> =>
   check(function*() {
     const names = new Map<string, Declaration>();
     const bindings = new Map<Declaration, Binding>();
@@ -144,13 +91,13 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
       names.set(name.name, declaration);
       const value = binding(
         name,
-        declaration.kind === "helper" ? "Model -> Model" : `${declaration.kind} ${name.name}`,
+        declaration.kind === "helper" ? "helper" : `${declaration.kind} ${name.name}`,
       );
       bindings.set(declaration, value);
       yield* facts.define(
         value,
         name.span,
-        declaration.kind === "helper"
+        declaration.kind === "helper" || declaration.kind === "query"
           ? "function"
           : declaration.kind === "model"
           ? "model"
@@ -181,40 +128,54 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
       }
     }
 
-    // Helpers are deliberately total model transformations, not general-purpose code.
+    // Helpers are deliberately total transformations of a model or a query, not general-purpose code.
     // Check the call graph even for unused helpers, before expanding any models.
-    const visited = new Set<string>();
+    const kinds = new Map<string, HelperKind>();
 
     const visit = (
       helper: Extract<Declaration, { kind: "helper"; }>,
       stack: readonly string[],
     ): Check<void> =>
       check(function*() {
-        if (visited.has(helper.name.name)) return;
+        if (kinds.has(helper.name.name)) return;
         if (stack.includes(helper.name.name)) {
           return yield* error(
             helper.name,
-            `Recursive model helpers: ${[...stack, helper.name.name].join(" -> ")}`,
+            `Recursive helpers: ${[...stack, helper.name.name].join(" -> ")}`,
           );
         }
         const base = helper.body.base;
         if (base.kind !== "name" || base.name.name !== helper.param.name) {
           return yield* error(
             helper.param,
-            `A model helper must start from its parameter ${helper.param.name}`,
+            `A helper must start from its parameter ${helper.param.name}`,
           );
         }
         const param = binding(helper.param, "Model");
         yield* facts.define(param, helper.param.span, "parameter");
         yield* reference(param, base.name);
+        let kind: HelperKind | undefined;
         for (const op of helper.body.ops) {
-          if (op.kind !== "helper") continue;
-          const target = helpers.get(op.name.name);
-          if (!target) return yield* error(op.name, `Unknown model helper: ${op.name.name}`);
-          yield* reference(bindings.get(target)!, op.name);
-          yield* visit(target, [...stack, helper.name.name]);
+          let opKind: HelperKind;
+          if (op.kind === "helper") {
+            const target = helpers.get(op.name.name);
+            if (!target) return yield* error(op.name, `Unknown helper: ${op.name.name}`);
+            yield* reference(bindings.get(target)!, op.name);
+            yield* visit(target, [...stack, helper.name.name]);
+            opKind = kinds.get(op.name.name)!;
+          } else if (isFilter(op)) opKind = "query";
+          else if (isStage(op)) {
+            return yield* error(
+              op.name,
+              `A query helper only filters, orders and pages; ${op.kind} belongs in a query`,
+            );
+          } else opKind = "model";
+          if (kind && kind !== opKind) {
+            return yield* error(helper.name, `${helper.name.name} mixes model and query operations`);
+          }
+          kind = opKind;
         }
-        visited.add(helper.name.name);
+        kinds.set(helper.name.name, kind ?? "model");
       });
 
     for (const helper of helpers.values()) yield* visit(helper, []);
@@ -246,6 +207,12 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
               const helper = helpers.get(op.name.name);
               if (!helper) return yield* error(op.name, `Unknown model helper: ${op.name.name}`);
               yield* reference(bindings.get(helper)!, op.name);
+              if (kinds.get(op.name.name) === "query") {
+                return yield* error(
+                  op.name,
+                  `${op.name.name} is a query helper; it cannot apply to model ${model.name.name}`,
+                );
+              }
               model = yield* apply(model, helper.body.ops);
               break;
             }
@@ -253,8 +220,12 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
             case "one":
               model = { ...model, links: [...model.links, op] };
               break;
-            default:
+            case "index":
+            case "unique":
               model = { ...model, constraints: [...model.constraints, op] };
+              break;
+            default:
+              return yield* error(op.name, `${op.kind} is a query stage; it cannot apply to model ${model.name.name}`);
           }
         }
         return model;
@@ -414,8 +385,20 @@ const elaborate = (declarations: readonly Declaration[]): Check<Schema> =>
         }
       }
     }
-    const relations = yield* relate(models, (declaration) => bindings.get(names.get(declaration)!)!);
-    return { models: [...models.values()], enums: [...enums.values()], relations };
+    const declared = (name: string): Binding => bindings.get(names.get(name)!)!;
+    const relations = yield* relate(models, declared);
+    const queries = yield* checkQueries({
+      facts,
+      models,
+      relations,
+      enums,
+      helpers,
+      kinds,
+      declared,
+      field: (model, name) => fieldBindings.get(model)!.get(name)!,
+      member: (member) => members.get(member)!,
+    }, declarations);
+    return { schema: { models: [...models.values()], enums: [...enums.values()], relations }, queries };
   });
 
 const relate = (
@@ -571,7 +554,7 @@ export const compile = (source: string): Result<Compiled> => {
   if (!parsed.success) return parsed;
   const result = run(elaborate(parsed.value));
   return result.success
-    ? { success: true, value: { schema: result.value, sql: emit(result.value) } }
+    ? { success: true, value: { ...result.value, sql: emit(result.value.schema) } }
     : result;
 };
 

@@ -1,7 +1,8 @@
 import type { Diagnostic } from "langkit";
 import { type HostLanguage, type Piece, verbatim } from "langkit/host";
+import { type Base, fieldValue, type Model, type Schema, type Value } from "./schema-model.ts";
 import type { Field, Name } from "./schema-syntax.ts";
-import { type Base, compile, fieldValue, type Model, type Schema, type Value } from "./schema.ts";
+import { compile } from "./schema.ts";
 
 const scalars: Readonly<Record<string, string>> = {
   Int: "number",
