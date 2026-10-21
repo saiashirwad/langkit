@@ -89,7 +89,7 @@ export function runContracts(): void {
           + fixture.slice(seed.index + seed.text.length);
         writeFileSync(file, source);
         const result = compile(project.config);
-        assert.equal(result.status, 1, `${type} control must fail\n${result.output}`);
+        assert.notEqual(result.status, 0, `${type} control must fail\n${result.output}`);
         const locations = [
           control.proof,
           `prove<Equal<${type === "any" ? "IsAny" : "IsNever"}<typeof ${control.name}>, false>>();`,

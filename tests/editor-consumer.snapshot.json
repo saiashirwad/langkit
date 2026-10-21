@@ -1,5 +1,5 @@
 {
-  "compilerVersion": "7.0.2",
+  "compilerVersion": "7.1.0-beta",
   "observations": {
     "contextual-record-node": {
       "text": "```typescript\n(parameter) recordNode: RecordNode<rows.Type>\n```"
