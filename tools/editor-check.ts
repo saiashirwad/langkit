@@ -212,7 +212,7 @@ try {
       consumer: "examples/typescript/toy.ts",
       anchor: "import main",
       offset: 7,
-      type: "main: number",
+      require: ["main: number"],
       guest: "examples/toy/main.toy",
       binder: "let twice",
     },
@@ -220,7 +220,7 @@ try {
       consumer: "examples/typescript/advanced.ts",
       anchor: "both, fromList",
       offset: 0,
-      type: "both: (x: <A>(x: A) => A) =>",
+      require: ["both: (x: <A>(x: A) => A) =>"],
       guest: "examples/advanced/trees.advanced",
       binder: "both = fn",
     },
@@ -228,7 +228,7 @@ try {
       consumer: "examples/typescript/hm.ts",
       anchor: "import compose",
       offset: 7,
-      type: "main: <A, B>(x: (x: A) => B) => <C>(x: (x: C) => A) => (x: C) => B",
+      require: ["main: <A, B>(x: (x: A) => B) => <C>(x: (x: C) => A) => (x: C) => B"],
       guest: "examples/hm/compose.hm",
       binder: "fn(f)",
     },
@@ -236,7 +236,7 @@ try {
       consumer: "examples/typescript/schema.ts",
       anchor: "type User }",
       offset: 5,
-      type: "interface User",
+      require: ["interface User"],
       guest: "examples/schema/simple.schema",
       binder: "User = {",
     },
@@ -244,12 +244,32 @@ try {
       consumer: "examples/typescript/schema.ts",
       anchor: "type Role,",
       offset: 5,
-      type: "type Role = \"Admin\" | \"Member\"",
+      require: ["type Role = \"Admin\" | \"Member\""],
       guest: "examples/schema/simple.schema",
       binder: "Role = Member",
     },
+    {
+      consumer: "examples/typescript/blog.ts",
+      anchor: "userByEmail({ email: \"sai",
+      offset: 0,
+      require: [
+        "(method) Database.userByEmail(params: {\n    readonly email: string;\n}): User | undefined",
+        "SELECT \"t0\".\"id\" AS \"id\"",
+        "WHERE \"t0\".\"email\" = :email LIMIT 1",
+      ],
+      guest: "examples/schema/blog.schema",
+      binder: "userByEmail(email",
+    },
+    {
+      consumer: "examples/typescript/blog.ts",
+      anchor: "entry.title,",
+      offset: 6,
+      require: ["title: string"],
+      guest: "examples/schema/blog.schema",
+      binder: "title,\n      .featured",
+    },
   ];
-  for (const { consumer, anchor, offset, type, guest, binder } of hosted) {
+  for (const { consumer, anchor, offset, require, guest, binder } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");
     const textDocument = { uri: pathToFileURL(join(root, consumer)).href };
     send({
@@ -259,7 +279,7 @@ try {
     const consumerDiagnostics = await request("textDocument/diagnostic", { textDocument });
     record(consumerDiagnostics, "invalid diagnostics");
     assert.deepEqual(consumerDiagnostics.items, [], `${consumer} must compile cleanly`);
-    const probe: Probe = { id: consumer, method: "hover", anchor, offset, require: [type] };
+    const probe: Probe = { id: consumer, method: "hover", anchor, offset, require };
     const at = position(text, probe);
     const hover = observe(probe, await request("textDocument/hover", { textDocument, position: at }));
     validate(probe, hover);

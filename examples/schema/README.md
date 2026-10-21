@@ -50,8 +50,34 @@ The large source comments identify application-level rules, such as requiring re
 
 Fields are comma-separated (optional trailing comma); declarations need no semicolons; `//` starts a comment. Fields are required by default; `?` makes them nullable. SQLite representations are: `Int` → `INTEGER`, `Float` → `REAL`, `String` → `TEXT`, `Bool` → `INTEGER` with a 0/1 check, `DateTime` → `TEXT`, and declared enums → `TEXT` with a check for declared members. Tables use SQLite `STRICT` mode (SQLite 3.37+). `DateTime` is a storage convention, not validated timestamp syntax; `default now` emits `CURRENT_TIMESTAMP`.
 
-Defaults accept matching number/string/boolean literals, qualified enum values, or `now` for `DateTime`. Integer defaults must be safe integers; there is no literal NULL default or literal DateTime default. `autoIncrement` requires an `Int` primary key and cannot accompany a default; it adds SQLite's no-rowid-reuse guarantee. Foreign keys are explicit scalar fields, require the target's declared type, and must reference a primary key or individually unique field. There are no implicit reverse relations, relationship arrays, composite foreign keys, or referential-action modifiers. Nullable references and SQLite's default NO ACTION behavior remain.
+Defaults accept matching number/string/boolean literals, qualified enum values, or `now` for `DateTime`. Integer defaults must be safe integers; there is no literal NULL default or literal DateTime default. `autoIncrement` requires an `Int` primary key and cannot accompany a default; it adds SQLite's no-rowid-reuse guarantee. Foreign keys are explicit scalar fields, require the target's declared type, and must reference a primary key or individually unique field. `references User.id as author` also names a to-one relation, nullable when the key is `?`. A model names the reverse with `|> many posts = Post.author`, or `|> one profile = Profile.user` when the key is unique. There are no implicit relations, composite foreign keys, or referential-action modifiers. Nullable references and SQLite's default NO ACTION behavior remain.
 
 `compile(source)` returns `{ schema, sql }` on success and diagnostics on failure; SQL is not produced when checking has errors. `analyze(source)` reports diagnostics, field/type hovers, and definitions for enum values, helper calls, foreign keys, and index selectors; it neither generates SQL nor opens a database. Helper field requirements are checked when applied, while field types/defaults/references and helper cycles are checked even in unused helpers. Extension fields retain their helper-source locations.
 
-The CLI **only prints SQL** for a fresh schema. This is not a migration: it does not drop existing tables, track versions, connect to a database, or implement CRUD/query operations. SQL includes `PRAGMA foreign_keys = ON`, but an application must enable foreign keys on each connection (outside an active transaction). `updatedAt |> default now` initializes a value on insertion; it does not install an update trigger. There are no imports, arbitrary functions, payload-carrying enum variants, generated clients, query builder, ORM, or persistence layer.
+The CLI **only prints SQL** for a fresh schema. This is not a migration: it does not drop existing tables or connect to a database. SQL includes `PRAGMA foreign_keys = ON`, but an application must enable foreign keys on each connection (outside an active transaction). `updatedAt |> default now` initializes a value on insertion; it does not install an update trigger. There are no imports, arbitrary functions, payload-carrying enum variants, query builder, or ORM.
+
+## Queries
+
+[blog.schema](./blog.schema) declares named queries next to its models. Each one starts at a model and compiles to one SQLite statement.
+
+```schema
+query feed(n: Int, before: DateTime?) =
+  Post
+    |> published
+    |> where before == null or .createdAt < before
+    |> newestFirst
+    |> limit n
+    |> select {
+      .id,
+      .title,
+      author: .author |> select { .id, .email },
+      comments: .comments |> visible |> limit 2 |> select { .body, by: .author.email },
+      commentCount: .comments |> visible |> count
+    }
+```
+
+Reads take `where`, `orderBy`, `offset`, `limit`, `select`, and end in rows, `first`, `count`, or `exists`. Writes are `insert`, `update`, and `delete`, with an optional `returning`. A parameter is typed by a scalar, an enum, or a field such as `User.id`, which carries the key brand. Helpers like `published` may filter, order, and page.
+
+The checker rejects `first` without `orderBy` or a unique match, `update` or `delete` without `where`, an `insert` missing a required field, an unused parameter, a comparison between different keys, and `== null` on a value that is never null. Each error points at the guest source.
+
+Imported from TypeScript, the schema exports `open(path)`. It returns a `Database` with one method per query, typed by the query's params and rows, plus `transaction`, `init`, and `close`. Hover on a method shows its SQL. [blog.ts](../typescript/blog.ts) runs it under `node --import ./examples/register.ts`. `open` refuses a database whose stored DDL fingerprint differs from this schema. There are no migrations.
