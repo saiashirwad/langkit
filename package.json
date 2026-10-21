@@ -16,8 +16,6 @@
     "./parse": "./src/parse.ts",
     "./ir": "./src/ir.ts",
     "./ir/check": "./src/ir/check.ts",
-    "./python": "./src/python.ts",
-    "./python/*": "./src/python/*.ts",
     "./javascript": "./src/javascript.ts",
     "./operations/*": "./src/operations/*.ts",
     "./javascript/*": "./src/javascript/*.ts",
