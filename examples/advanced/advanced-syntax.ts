@@ -6,8 +6,11 @@ import {
   choice,
   commit,
   createLexemes,
+  type Located,
+  located,
   many,
   many1,
+  named,
   optional,
   type Parser,
   parser,
@@ -19,8 +22,6 @@ import {
   sepBy1,
   sepEndBy,
 } from "langkit/parse";
-
-type Located<T> = T & { readonly span: Span; };
 
 export type TypeExpr = Located<
   | { readonly kind: "name"; readonly name: string; readonly args: readonly TypeExpr[]; }
@@ -132,13 +133,6 @@ const lex = createLexemes({
 });
 const { keyword, symbol, identifier } = lex;
 
-const located = <T>(p: Parser<T>): Parser<Located<T>> => p.withSpan((value, span) => ({ ...value, span }));
-
-const named = (p: Parser<string>) =>
-  p.withSpan((name, span) => ({
-    name,
-    span: { start: span.start, end: span.start + name.length },
-  }));
 const name = named(identifier);
 const lower = identifier.validate(
   (text) => /^[a-z_]/.test(text),

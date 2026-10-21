@@ -10,6 +10,7 @@ import {
   lookahead,
   many,
   many1,
+  named,
   optional,
   type Parser,
   parser,
@@ -141,11 +142,6 @@ const lex = createLexemes({
 
 const { keyword, symbol } = lex;
 
-const named = (p: Parser<string>): Parser<Name> =>
-  p.withSpan((name, span) => ({
-    name,
-    span: { start: span.start, end: span.start + name.length },
-  }));
 const name = named(lex.identifier);
 // `model` is also the natural parameter name in a model helper.
 const parameter = named(choice(lex.identifier, keyword("model")));

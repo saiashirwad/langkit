@@ -8,6 +8,8 @@ import {
   choice,
   commit,
   createLexemes,
+  located as locate,
+  named,
   type Parser,
   parser,
   parseResult,
@@ -58,7 +60,7 @@ type Syntax =
 
 export type Expr = Syntax & { readonly span: Span; };
 
-const located = (p: Parser<Syntax>): Parser<Expr> => p.withSpan((node, span) => ({ ...node, span }));
+const located = locate<Syntax>;
 
 const words = /[a-zA-Z_]\w*/;
 const digits = /\d+(?:\.\d+)?/;
@@ -70,10 +72,7 @@ const lex = createLexemes({
   keywords,
 });
 const { keyword, symbol, identifier } = lex;
-const name = identifier.withSpan((name, span) => ({
-  name,
-  span: { start: span.start, end: span.start + name.length },
-}));
+const name = named(identifier);
 
 const tokens: readonly TokenRule[] = [
   {
