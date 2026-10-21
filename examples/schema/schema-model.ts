@@ -1,3 +1,5 @@
+import { type Check, check, fail } from "langkit";
+import type { create } from "langkit/analysis";
 import type { Declaration, Field, ModelOp, Name } from "./schema-syntax.ts";
 
 export type Model = {
@@ -36,9 +38,38 @@ export type Value = { readonly base: Base; readonly nullable: boolean; };
 
 export type Binding = { readonly id: symbol; readonly name: string; readonly type: string; };
 
-const scalarNames: ReadonlySet<string> = new Set<Scalar>(["Int", "Float", "String", "Bool", "DateTime"]);
+export const scalars: Readonly<Record<Scalar, { readonly sql: string; readonly ts: string; }>> = {
+  Int: { sql: "INTEGER", ts: "number" },
+  Float: { sql: "REAL", ts: "number" },
+  String: { sql: "TEXT", ts: "string" },
+  Bool: { sql: "INTEGER", ts: "boolean" },
+  DateTime: { sql: "TEXT", ts: "string" },
+};
 
-export const isScalar = (name: string): name is Scalar => scalarNames.has(name);
+export const isScalar = (name: string): name is Scalar => Object.hasOwn(scalars, name);
+
+export type Facts = ReturnType<typeof create<string>>;
+
+export const error = (name: { readonly span: Name["span"]; }, message: string): Check<never> =>
+  fail(message).at(name.span);
+
+export const referencing = (facts: Facts) => (target: Pick<Binding, "id" | "type">, name: Name): Check<void> =>
+  check(function*() {
+    yield* facts.reference(target, name.span);
+    yield* facts.typed(target.type, name.span);
+  });
+
+export const relationType = (relation: Relation): string =>
+  relation.arity === "many"
+    ? `${relation.target}[]`
+    : relation.arity === "optional"
+    ? `${relation.target}?`
+    : relation.target;
+
+export const primaryKey = (model: Model): Field | undefined => model.fields.find((field) => has(field, "primaryKey"));
+
+export const baseOf = (field: Field): Base =>
+  isScalar(field.type.name) ? { kind: "scalar", name: field.type.name } : { kind: "enum", name: field.type.name };
 
 export const has = (field: Field, kind: Field["ops"][number]["kind"]): boolean =>
   field.ops.some((op) => op.kind === kind);
@@ -68,9 +99,7 @@ export const fieldValue = (
       return target && targetField ? resolve(target, targetField, [...visiting, field]) : undefined;
     }
     if (has(field, "primaryKey")) return { kind: "key", model: model.name.name };
-    return isScalar(field.type.name)
-      ? { kind: "scalar", name: field.type.name }
-      : { kind: "enum", name: field.type.name };
+    return baseOf(field);
   };
   const base = resolve(model, field, []);
   return base && { base, nullable: field.optional };

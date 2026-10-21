@@ -9,6 +9,15 @@ export const text = (value: string): string =>
     ? `(CAST(X'${Buffer.from(value).toString("hex")}' AS TEXT))`
     : `'${value.replaceAll("'", "''")}'`;
 
+export const sqlLiteral = (value: string | number | boolean | null): string =>
+  value === null
+    ? "NULL"
+    : typeof value === "string"
+    ? text(value)
+    : typeof value === "boolean"
+    ? (value ? "1" : "0")
+    : String(value);
+
 const operators = { "==": "=", "!=": "<>", "<": "<", "<=": "<=", ">": ">", ">=": ">=" } as const;
 
 const isBool = (output: Output): boolean =>
@@ -26,13 +35,7 @@ export const statement = ({ statement }: Query): string => {
       case "param":
         return `:${term.name}`;
       case "literal":
-        return term.value === null
-          ? "NULL"
-          : typeof term.value === "string"
-          ? text(term.value)
-          : typeof term.value === "boolean"
-          ? (term.value ? "1" : "0")
-          : String(term.value);
+        return sqlLiteral(term.value);
       case "now":
         return "CURRENT_TIMESTAMP";
       case "not":

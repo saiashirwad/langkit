@@ -28,6 +28,12 @@ export type HostLanguage = {
   readonly host: (source: string, uri: string) => Hosted;
 };
 
+export const unhosted = (diagnostics: readonly Diagnostic[]): Hosted => ({
+  declarations: [],
+  javascript: undefined,
+  diagnostics,
+});
+
 const hover = 1 << 0;
 const definition = 1 << 3;
 const references = 1 << 6;

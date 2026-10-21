@@ -1,5 +1,5 @@
 import { type Check, check, fail } from "../check.ts";
-import { assign, pruneLink } from "../inference.ts";
+import { assign, pruneLink, variableNames } from "../inference.ts";
 
 export type Type =
   | { readonly kind: "number" | "boolean"; }
@@ -20,16 +20,11 @@ export const prune = (type: Type): Type =>
   pruneLink(type, (value) => value.kind === "variable" ? value : null, (variable) => variable.instance);
 
 export const show = (type: Type): string => {
-  const names = new Map<Variable, string>();
+  const name = variableNames<Variable>();
   const visit = (input: Type): string => {
     const type = prune(input);
     if (type.kind === "function") return `(${visit(type.param)} -> ${visit(type.result)})`;
-    if (type.kind !== "variable") return type.kind;
-    if (!names.has(type)) {
-      const index = names.size;
-      names.set(type, String.fromCharCode(97 + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : ""));
-    }
-    return names.get(type)!;
+    return type.kind === "variable" ? name(type) : type.kind;
   };
   return visit(type);
 };
@@ -44,7 +39,7 @@ export const free = (input: Type, found = new Set<Variable>()): Set<Variable> =>
   return found;
 };
 
-export const unify = (left: Type, right: Type): Check<void> =>
+const unifyTypes = (left: Type, right: Type): Check<void> =>
   check(function*() {
     const a = prune(left);
     const b = prune(right);
@@ -52,12 +47,14 @@ export const unify = (left: Type, right: Type): Check<void> =>
     if (a.kind === "variable") {
       if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
       yield* assign(a, "instance", b);
-    } else if (b.kind === "variable") yield* unify(b, a);
+    } else if (b.kind === "variable") yield* unifyTypes(b, a);
     else if (a.kind === "function" && b.kind === "function") {
-      yield* unify(a.param, b.param);
-      yield* unify(a.result, b.result);
+      yield* unifyTypes(a.param, b.param);
+      yield* unifyTypes(a.result, b.result);
     } else if (a.kind !== b.kind) return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-  }).atomic();
+  });
+
+export const unify = (left: Type, right: Type): Check<void> => unifyTypes(left, right).atomic();
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
 

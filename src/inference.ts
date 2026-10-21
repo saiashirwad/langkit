@@ -16,6 +16,20 @@ export const pruneLink = <T, V extends object>(
   }
 };
 
+/** Names variables a, b, …, z, a1, … in first-seen order. */
+export const variableNames = <V>(first = "a"): (variable: V) => string => {
+  const names = new Map<V, string>();
+  return (variable) => {
+    let name = names.get(variable);
+    if (name === undefined) {
+      const index = names.size;
+      name = String.fromCharCode(first.charCodeAt(0) + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : "");
+      names.set(variable, name);
+    }
+    return name;
+  };
+};
+
 type Undo = () => void;
 const undoJournal = state<Undo[]>(() => [], (entries) => {
   const length = entries.length;
@@ -43,4 +57,13 @@ export const add = <T>(target: Set<T>, value: T): Check<void> =>
       target.delete(value);
     });
     target.add(value);
+  });
+
+export const push = <T>(target: T[], value: T): Check<void> =>
+  get(undoJournal).map((journal) => {
+    const length = target.length;
+    journal.push(() => {
+      target.length = length;
+    });
+    target.push(value);
   });

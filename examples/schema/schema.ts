@@ -1,8 +1,20 @@
-import { type Check, check, fail, render, type Result, run } from "langkit";
-import { type Analysis, create as createAnalysis, highlight } from "langkit/analysis";
+import { type Check, check, render, type Result, run } from "langkit";
+import { type Analysis, create as createAnalysis, highlight, unanalyzed } from "langkit/analysis";
 import { readFileSync } from "node:fs";
 import { checkQueries, type HelperKind, isFilter, isStage, type Query } from "./queries.ts";
-import { type Binding, has, type Model, type Relation, type Schema, unique } from "./schema-model.ts";
+import {
+  type Binding,
+  error,
+  has,
+  isScalar,
+  type Model,
+  referencing,
+  type Relation,
+  relationType,
+  scalars,
+  type Schema,
+  unique,
+} from "./schema-model.ts";
 import {
   type Declaration,
   type Default,
@@ -13,7 +25,7 @@ import {
   parse,
   tokens,
 } from "./schema-syntax.ts";
-import { quote, text } from "./sql.ts";
+import { quote, sqlLiteral, text } from "./sql.ts";
 
 export type Type = string;
 
@@ -22,14 +34,6 @@ export const show = (type: Type): string => type;
 export type Compiled = { readonly schema: Schema; readonly sql: string; readonly queries: readonly Query[]; };
 
 const facts = createAnalysis<Type>();
-
-const scalars = new Map<string, string>([
-  ["Int", "INTEGER"],
-  ["Float", "REAL"],
-  ["String", "TEXT"],
-  ["Bool", "INTEGER"],
-  ["DateTime", "TEXT"],
-]);
 
 const operations = new Set([
   "extend",
@@ -66,13 +70,7 @@ const binding = (name: Name, type: Type): Binding => ({
   type,
 });
 
-const error = (name: Name, message: string): Check<never> => fail(message).at(name.span);
-
-const reference = (target: { readonly id: symbol; readonly type: Type; }, name: Name): Check<void> =>
-  check(function*() {
-    yield* facts.reference(target, name.span);
-    yield* facts.typed(target.type, name.span);
-  });
+const reference = referencing(facts);
 
 const elaborate = (
   declarations: readonly Declaration[],
@@ -86,7 +84,7 @@ const elaborate = (
     const tableNames = new Set<string>();
     for (const declaration of declarations) {
       const name = declaration.name;
-      if (names.has(name.name) || scalars.has(name.name) || operations.has(name.name)) {
+      if (names.has(name.name) || isScalar(name.name) || operations.has(name.name)) {
         return yield* error(name, `Duplicate or reserved declaration: ${name.name}`);
       }
       names.set(name.name, declaration);
@@ -261,7 +259,7 @@ const elaborate = (
       check(function*() {
         yield* facts.typed(fieldType(field), field.name.span);
         const enumeration = enums.get(field.type.name);
-        if (!scalars.has(field.type.name) && !enumeration) {
+        if (!isScalar(field.type.name) && !enumeration) {
           return yield* error(field.type, `Unknown field type: ${field.type.name}`);
         }
         if (enumeration) yield* reference(bindings.get(enumeration)!, field.type);
@@ -473,20 +471,12 @@ const relate = (
     return relations;
   });
 
-const relationType = (relation: Relation): Type =>
-  relation.arity === "many"
-    ? `${relation.target}[]`
-    : relation.arity === "optional"
-    ? `${relation.target}?`
-    : relation.target;
-
-const literal = (value: Default): string => {
-  if (value.kind === "now") return "CURRENT_TIMESTAMP";
-  if (value.kind === "enum") return text(value.member.name);
-  if (typeof value.value === "boolean") return value.value ? "1" : "0";
-  if (typeof value.value === "string") return text(value.value);
-  return String(value.value);
-};
+const literal = (value: Default): string =>
+  value.kind === "now"
+    ? "CURRENT_TIMESTAMP"
+    : value.kind === "enum"
+    ? text(value.member.name)
+    : sqlLiteral(value.value);
 
 /** Emit a fresh SQLite schema, never migrations or database side effects. */
 
@@ -498,7 +488,7 @@ export const emit = (schema: Schema): string => {
   for (const model of schema.models) {
     const columns = model.fields.map((field) => {
       const name = quote(field.name.name);
-      let column = `${name} ${scalars.get(field.type.name) ?? "TEXT"}`;
+      let column = `${name} ${isScalar(field.type.name) ? scalars[field.type.name].sql : "TEXT"}`;
       if (has(field, "primaryKey")) column += " PRIMARY KEY";
       if (has(field, "autoIncrement")) column += " AUTOINCREMENT";
       if (!field.optional) column += " NOT NULL";
@@ -554,13 +544,7 @@ export const analyze = (source: string): Analysis<Type> => {
   const lexical = highlight(source, tokens);
   const parsed = parse(source);
   if (!parsed.success) {
-    return {
-      diagnostics: [...parsed.errors],
-      types: [],
-      definitions: [],
-      references: [],
-      tokens: lexical,
-    };
+    return unanalyzed(parsed.errors, lexical);
   }
   return facts.collect(elaborate(parsed.value), lexical).analysis;
 };

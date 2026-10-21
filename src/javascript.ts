@@ -1,11 +1,11 @@
-import { type Binding, type Body, type OperationNode, type Program, validate, type Value } from "./ir.ts";
+import type { Binding, Body, OperationNode, Program, Value } from "./ir.ts";
 import type { DescriptorNode, DescriptorRecord, DescriptorType } from "./operations/descriptor.ts";
 
 export type JavaScriptContext<T> = {
-  readonly depth: number;
-  readonly expr: (value: Value<T>, depth: number) => string;
-  readonly block: (body: Body<T>, depth: number) => string;
+  readonly expr: (value: Value<T>) => string;
+  readonly block: (body: Body<T>, indent?: number) => string;
   readonly name: (binding: Binding<T>) => string;
+  readonly fresh: (prefix: string) => string;
 };
 
 export type JavaScriptHandler<T> = {
@@ -41,7 +41,6 @@ export const createJavaScriptEmitter = <T>(...sets: readonly (readonly JavaScrip
     handlers.set(handler.operationId, handler);
   }
   const emit = (program: Program<T>): string => {
-    validate(program);
     const names = new Map<symbol, string>();
     const name = (binding: Binding<T>): string => {
       const known = names.get(binding.id);
@@ -50,6 +49,8 @@ export const createJavaScriptEmitter = <T>(...sets: readonly (readonly JavaScrip
       names.set(binding.id, chosen);
       return chosen;
     };
+    let temporaries = 0;
+    const fresh = (prefix: string): string => `$${prefix}${temporaries++}`;
     const block = (body: Body<T>, depth: number): string => {
       const indent = "  ".repeat(depth + 1);
       return [
@@ -64,7 +65,12 @@ export const createJavaScriptEmitter = <T>(...sets: readonly (readonly JavaScrip
     const expr = (value: Value<T>, depth: number): string => {
       const handler = handlers.get(value.operationId);
       if (!handler) throw new Error(`Missing JavaScript handler for operation: ${value.node.kind}`);
-      return handler.emit(value.node, { expr, block, name, depth });
+      return handler.emit(value.node, {
+        expr: (child) => expr(child, depth),
+        block: (body, indent = 0) => block(body, depth + indent),
+        name,
+        fresh,
+      });
     };
     return `(() => ${block(program.body, 0)})()\n`;
   };

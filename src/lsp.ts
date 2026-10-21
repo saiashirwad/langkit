@@ -10,8 +10,8 @@ import {
   TextDocuments,
   TextDocumentSyncKind,
 } from "vscode-languageserver/node";
-import { type Analysis, definitionAt, semanticTokens, type Token, tokenKinds, typeAt } from "./analysis.ts";
-import type { SourceLocation, Span } from "./diagnostic.ts";
+import { type Analysis, definitionAt, semanticTokens, type Token, tokenKinds, typeAt, unanalyzed } from "./analysis.ts";
+import type { Span } from "./diagnostic.ts";
 
 /** LSP tokens cannot cross line endings; lengths and columns are UTF-16. */
 export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): number[] => {
@@ -108,13 +108,7 @@ export const serve = <T>(
       analysis = analyze(document.getText(), { uri: document.uri, read: trackedRead });
     } catch (error) {
       connection.console.error(`Analysis failed for ${document.uri}: ${String(error)}`);
-      analysis = {
-        diagnostics: [{ message: "Internal analysis error", context: [] }],
-        types: [],
-        definitions: [],
-        references: [],
-        tokens: [],
-      };
+      analysis = unanalyzed([{ message: "Internal analysis error", context: [] }]);
     }
     for (const uri of analysis.dependencyUris ?? []) reads.add(uri);
     for (const uri of analysis.sources?.keys() ?? []) reads.add(uri);
@@ -128,10 +122,15 @@ export const serve = <T>(
       relatedInformation?: { location: { uri: string; range: Range; }; message: string; }[];
     };
     const diagnostics = new Map<string, RoutedDiagnostic[]>();
+    const sources = new Map<string, TextDocument | undefined>();
+    const source = (uri: string): TextDocument | undefined => {
+      if (!sources.has(uri)) sources.set(uri, sourceDocument(analysis, uri));
+      return sources.get(uri);
+    };
     for (const error of analysis.diagnostics) {
       const location = error.location ?? error.origin
         ?? (error.span ? { uri: document.uri, span: error.span } : undefined);
-      const target = location ? sourceDocument(analysis, location.uri) : document;
+      const target = location ? source(location.uri) : document;
       const uri = target && location ? location.uri : document.uri;
       const localSpan = error.span ?? { start: 0, end: 0 };
       const item: RoutedDiagnostic = {
@@ -144,7 +143,7 @@ export const serve = <T>(
         ...(error.related
           ? {
             relatedInformation: error.related.flatMap(({ location: related, message }) => {
-              const relatedDocument = sourceDocument(analysis, related.uri);
+              const relatedDocument = source(related.uri);
               return relatedDocument
                 ? [{ location: { uri: related.uri, range: range(relatedDocument, related.span) }, message }]
                 : [];
@@ -225,12 +224,9 @@ export const serve = <T>(
     if (!document || !analysis) return null;
     const definition = definitionAt(analysis, document.offsetAt(position));
     if (!definition) return null;
-    const location: SourceLocation = definition.location ?? {
-      uri: definition.uri ?? document.uri,
-      span: definition.span,
-    };
-    const target = sourceDocument(analysis, location.uri);
-    return target ? { uri: location.uri, range: range(target, location.span) } : null;
+    const uri = definition.uri ?? document.uri;
+    const target = sourceDocument(analysis, uri);
+    return target ? { uri, range: range(target, definition.span) } : null;
   });
 
   connection.languages.semanticTokens.on(({ textDocument }) => {

@@ -53,7 +53,7 @@ export function scalingConsumer(count: number): string {
     `prove<Equal<keyof typeof descriptors, ${cases.map((name) => JSON.stringify(name)).join(" | ")}>>();`,
     "export const backend = defineJavaScriptBackend(descriptors, {",
     ...cases.map((name) =>
-      `  ${name}: (node, context) => { prove<Equal<typeof node, ${name}Node>>(); return node.fields.map(field => context.expr(field.value, context.depth)).join(", "); },`
+      `  ${name}: (node, context) => { prove<Equal<typeof node, ${name}Node>>(); return node.fields.map(field => context.expr(field.value)).join(", "); },`
     ),
     "});",
     "export const consumer = check(function* () {",

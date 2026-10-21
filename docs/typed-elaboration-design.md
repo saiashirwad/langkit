@@ -51,16 +51,16 @@ Raw staged IR remains independently constructible and emit-able after structural
 
 ## Module ownership
 
-| Module                      | Owned decisions                                                                        |
-| --------------------------- | -------------------------------------------------------------------------------------- |
-| `src/check.ts`              | Execution frames, generators, transactions, scoped access, and diagnostics             |
-| `src/types/hm.ts`           | HM variables, occurs checks, schemes, instantiation, and generalization                |
-| `src/types/higher-rank.ts`  | Level-based predicative quantifiers, rigid scopes, subsumption, rows, and nominal data |
-| `src/judgments.ts`          | Exhaustive rule dispatch, checking modes, source attribution, and observation          |
-| Binding helpers             | Declaration/use coordination and explicit generalization policy                        |
-| Elaboration runner          | Partial publication, clean-only finalization, and opaque artifacts                     |
-| Compiler recipe             | Fresh configuration and one source-to-outcome operation                                |
-| `src/operations/dialect.ts` | Exact descriptor records and derived exhaustive backend tables                         |
+| Module                         | Owned decisions                                                                           |
+| ------------------------------ | ----------------------------------------------------------------------------------------- |
+| `src/check.ts`                 | Execution frames, generators, transactions, scoped access, and diagnostics                |
+| `src/types/hm.ts`              | HM variables, occurs checks, schemes, instantiation, and generalization                   |
+| `src/types/higher-rank.ts`     | Level-based predicative quantifiers, rigid scopes, subsumption, rows, and nominal data    |
+| `src/judgments.ts`             | Exhaustive rule dispatch, checking modes, source attribution, and observation             |
+| Binding helpers                | Declaration/use coordination and explicit generalization policy                           |
+| Elaboration runner             | Partial publication, clean-only finalization, and opaque artifacts                        |
+| Compiler recipe                | Fresh configuration and one source-to-outcome operation                                   |
+| `src/operations/descriptor.ts` | Exact descriptor records; `src/javascript.ts` derives exhaustive backend tables from them |
 
 Typed descriptors remain the static source of handler shapes. Runtime symbols remain the dispatch authority. Two factory calls can produce identical TypeScript types and different operation identities. Programs snapshot their selected registry at publication.
 

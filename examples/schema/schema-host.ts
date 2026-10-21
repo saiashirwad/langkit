@@ -1,20 +1,22 @@
 import type { Diagnostic } from "langkit";
-import { type HostLanguage, type Piece, verbatim } from "langkit/host";
+import { type HostLanguage, type Piece, unhosted, verbatim } from "langkit/host";
 import type { Output, Query, Shape, Statement } from "./queries.ts";
-import { type Base, fieldValue, has, type Model, type Schema, type Value } from "./schema-model.ts";
+import {
+  type Base,
+  fieldValue,
+  has,
+  isScalar,
+  type Model,
+  primaryKey,
+  scalars,
+  type Schema,
+  type Value,
+} from "./schema-model.ts";
 import type { Field, Name } from "./schema-syntax.ts";
 import { compile } from "./schema.ts";
 import { plan, statement } from "./sql.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
-
-const scalars: Readonly<Record<string, string>> = {
-  Int: "number",
-  Float: "number",
-  String: "string",
-  Bool: "boolean",
-  DateTime: "string",
-};
 
 const reserved = new Set([
   "Database",
@@ -46,8 +48,6 @@ const reserved = new Set([
   "void",
   "yield",
 ]);
-
-const primaryKey = (model: Model): Field | undefined => model.fields.find((field) => has(field, "primaryKey"));
 
 const idName = (model: Model): string => `${model.name.name}Id`;
 
@@ -102,7 +102,7 @@ const valuesOf = ({ models }: Schema): ValueOf => {
 };
 
 const base = (value: Base): string =>
-  value.kind === "scalar" ? scalars[value.name]! : value.kind === "enum" ? value.name : `${value.model}Id`;
+  value.kind === "scalar" ? scalars[value.name].ts : value.kind === "enum" ? value.name : `${value.model}Id`;
 
 const tsValue = ({ base: type, nullable }: Value): string => (nullable ? `${base(type)} | null` : base(type));
 
@@ -124,7 +124,9 @@ const identity = (model: Model, valueOf: ValueOf): readonly Piece[] => {
   if (!key) return [];
   const type = has(key, "references")
     ? tsValue(valueOf(model, key))
-    : `${scalars[key.type.name] ?? key.type.name} & { readonly __brand: "${idName(model)}" }`;
+    : `${isScalar(key.type.name) ? scalars[key.type.name].ts : key.type.name} & { readonly __brand: "${
+      idName(model)
+    }" }`;
   return [`export type ${idName(model)} = ${type};\n`];
 };
 
@@ -256,10 +258,10 @@ export const host: HostLanguage = {
   extension: ".schema",
   host: (source) => {
     const compiled = compile(source);
-    if (!compiled.success) return { declarations: [], javascript: undefined, diagnostics: compiled.errors };
+    if (!compiled.success) return unhosted(compiled.errors);
     const { schema, sql, queries } = compiled.value;
     const diagnostics = [...nameClashes(schema), ...cycles(schema), ...memberClashes(queries)];
-    if (diagnostics.length) return { declarations: [], javascript: undefined, diagnostics };
+    if (diagnostics.length) return unhosted(diagnostics);
     const valueOf = valuesOf(schema);
     return {
       declarations: [

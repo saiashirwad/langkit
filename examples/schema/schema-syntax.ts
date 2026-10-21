@@ -1,5 +1,6 @@
 import type { Result, Span } from "langkit";
 import type { TokenRule } from "langkit/analysis";
+import { parseResult } from "langkit/parse";
 import {
   between,
   choice,
@@ -436,19 +437,7 @@ const declaration: Parser<Declaration> = choice(
 
 export const program = lex.complete(many(declaration));
 
-export const parse = (source: string): Result<readonly Declaration[]> => {
-  const result = program.parse(source);
-  return result.success
-    ? result
-    : {
-      success: false,
-      errors: [{
-        ...result.error.diagnostic,
-        message: result.error.message,
-        context: ["parsing", ...(result.error.diagnostic.context ?? [])],
-      }],
-    };
-};
+export const parse = (source: string): Result<readonly Declaration[]> => parseResult(program, source);
 
 export const tokens: readonly TokenRule[] = [
   { pattern: /\/\/[^\r\n]*/, kind: () => undefined },

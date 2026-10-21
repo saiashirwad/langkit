@@ -13,7 +13,7 @@ import {
   type Span,
   within,
 } from "langkit";
-import { type Analysis, create as createAnalysis, highlight } from "langkit/analysis";
+import { type Analysis, create as createAnalysis, highlight, unanalyzed } from "langkit/analysis";
 import { type Binding, type Body, create, type Program, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { createJavaScriptEmitter } from "langkit/javascript";
@@ -26,6 +26,7 @@ import { parseImports } from "langkit/modules/imports";
 import { printing } from "langkit/operations/printing";
 import { records } from "langkit/operations/records";
 import { variants } from "langkit/operations/variants";
+import { parseResult } from "langkit/parse";
 import {
   boolean,
   data,
@@ -91,7 +92,6 @@ const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
 const constructors = scoped<ReadonlyMap<string, Constructor>>(new Map());
 const level = scoped(0);
-const observe = scoped(true);
 
 const resolve = (
   syntax: TypeExpr,
@@ -162,7 +162,7 @@ const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> 
   computation
     .flatMap((value) =>
       check(function*() {
-        if (yield* get(observe)) yield* facts.typed(value.type, expr.span);
+        yield* facts.typed(value.type, expr.span);
         return code.at(value, expr.span);
       })
     )
@@ -186,7 +186,7 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
         const parameter = expr.annotation ? yield* resolve(expr.annotation) : target.param;
         if (expr.annotation) yield* subsume(target.param, parameter, current);
         const binding = code.binding(expr.param, parameter);
-        if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
+        yield* facts.define(binding, expr.paramSpan, "parameter");
         const body = yield* code.body(function*() {
           return yield* bind(
             env,
@@ -245,13 +245,11 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
         ? mono(annotation)
         : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
     }
-    if (yield* get(observe)) {
-      yield* facts.define(
-        binding,
-        expr.nameSpan,
-        ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable",
-      );
-    }
+    yield* facts.define(
+      binding,
+      expr.nameSpan,
+      ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable",
+    );
     return yield* bind(
       env,
       [[expr.name, { binding, scheme }]],
@@ -284,7 +282,7 @@ const elaborateMatch = (
           };
         } else {
           const binding = code.binding(pattern.name, value.type);
-          if (yield* get(observe)) yield* facts.define(binding, pattern.span);
+          yield* facts.define(binding, pattern.span);
           const body = yield* code.body(function*() {
             return yield* bind(
               env,
@@ -307,12 +305,10 @@ const elaborateMatch = (
           `Constructor ${pattern.name} expects ${constructor.arity} fields, found ${pattern.fields.length}`,
         ).at(pattern.span);
       }
-      if (yield* get(observe)) {
-        yield* facts.reference(constructor.binding, {
-          start: pattern.span.start,
-          end: pattern.span.start + pattern.name.length,
-        });
-      }
+      yield* facts.reference(constructor.binding, {
+        start: pattern.span.start,
+        end: pattern.span.start + pattern.name.length,
+      });
       let type = yield* instantiateForall(constructor.type, current);
       const bindings: Binding<Type>[] = [];
       const entries = new Map<string, Entry>();
@@ -326,7 +322,7 @@ const elaborateMatch = (
             return yield* fail(`Duplicate pattern binding: ${field.name}`).at(field.span);
           }
           entries.set(field.name, { binding, scheme: mono(arrow.param) });
-          if (yield* get(observe)) yield* facts.define(binding, field.span);
+          yield* facts.define(binding, field.span);
         }
         type = arrow.result;
       }
@@ -365,7 +361,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           return code.literal(string, expr.value);
         case "name": {
           const { binding, scheme } = yield* lookup(env, expr.name);
-          if (yield* get(observe)) yield* facts.reference(binding, expr.span);
+          yield* facts.reference(binding, expr.span);
           return code.ref(binding, yield* instantiateForall(yield* instantiate(scheme, current), current));
         }
         case "record": {
@@ -413,7 +409,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         case "fn": {
           const type = expr.annotation ? yield* resolve(expr.annotation) : yield* fresh(current);
           const binding = code.binding(expr.param, type);
-          if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
+          yield* facts.define(binding, expr.paramSpan, "parameter");
           const body = yield* code.body(function*() {
             return yield* bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body));
           });
@@ -524,13 +520,11 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
             const type = variables.length ? forall(variables, initial.type) : initial.type;
             const value = yield* code.declare(syntax.name, { ...initial, type });
             const binding = value.node.binding;
-            if (yield* get(observe)) {
-              yield* facts.define(
-                binding,
-                syntax.nameSpan,
-                fields.length ? "function" : "variable",
-              );
-            }
+            yield* facts.define(
+              binding,
+              syntax.nameSpan,
+              fields.length ? "function" : "variable",
+            );
             addedConstructors.set(syntax.name, { binding, type, arity: fields.length, tag, owner });
             entries.set(syntax.name, { binding, scheme: mono(type) });
           }
@@ -550,19 +544,7 @@ export type Compiled = {
 
 type Root = Pick<Compiled, "syntax" | "datatypes">;
 
-const parse = (source: string): Result<Module> => {
-  const result = program.parse(source);
-  return result.success
-    ? result
-    : {
-      success: false,
-      errors: [{
-        message: result.error.message,
-        span: result.error.diagnostic.span,
-        context: ["parsing", ...(result.error.diagnostic.context ?? [])],
-      }],
-    };
-};
+const parse = (source: string): Result<Module> => parseResult(program, source);
 
 type Origin = { readonly uri: string; readonly span: Span; readonly name: string; };
 
@@ -679,9 +661,7 @@ const buildModules = (
           )
         ),
       );
-      const bundled = yield* within(
-        observe,
-        () => false,
+      const bundled = yield* facts.ignore(
         inEnvironment(
           code.scope(function*() {
             const initial = yield* withTypes(
@@ -760,11 +740,10 @@ const buildModules = (
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   const lexical = highlight(source, tokens);
-  if (!graph.success) {
-    return { diagnostics: graph.errors, types: [], definitions: [], references: [], tokens: lexical };
-  }
+  if (!graph.success) return unanalyzed(graph.errors, lexical);
   const external = new Map<symbol, Export>();
   const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
+  const referenced = new Set(analysis.references.map((reference) => reference.id));
   return {
     ...analysis,
     diagnostics: analysis.diagnostics.map((error) => graph.value.routeDiagnostic(error)),
@@ -773,7 +752,7 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
     definitions: [
       ...analysis.definitions,
       ...[...external.values()]
-        .filter((entry) => analysis.references.some((reference) => reference.id === entry.binding.id))
+        .filter((entry) => referenced.has(entry.binding.id))
         .map((entry) => ({
           ...entry.binding,
           span: entry.origin.span,

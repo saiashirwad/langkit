@@ -1,5 +1,5 @@
 import type { Diagnostic, Span } from "langkit";
-import { atom, esm, type HostLanguage, type Piece, verbatim } from "langkit/host";
+import { atom, esm, type HostLanguage, type Piece, unhosted, verbatim } from "langkit/host";
 import { flatten, free, type FreeVariable, type Generic, prune, type Row, type Type } from "langkit/types/higher-rank";
 import { dirname, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -141,7 +141,7 @@ export const host: HostLanguage = {
   extension: ".advanced",
   host: (source, uri) => {
     const compiled = compile(source, { uri });
-    if (!compiled.success) return { declarations: [], javascript: undefined, diagnostics: compiled.errors };
+    if (!compiled.success) return unhosted(compiled.errors);
     const { type, syntax, datatypes, javascript } = compiled.value;
     const referenced = new Map<string, string>();
     const typescript = printer(datatypes, referenced);

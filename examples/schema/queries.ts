@@ -1,13 +1,18 @@
-import { type Check, check, fail, pure } from "langkit";
+import { type Check, check, pure } from "langkit";
 import type { create } from "langkit/analysis";
 import {
   type Base,
+  baseOf,
   type Binding,
+  error,
   fieldValue,
   has,
   isScalar,
   type Model,
+  primaryKey,
+  referencing,
   type Relation,
+  relationType,
   type Schema,
   showBase,
   showValue,
@@ -172,8 +177,6 @@ type Typed = {
   readonly label: string | undefined;
 };
 
-const error = (name: { readonly span: Name["span"]; }, message: string): Check<never> => fail(message).at(name.span);
-
 const within = <A>(labels: readonly string[], body: Check<A>): Check<A> =>
   labels.reduceRight((inner, label) => inner.context(label), body);
 
@@ -203,27 +206,16 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
     const params = new Map<string, { readonly param: Param; readonly binding: Binding; }>();
     const used = new Set<string>();
 
-    const reference = (target: Binding, name: Name): Check<void> =>
-      check(function*() {
-        yield* facts.reference(target, name.span);
-        yield* facts.typed(target.type, name.span);
-      });
+    const reference = referencing(facts);
 
     const relationBinding = (relation: Relation): Binding => ({
       id: relation.id,
       name: relation.name.name,
-      type: relation.arity === "many"
-        ? `${relation.target}[]`
-        : `${relation.target}${relation.arity === "optional" ? "?" : ""}`,
+      type: relationType(relation),
     });
 
     const valueOf = (model: Model, field: Field): Value =>
-      fieldValue(models, model, field) ?? {
-        base: isScalar(field.type.name)
-          ? { kind: "scalar", name: field.type.name }
-          : { kind: "enum", name: field.type.name },
-        nullable: field.optional,
-      };
+      fieldValue(models, model, field) ?? { base: baseOf(field), nullable: field.optional };
 
     const fieldOf = (model: Model, name: Name): Check<Field> =>
       check(function*() {
@@ -334,7 +326,7 @@ const checkQuery = (scope: Scope, declaration: Extract<Declaration, { kind: "que
       check(function*() {
         if (key.kind !== "key" || other.expr.kind !== "literal") return;
         const model = models.get(key.model)!;
-        const primary = model.fields.find((field) => has(field, "primaryKey"))!;
+        const primary = primaryKey(model)!;
         return yield* error(
           other.expr,
           `A ${showBase(key)} comes from a ${model.name.name}.${primary.name.name} parameter, not a literal`,

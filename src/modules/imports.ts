@@ -7,7 +7,7 @@ const lex = createLexemes({
   keywords: ["import"],
 });
 const imports = parser(function*() {
-  yield* regex(/(?:\s|\/\/[^\r\n]*|--[^\r\n]*)*/);
+  yield* lex.trivia;
   return yield* many(
     parser(function*() {
       yield* lex.keyword("import");

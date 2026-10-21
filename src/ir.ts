@@ -37,7 +37,7 @@ export type LanguageBuilder<T, Methods extends object> = Methods & {
   body(source: BodySource<T>): Body<T>;
   declare(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
   declareRecursive(target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
-  block(type: T, source: BodySource<T>): Value<T>;
+  scope(source: BodySource<T>): Value<T>;
   program(body: Body<T>): Program<T>;
 };
 
@@ -97,7 +97,6 @@ export const create = <T>() => {
     fn: (type: T, param: Binding<T>, source: BodySource<T>) => core.methods.fn(type, param, body(source)),
     conditional: (type: T, cond: Value<T>, thenSource: BodySource<T>, elseSource: BodySource<T>) =>
       core.methods.conditional(type, cond, body(thenSource), body(elseSource)),
-    block: (type: T, source: BodySource<T>) => core.methods.block(type, body(source)),
     scope: (source: BodySource<T>) => {
       const built = body(source);
       return core.methods.block(built.result.type, built);

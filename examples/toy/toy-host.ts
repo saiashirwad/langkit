@@ -1,4 +1,4 @@
-import { atom, esm, type HostLanguage } from "langkit/host";
+import { atom, esm, type HostLanguage, unhosted } from "langkit/host";
 import { compile, type Type } from "./toy.ts";
 
 const typescript = (type: Type): string => {
@@ -15,7 +15,7 @@ export const host: HostLanguage = {
   extension: ".toy",
   host: (source) => {
     const compiled = compile(source);
-    if (!compiled.success) return { declarations: [], javascript: undefined, diagnostics: compiled.errors };
+    if (!compiled.success) return unhosted(compiled.errors);
     return {
       declarations: [
         "declare const ",

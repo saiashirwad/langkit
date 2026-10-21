@@ -1,5 +1,5 @@
 import { Check, type Result, run, scoped, type State, state, within } from "./check.ts";
-import type { Diagnostic, SourceLocation, Span } from "./diagnostic.ts";
+import type { Diagnostic, Span } from "./diagnostic.ts";
 
 export const tokenKinds = [
   "keyword",
@@ -38,7 +38,6 @@ export type Definition<T = unknown> = {
   readonly type?: T;
   /** Present only for definitions outside the analyzed document. */
   readonly uri?: string;
-  readonly location?: SourceLocation;
 };
 
 export type DefinitionKind =
@@ -73,6 +72,14 @@ export type Analysis<T> = {
   /** URIs read while producing this analysis, including transitive inputs. */
   readonly dependencyUris?: readonly string[];
 };
+
+export const unanalyzed = <T>(diagnostics: readonly Diagnostic[], tokens: readonly Token[] = []): Analysis<T> => ({
+  diagnostics,
+  types: [],
+  definitions: [],
+  references: [],
+  tokens,
+});
 
 /** Ordered lexical rules. Unrecognized characters are skipped, so incomplete input still highlights. */
 export type TokenRule = {
@@ -116,7 +123,6 @@ type Binding<T> = {
   readonly name: string;
   readonly type?: T;
   readonly uri?: string;
-  readonly location?: SourceLocation;
 };
 
 /** Optional observation: without collect, these operations do not retain facts. */
@@ -150,6 +156,8 @@ export const create = <T>() => {
         facts.definitions.push({ ...binding, span, kind });
         if (binding.type !== undefined) facts.types.push({ type: binding.type, span, document });
       }),
+
+    ignore: <A>(body: Check<A>): Check<A> => within(collecting, () => undefined, body),
 
     // Identity comes from the declaration; the use-site type is reported by typed.
     reference: (binding: { readonly id: symbol; }, span: Span): Check<void> =>
@@ -207,7 +215,7 @@ export const definitionAt = <T>(
   const reference = analysis.references.find((value) => contains(value.span, offset));
   return reference
     ? analysis.definitions.find((value) => value.id === reference.id)
-    : analysis.definitions.find((value) => !value.uri && !value.location && contains(value.span, offset));
+    : analysis.definitions.find((value) => !value.uri && contains(value.span, offset));
 };
 
 /** Refine lexical tokens without introducing overlapping or duplicate ranges. */
@@ -216,7 +224,7 @@ export const semanticTokens = <T>(analysis: Analysis<T>): readonly Token[] => {
   const roles = new Map<string, TokenKind>();
   const key = (span: Span) => `${span.start}:${span.end}`;
   for (const definition of analysis.definitions) {
-    if (!definition.uri && !definition.location) roles.set(key(definition.span), definition.kind);
+    if (!definition.uri) roles.set(key(definition.span), definition.kind);
   }
   for (const reference of analysis.references) {
     const definition = definitions.get(reference.id);

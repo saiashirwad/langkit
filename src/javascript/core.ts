@@ -16,14 +16,10 @@ export const coreJavaScript = <T>(descriptors: CoreDescriptors<T>) =>
     literal: (node) => literal(node.value),
     ref: (node, context) => context.name(node.binding),
     binary: (node, context) =>
-      `(${context.expr(node.left, context.depth)} ${node.op === "==" ? "===" : node.op} ${
-        context.expr(node.right, context.depth)
-      })`,
-    call: (node, context) => `(${context.expr(node.fn, context.depth)})(${context.expr(node.arg, context.depth)})`,
-    fn: (node, context) => `((${context.name(node.param)}) => ${context.block(node.body, context.depth)})`,
+      `(${context.expr(node.left)} ${node.op === "==" ? "===" : node.op} ${context.expr(node.right)})`,
+    call: (node, context) => `(${context.expr(node.fn)})(${context.expr(node.arg)})`,
+    fn: (node, context) => `((${context.name(node.param)}) => ${context.block(node.body)})`,
     conditional: (node, context) =>
-      `(${context.expr(node.cond, context.depth)} ? (() => ${context.block(node.then, context.depth)})() : (() => ${
-        context.block(node.else, context.depth)
-      })())`,
-    block: (node, context) => `(() => ${context.block(node.body, context.depth)})()`,
+      `(${context.expr(node.cond)} ? (() => ${context.block(node.then)})() : (() => ${context.block(node.else)})())`,
+    block: (node, context) => `(() => ${context.block(node.body)})()`,
   });

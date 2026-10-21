@@ -1,5 +1,5 @@
 import { type Check, fail, render, type Result, run, type Span } from "langkit";
-import { type Analysis, create as createAnalysis, highlight, type TokenRule } from "langkit/analysis";
+import { type Analysis, create as createAnalysis, highlight, type TokenRule, unanalyzed } from "langkit/analysis";
 import { createBindings } from "langkit/bindings";
 import { type Binding, type Body, create, type Operator, type Program, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
@@ -13,6 +13,7 @@ import {
   createLexemes,
   type Parser,
   parser,
+  parseResult,
   postfix,
   precedence,
   recursive,
@@ -241,15 +242,13 @@ const rules: RuleTable<Expr, Type, Value<Type>> = {
     check: "fromSynth",
     *synth(expr) {
       return synthesized(
-        yield* code.check(function*() {
-          return yield* code.scope(function*() {
-            return yield* bindings.let(
-              expr.name,
-              expr.nameSpan,
-              elaborate(expr.value).map(synthesized),
-              () => elaborate(expr.body),
-            );
-          });
+        yield* code.scope(function*() {
+          return yield* bindings.let(
+            expr.name,
+            expr.nameSpan,
+            elaborate(expr.value).map(synthesized),
+            () => elaborate(expr.body),
+          );
         }),
       );
     },
@@ -282,18 +281,16 @@ const rules: RuleTable<Expr, Type, Value<Type>> = {
     mode: "synth",
     check: "fromSynth",
     *synth(expr) {
-      return yield* code.check(function*() {
-        const cond = yield* elaborate(expr.cond);
-        yield* unify(cond.type, boolean).at(expr.cond.span).recover();
-        const then = yield* code.body(function*() {
-          return yield* elaborate(expr.then);
-        });
-        const otherwise = yield* code.body(function*() {
-          return yield* elaborate(expr.else);
-        });
-        yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
-        return synthesized(code.conditional(then.result.type, cond, then, otherwise));
+      const cond = yield* elaborate(expr.cond);
+      yield* unify(cond.type, boolean).at(expr.cond.span).recover();
+      const then = yield* code.body(function*() {
+        return yield* elaborate(expr.then);
       });
+      const otherwise = yield* code.body(function*() {
+        return yield* elaborate(expr.else);
+      });
+      yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
+      return synthesized(code.conditional(then.result.type, cond, then, otherwise));
     },
   },
 };
@@ -321,32 +318,12 @@ export type Compiled = {
 
 const finalExpression = (expr: Expr): Expr => expr.kind === "let" ? finalExpression(expr.body) : expr;
 
-const parse = (source: string): Result<Expr> => {
-  const parsed = program.parse(source);
-  return parsed.success
-    ? parsed
-    : {
-      success: false,
-      errors: [{
-        ...parsed.error.diagnostic,
-        message: parsed.error.message,
-        context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-      }],
-    };
-};
+const parse = (source: string): Result<Expr> => parseResult(program, source);
 
 export const analyze = (source: string): Analysis<Type> => {
   const lexical = highlight(source, tokens);
   const parsed = parse(source);
-  if (!parsed.success) {
-    return {
-      diagnostics: parsed.errors,
-      types: [],
-      definitions: [],
-      references: [],
-      tokens: lexical,
-    };
-  }
+  if (!parsed.success) return unanalyzed(parsed.errors, lexical);
   return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 

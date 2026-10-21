@@ -1,4 +1,5 @@
-import { Check, check, get, scoped, type State, state, within } from "../check.ts";
+import { Check, check, get, scoped, within } from "../check.ts";
+import { push } from "../inference.ts";
 import type { Body, Declaration, LanguageBuilder, Value } from "../ir.ts";
 
 type MixedGenerator<T, A> = () => Generator<Check<unknown> | Declaration<T>, A, unknown>;
@@ -13,7 +14,7 @@ export type Elaboration<T, Methods extends object> = Omit<LanguageBuilder<T, Met
 export const elaboration = <T, Methods extends object>(
   builder: LanguageBuilder<T, Methods>,
 ): Elaboration<T, Methods> => {
-  const active = scoped<State<Declaration<T>[]> | undefined>(undefined);
+  const active = scoped<Declaration<T>[] | undefined>(undefined);
   const mixed = <A>(factory: MixedGenerator<T, A>): Check<A> =>
     check(function*() {
       const iterator = factory();
@@ -25,9 +26,9 @@ export const elaboration = <T, Methods extends object>(
             step = iterator.next(yield* step.value);
             continue;
           }
-          const collection = yield* get(active);
-          if (collection === undefined) throw new Error("IR declarations need an enclosing body");
-          (yield* get(collection)).push(step.value);
+          const declarations = yield* get(active);
+          if (declarations === undefined) throw new Error("IR declarations need an enclosing body");
+          yield* push(declarations, step.value);
           step = iterator.next(undefined);
         }
         done = true;
@@ -40,20 +41,15 @@ export const elaboration = <T, Methods extends object>(
     });
   const body = <A extends Value<T>>(factory: MixedGenerator<T, A>): Check<Body<T>> =>
     check(function*() {
-      const collection = state<Declaration<T>[]>(() => [], (current) => {
-        const length = current.length;
-        return () => {
-          current.length = length;
-        };
-      });
-      const result = yield* within(active, () => collection, mixed(factory));
-      return builder.body({ declarations: [...yield* get(collection)], result });
+      const declarations: Declaration<T>[] = [];
+      const result = yield* within(active, () => declarations, mixed(factory));
+      return builder.body({ declarations: [...declarations], result });
     });
   const { use: _, ...pure } = builder;
   return {
     ...pure,
     check: mixed,
     body,
-    scope: (factory) => body(factory).map((built) => builder.block(built.result.type, built)),
+    scope: <A extends Value<T>>(factory: MixedGenerator<T, A>) => body(factory).map(builder.scope),
   } as Elaboration<T, Methods>;
 };

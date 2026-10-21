@@ -1,5 +1,5 @@
 import { type Check, check, fail } from "../check.ts";
-import { add, assign, pruneLink } from "../inference.ts";
+import { add, assign, pruneLink, variableNames } from "../inference.ts";
 
 export type Type =
   | { readonly kind: "number" | "boolean" | "string"; }
@@ -87,7 +87,7 @@ export const flatten = (input: Row): Row => {
 };
 
 export const show = (type: Type): string => {
-  const names = new Map<Variable, string>();
+  const name = variableNames<Variable>();
   const rows = new Map<RowVariable, string>();
   const visit = (type: Type): string => {
     type = prune(type);
@@ -113,15 +113,7 @@ export const show = (type: Type): string => {
         type.constructor.name + (type.args.length ? `(${type.args.map(visit).join(", ")})` : "")
       );
     }
-    if (type.kind !== "variable") return type.kind;
-    if (!names.has(type)) {
-      const index = names.size;
-      names.set(
-        type,
-        String.fromCharCode(97 + (index % 26)) + (index >= 26 ? Math.floor(index / 26) : ""),
-      );
-    }
-    return names.get(type)!;
+    return type.kind === "variable" ? name(type) : type.kind;
   };
   const result = visit(type);
   const constraints = [...rows]
@@ -184,7 +176,7 @@ const solveRow = (variable: RowVariable, input: Row): Check<void> =>
     yield* exclude(target, variable.lacks);
     if (target.tail) { for (const label of target.fields.keys()) yield* add(target.tail.lacks, label); }
     yield* assign(variable, "instance", target);
-  }).atomic();
+  });
 
 const unifyRows = (left: Row, right: Row): Check<void> =>
   check(function*() {
@@ -195,7 +187,7 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
       const common = [...a.fields].filter(([label]) => b.fields.has(label) && !unified.has(label));
       if (!common.length) break;
       for (const [label, type] of common) {
-        yield* unify(type, b.fields.get(label)!);
+        yield* unifyTypes(type, b.fields.get(label)!);
         unified.add(label);
       }
       a = flatten(left);
@@ -218,12 +210,10 @@ const unifyRows = (left: Row, right: Row): Check<void> =>
       yield* solveRow(b.tail, row(onlyA, shared));
     } else if (a.tail) yield* solveRow(a.tail, row(onlyB));
     else if (b.tail) yield* solveRow(b.tail, row(onlyA));
-  }).atomic();
+  });
 
-export const unify = (left: Type, right: Type): Check<void> =>
+const unifyTypes = (left: Type, right: Type): Check<void> =>
   check(function*() {
-    yield* constrain(left);
-    yield* constrain(right);
     const a = prune(left);
     const b = prune(right);
     if (a === b) return;
@@ -236,13 +226,13 @@ export const unify = (left: Type, right: Type): Check<void> =>
       }
       yield* lower(b, a.level);
       yield* assign(a, "instance", b);
-    } else if (b.kind === "variable") yield* unify(b, a);
+    } else if (b.kind === "variable") yield* unifyTypes(b, a);
     else if (a.kind === "function" && b.kind === "function") {
-      yield* unify(a.param, b.param);
-      yield* unify(a.result, b.result);
+      yield* unifyTypes(a.param, b.param);
+      yield* unifyTypes(a.result, b.result);
     } else if (a.kind === "record" && b.kind === "record") yield* unifyRows(a.row, b.row);
     else if (a.kind === "data" && b.kind === "data" && a.constructor.id === b.constructor.id) {
-      for (let i = 0; i < a.args.length; i++) yield* unify(a.args[i]!, b.args[i]!);
+      for (let i = 0; i < a.args.length; i++) yield* unifyTypes(a.args[i]!, b.args[i]!);
     } else if (
       a.kind === "forall"
       && b.kind === "forall"
@@ -250,7 +240,7 @@ export const unify = (left: Type, right: Type): Check<void> =>
     ) {
       const level = Math.max(maxLevel(a), maxLevel(b)) + 1;
       const witnesses = a.variables.map((v) => skolem(v.name, level));
-      yield* unify(
+      yield* unifyTypes(
         substitute(a.body, new Map(a.variables.map((v, i) => [v, witnesses[i]!]))),
         substitute(b.body, new Map(b.variables.map((v, i) => [v, witnesses[i]!]))),
       );
@@ -259,6 +249,13 @@ export const unify = (left: Type, right: Type): Check<void> =>
     else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind)) {
       return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
     }
+  });
+
+export const unify = (left: Type, right: Type): Check<void> =>
+  check(function*() {
+    yield* constrain(left);
+    yield* constrain(right);
+    yield* unifyTypes(left, right);
   }).atomic();
 
 export const mono = (type: Type): Scheme => ({ type, variables: new Set() });
@@ -331,7 +328,7 @@ const lower = (type: Type, level: number, bound: ReadonlySet<Generic> = new Set(
         return;
       }
     }
-  }).atomic();
+  });
 
 const maxLevel = (type: Type): number => {
   type = prune(type);
@@ -417,19 +414,22 @@ export const skolemize = (input: Type, level: number): Check<Type> =>
     return type;
   });
 
-export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
+const subsumeAt = (actual: Type, expected: Type, level: number): Check<void> =>
   check(function*() {
     const target = prune(expected);
     if (target.kind === "forall") {
-      yield* subsume(yield* instantiateForall(actual, level + 1), yield* skolemize(target, level + 1), level + 1);
+      yield* subsumeAt(yield* instantiateForall(actual, level + 1), yield* skolemize(target, level + 1), level + 1);
       return;
     }
     const source = yield* instantiateForall(actual, level);
     if (source.kind === "function" && target.kind === "function") {
-      yield* subsume(target.param, source.param, level);
-      yield* subsume(source.result, target.result, level);
+      yield* subsumeAt(target.param, source.param, level);
+      yield* subsumeAt(source.result, target.result, level);
     } else yield* unify(source, target);
-  }).atomic();
+  });
+
+export const subsume = (actual: Type, expected: Type, level = 0): Check<void> =>
+  subsumeAt(actual, expected, level).atomic();
 
 export const expectFunction = (
   input: Type,

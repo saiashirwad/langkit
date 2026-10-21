@@ -37,7 +37,7 @@ export const backend = defineJavaScriptBackend(descriptors, {
     prove<Equal<typeof recordNode.fields, readonly RecordField[]>>();
     prove<Equal<IsAny<typeof recordNode>, false>>();
     prove<Equal<IsNever<typeof recordNode>, false>>();
-    return recordNode.fields.map((field) => `${field.name}: ${recordContext.expr(field.value, recordContext.depth)}`)
+    return recordNode.fields.map((field) => `${field.name}: ${recordContext.expr(field.value)}`)
       .join(", ");
   },
 });

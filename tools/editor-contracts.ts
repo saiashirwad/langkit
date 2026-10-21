@@ -96,7 +96,7 @@ export const probes: readonly Probe[] = [
   {
     id: "record-field-value",
     method: "hover",
-    anchor: "recordContext.expr(field.value,",
+    anchor: "recordContext.expr(field.value)",
     offset: 27,
     require: ["value: Value<hm.Type>"],
     maxLength: 160,

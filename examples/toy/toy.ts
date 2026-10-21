@@ -1,5 +1,5 @@
 import { bind, type Check, fail, lookup, pure, render, type Result, run, scoped, type Span } from "langkit";
-import { type Analysis, create as createAnalysis, highlight, type TokenRule } from "langkit/analysis";
+import { type Analysis, create as createAnalysis, highlight, type TokenRule, unanalyzed } from "langkit/analysis";
 import { type Binding, type Body, create, type Operator, type Program, type Value } from "langkit/ir";
 import { elaboration } from "langkit/ir/check";
 import { createJavaScriptEmitter } from "langkit/javascript";
@@ -12,6 +12,7 @@ import {
   notFollowedBy,
   type Parser,
   parser,
+  parseResult,
   postfix,
   precedence,
   recursive,
@@ -296,32 +297,12 @@ export type Compiled = {
   readonly javascript: string;
 };
 
-const parse = (source: string): Result<Expr> => {
-  const parsed = program.parse(source);
-  return parsed.success
-    ? parsed
-    : {
-      success: false,
-      errors: [{
-        ...parsed.error.diagnostic,
-        message: parsed.error.message,
-        context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-      }],
-    };
-};
+const parse = (source: string): Result<Expr> => parseResult(program, source);
 
 export const analyze = (source: string): Analysis<Type> => {
   const lexical = highlight(source, tokens);
   const parsed = parse(source);
-  if (!parsed.success) {
-    return {
-      diagnostics: parsed.errors,
-      types: [],
-      definitions: [],
-      references: [],
-      tokens: lexical,
-    };
-  }
+  if (!parsed.success) return unanalyzed(parsed.errors, lexical);
   return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 

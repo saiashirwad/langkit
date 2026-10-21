@@ -42,7 +42,7 @@ defineJavaScriptBackend(descriptors, {
     // @ts-expect-error No restated or nonexistent node field.
     node.value;
     // @ts-expect-error Context preserves the selected type universe.
-    context.expr({ type: "boolean", node, operationId: operation.id }, 0);
+    context.expr({ type: "boolean", node, operationId: operation.id });
     return String(node.count);
   },
 });
@@ -59,7 +59,7 @@ defineJavaScriptBackend({ projection: recordFeature.descriptors.field }, {
     expect<Equal<typeof node.record, Value<"number">>>(true);
     expect<Equal<IsAny<typeof node>, false>>(true);
     expect<Equal<typeof context, JavaScriptContext<"number">>>(true);
-    return context.expr(node.record, context.depth) + node.name;
+    return context.expr(node.record) + node.name;
   },
 });
 defineJavaScriptBackend(
@@ -73,7 +73,7 @@ defineJavaScriptBackend(
     conditional: (node, context) => {
       expect<Equal<typeof node.kind, "if">>(true);
       expect<Equal<typeof node.cond, Value<"number">>>(true);
-      return context.block(node.then, context.depth);
+      return context.block(node.then);
     },
   },
 );
