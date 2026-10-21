@@ -2,7 +2,14 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type { Result } from "./check.ts";
-import { type Diagnostic, type SourceLocation, type Span, withDocument, withLocation } from "./diagnostic.ts";
+import {
+  type Diagnostic,
+  diagnostic,
+  type SourceLocation,
+  type Span,
+  withDocument,
+  withLocation,
+} from "./diagnostic.ts";
 
 export type ModuleOptions = { readonly uri?: string; readonly read?: (uri: string) => string; };
 export type ImportDirective = { readonly path: string; readonly span: Span; };
@@ -15,18 +22,24 @@ export type ModuleSource = {
   readonly imports: readonly { readonly uri: string; readonly span: Span; }[];
 };
 
+export const readFileUri = (uri: string): string => {
+  const url = new URL(uri);
+  if (url.protocol !== "file:") throw new Error("Only local file URLs can be read");
+  return readFileSync(fileURLToPath(url), "utf8");
+};
+
 export class ModuleGraph {
   readonly root: string;
   readonly modules: readonly ModuleSource[];
+  readonly dependencyUris: readonly string[];
   readonly #byUri: ReadonlyMap<string, ModuleSource>;
   constructor(root: string, modules: readonly ModuleSource[]) {
     this.root = root;
     this.modules = modules;
+    this.dependencyUris = Object.freeze(modules.filter((module) => module.uri !== root).map((module) => module.uri));
     this.#byUri = new Map(modules.map((module) => [module.uri, module]));
   }
-  get dependencyUris(): readonly string[] {
-    return this.modules.filter((module) => module.uri !== this.root).map((module) => module.uri);
-  }
+  /** A fresh map each time, so callers cannot corrupt the graph. */
   get sources(): ReadonlyMap<string, string> {
     return new Map(this.modules.map((module) => [module.uri, module.original]));
   }
@@ -58,25 +71,41 @@ export class ModuleGraph {
   }
 }
 
+const normalize = (input: string): string => {
+  const uri = new URL(input);
+  if (uri.protocol !== "file:" || uri.search || uri.hash) {
+    throw new Error("Modules require local file URLs without query strings or fragments");
+  }
+  return pathToFileURL(resolve(fileURLToPath(uri))).href;
+};
+
+const resolveImport = (path: string, from: string, extension: string): string => {
+  if (!path.startsWith("./") && !path.startsWith("../")) throw new Error("Import paths must start with ./ or ../");
+  const target = normalize(new URL(path, from).href);
+  if (!fileURLToPath(target).endsWith("." + extension)) throw new Error("Imports must use ." + extension + " files");
+  return target;
+};
+
+/** Blanks import directives so the rest of the source keeps its offsets. */
+const strip = (original: string, directives: readonly ImportDirective[]): string =>
+  directives.toReversed().reduce(
+    (text, { span }) =>
+      text.slice(0, span.start) + text.slice(span.start, span.end).replace(/[^\r\n]/g, " ") + text.slice(span.end),
+    original,
+  );
+
 export const loadModules = (source: string, options: ModuleOptions, language: ModuleLanguage): Result<ModuleGraph> => {
   const { extension } = language;
-  const diagnostic = (message: string, uri: string, span: Span = { start: 0, end: 0 }): Diagnostic =>
-    withDocument({ message, span, context: [] }, uri);
+  const located = (message: string, uri: string, span: Span = { start: 0, end: 0 }): Diagnostic =>
+    withDocument(diagnostic(message, span), uri);
   const failure = (errors: readonly [Diagnostic, ...Diagnostic[]]): Result<never> => ({ success: false, errors });
-  const normalize = (input: string): string => {
-    const uri = new URL(input);
-    if (uri.protocol !== "file:" || uri.search || uri.hash) {
-      throw new Error("Modules require local file URLs without query strings or fragments");
-    }
-    return pathToFileURL(resolve(fileURLToPath(uri))).href;
-  };
   let root: string;
   try {
     root = normalize(options.uri ?? pathToFileURL(resolve("input." + extension)).href);
   } catch (cause) {
-    return failure([diagnostic("Invalid module URI: " + String(cause), options.uri ?? "")]);
+    return failure([located("Invalid module URI: " + String(cause), options.uri ?? "")]);
   }
-  const read = options.read ?? ((uri: string) => readFileSync(fileURLToPath(uri), "utf8"));
+  const read = options.read ?? readFileUri;
   const completed = new Map<string, ModuleSource>();
   const active = new Set<string>();
   const modules: ModuleSource[] = [];
@@ -103,7 +132,7 @@ export const loadModules = (source: string, options: ModuleOptions, language: Mo
       ) {
         active.delete(uri);
         return failure([
-          diagnostic("Invalid import directive span: spans must be nonempty, in range, and nonoverlapping", uri),
+          located("Invalid import directive span: spans must be nonempty, in range, and nonoverlapping", uri),
         ]);
       }
       end = span.end;
@@ -113,22 +142,16 @@ export const loadModules = (source: string, options: ModuleOptions, language: Mo
     for (const imported of directives) {
       let target: string;
       try {
-        if (!imported.path.startsWith("./") && !imported.path.startsWith("../")) {
-          throw new Error("Import paths must start with ./ or ../");
-        }
-        target = normalize(new URL(imported.path, uri).href);
-        if (!fileURLToPath(target).endsWith("." + extension)) {
-          throw new Error("Imports must use ." + extension + " files");
-        }
+        target = resolveImport(imported.path, uri, extension);
       } catch (cause) {
         errors.push(
-          diagnostic("Invalid import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span),
+          located("Invalid import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span),
         );
         continue;
       }
       dependencies.push({ uri: target, span: imported.span });
       if (active.has(target)) {
-        errors.push(diagnostic("Import cycle: " + [...active, target].join(" -> "), uri, imported.span));
+        errors.push(located("Import cycle: " + [...active, target].join(" -> "), uri, imported.span));
         continue;
       }
       if (completed.has(target)) continue;
@@ -137,7 +160,7 @@ export const loadModules = (source: string, options: ModuleOptions, language: Mo
         text = read(target);
       } catch (cause) {
         errors.push(
-          diagnostic("Cannot read import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span),
+          located("Cannot read import " + JSON.stringify(imported.path) + ": " + String(cause), uri, imported.span),
         );
         continue;
       }
@@ -160,13 +183,7 @@ export const loadModules = (source: string, options: ModuleOptions, language: Mo
       active.delete(uri);
       return failure(errors as [Diagnostic, ...Diagnostic[]]);
     }
-    let stripped = original;
-    for (const imported of directives.toReversed()) {
-      stripped = stripped.slice(0, imported.span.start)
-        + stripped.slice(imported.span.start, imported.span.end).replace(/[^\r\n]/g, " ")
-        + stripped.slice(imported.span.end);
-    }
-    const module: ModuleSource = { uri, original, source: stripped, imports: dependencies };
+    const module: ModuleSource = { uri, original, source: strip(original, directives), imports: dependencies };
     active.delete(uri);
     completed.set(uri, module);
     modules.push(module);

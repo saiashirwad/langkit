@@ -87,9 +87,9 @@ void checkedComputation;
 void checkedScope;
 // @ts-expect-error Feature composition happens before elaboration; use is not exposed.
 codeBuilder.use(records<"number" | "record">());
-// @ts-expect-error Body accepts a factory, never a Check argument.
-codeBuilder.body(pure(typedReference));
-// @ts-expect-error Scope accepts a factory, never a Check argument.
-codeBuilder.scope(pure(typedFeature));
+const directBody: Check<Body<"number" | "record">> = codeBuilder.body(pure(typedReference));
+const directScope: Check<Value<"number" | "record">> = codeBuilder.scope(pure(typedFeature));
+void directBody;
+void directScope;
 // @ts-expect-error Adapter declarations yield raw IR, not Check computations.
 codeBuilder.declare("wrong", pure(typedReference));

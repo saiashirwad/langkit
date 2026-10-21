@@ -1,8 +1,8 @@
 import type { Span } from "./diagnostic.ts";
-import { type CoreDescriptors, coreOperations } from "./operations/core.ts";
+import { coreOperations } from "./operations/core.ts";
 import type { DescriptorRecord, OperationDescriptor } from "./operations/descriptor.ts";
 
-export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
+export type { Operator } from "./operations/core.ts";
 
 export type Binding<T> = { readonly id: symbol; readonly name: string; readonly type: T; };
 export type OperationNode = { readonly kind: string; };
@@ -33,12 +33,6 @@ export type LanguageBuilder<T, Methods extends object> = Methods & {
   use<More extends object, Added extends DescriptorRecord>(
     feature: OperationFeature<T, More, Added>,
   ): LanguageBuilder<T, Methods & More>;
-  readonly coreDescriptors: CoreDescriptors<T>;
-  body(source: BodySource<T>): Body<T>;
-  declare(name: string, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
-  declareRecursive(target: Binding<T>, initial: Value<T>): Generator<Declaration<T>, Reference<T>, unknown>;
-  scope(source: BodySource<T>): Value<T>;
-  program(body: Body<T>): Program<T>;
 };
 
 export const create = <T>() => {
@@ -61,20 +55,9 @@ export const create = <T>() => {
     if (typeof source !== "function") return source;
     const declarations: Declaration<T>[] = [];
     const iterator = source();
-    let done = false;
-    try {
-      let step = iterator.next();
-      while (!step.done) {
-        declarations.push(step.value);
-        step = iterator.next();
-      }
-      done = true;
-      return { declarations, result: step.value };
-    } finally {
-      if (!done && !iterator.return(undefined as never).done) {
-        throw new TypeError("IR body cleanup cannot yield declarations");
-      }
-    }
+    let step = iterator.next();
+    for (; !step.done; step = iterator.next()) declarations.push(step.value);
+    return { declarations, result: step.value };
   };
   const builder = {
     coreDescriptors: core.descriptors,
@@ -108,17 +91,18 @@ export const create = <T>() => {
       return program;
     },
   };
-  const use = <Methods extends object, Added extends DescriptorRecord>(
-    feature: OperationFeature<T, Methods, Added>,
-  ): unknown => {
+  type Methods = typeof builder;
+  const use = <More extends object, Added extends DescriptorRecord>(
+    feature: OperationFeature<T, More, Added>,
+  ): LanguageBuilder<T, Methods & More> => {
     for (const method of Object.keys(feature.methods)) {
       if (method in language) throw new Error(`Duplicate language feature method: ${method}`);
     }
     register(feature.descriptors);
-    return Object.assign(language, feature.methods);
+    return Object.assign(language, feature.methods) as LanguageBuilder<T, Methods & More>;
   };
-  const language = Object.assign(builder, { use });
-  return language as unknown as LanguageBuilder<T, typeof builder>;
+  const language: LanguageBuilder<T, Methods> = Object.assign(builder, { use });
+  return language;
 };
 
 /** Checks lexical scoping: every reference sees its binding, and every binding is declared once. */

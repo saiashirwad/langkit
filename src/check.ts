@@ -181,8 +181,24 @@ export class Check<A> {
     instructions.set(this, { kind: "primitive", step });
   }
 
-  *[Symbol.iterator](): Generator<Check<A>, A, unknown> {
-    return (yield this) as A;
+  // Hand-rolled so `yield*` on a check costs one small object, not a generator.
+  [Symbol.iterator](): Iterator<Check<A>, A, unknown> {
+    let yielded = false;
+    return {
+      next: (value?: unknown) => {
+        if (yielded) return { done: true, value: value as A };
+        yielded = true;
+        return { done: false, value: this };
+      },
+      return: (value?: unknown) => {
+        yielded = true;
+        return { done: true, value: value as A };
+      },
+      throw: (error?: unknown) => {
+        yielded = true;
+        throw error;
+      },
+    };
   }
 
   map<B>(f: (value: A) => B): Check<B> {

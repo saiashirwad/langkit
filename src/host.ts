@@ -1,3 +1,4 @@
+import { extname } from "node:path";
 import type { Diagnostic, Span } from "./diagnostic.ts";
 
 export type Mapping = readonly [
@@ -26,6 +27,12 @@ export type Hosted = {
 export type HostLanguage = {
   readonly extension: `.${string}`;
   readonly host: (source: string, uri: string) => Hosted;
+};
+
+/** Looks a host language up by a file name's extension. */
+export const hostFor = (languages: readonly HostLanguage[]): (fileName: string) => HostLanguage | undefined => {
+  const registry = new Map<string, HostLanguage>(languages.map((language) => [language.extension, language]));
+  return (fileName) => registry.get(extname(fileName));
 };
 
 export const unhosted = (diagnostics: readonly Diagnostic[]): Hosted => ({

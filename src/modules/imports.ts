@@ -1,5 +1,5 @@
-import { commit, createLexemes, many, parser, regex } from "langkit/parse";
 import type { ImportParser } from "../modules.ts";
+import { commit, createLexemes, many, parsePrefixResult, parser, regex } from "../parse.ts";
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*|--[^\r\n]*)*/),
@@ -19,9 +19,4 @@ const imports = parser(function*() {
   );
 });
 
-export const parseImports: ImportParser = (source) => {
-  const result = imports.parsePrefix(source);
-  return result.success
-    ? { success: true, value: result.value.value }
-    : { success: false, errors: [{ message: result.error.message, span: result.error.diagnostic.span, context: [] }] };
-};
+export const parseImports: ImportParser = (source) => parsePrefixResult(imports, source);

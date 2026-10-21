@@ -252,9 +252,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       case "fn": {
         const param = code.binding(expr.param, expr.annotation);
         yield* facts.define(param, expr.paramSpan, "parameter");
-        const body = yield* code.body(function*() {
-          return yield* bind(env, [[expr.param, param]], elaborate(expr.body));
-        });
+        const body = yield* code.body(bind(env, [[expr.param, param]], elaborate(expr.body)));
         return code.fn(fn(param.type, body.result.type), param, body);
       }
       case "call": {
@@ -269,12 +267,8 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       case "if": {
         const cond = yield* elaborate(expr.cond);
         yield* expect(cond, boolean);
-        const then = yield* code.body(function*() {
-          return yield* elaborate(expr.then);
-        });
-        const otherwise = yield* code.body(function*() {
-          return yield* elaborate(expr.else);
-        });
+        const then = yield* code.body(elaborate(expr.then));
+        const otherwise = yield* code.body(elaborate(expr.else));
         yield* expect(otherwise.result, then.result.type);
         return code.conditional(then.result.type, cond, then, otherwise);
       }
@@ -286,10 +280,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       return code.at(value, expr.span);
     })
   ).at(expr.span);
-export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function*() {
-    return yield* elaborate(expr);
-  });
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
 
 export type Compiled = {
   readonly type: Type;

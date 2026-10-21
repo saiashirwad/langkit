@@ -20,6 +20,6 @@ export const coreJavaScript = <T>(descriptors: CoreDescriptors<T>) =>
     call: (node, context) => `(${context.expr(node.fn)})(${context.expr(node.arg)})`,
     fn: (node, context) => `((${context.name(node.param)}) => ${context.block(node.body)})`,
     conditional: (node, context) =>
-      `(${context.expr(node.cond)} ? (() => ${context.block(node.then)})() : (() => ${context.block(node.else)})())`,
-    block: (node, context) => `(() => ${context.block(node.body)})()`,
+      `(${context.expr(node.cond)} ? ${context.iife(node.then)} : ${context.iife(node.else)})`,
+    block: (node, context) => context.iife(node.body),
   });

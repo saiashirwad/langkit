@@ -1,4 +1,4 @@
-import { type Check, check, fail } from "../check.ts";
+import { Check, check, fail } from "../check.ts";
 import { add, assign, pruneLink, variableNames } from "../inference.ts";
 
 export type Type =
@@ -63,22 +63,19 @@ export const row = (
 ): Row => ({ fields, tail });
 
 export const fresh = (level = 0): Check<Variable> =>
-  check(function*() {
-    return { kind: "variable" as const, level };
-  });
+  new Check(() => ({ ok: true, value: { kind: "variable", level } }));
 
 export const freshRow = (lacks: Iterable<string> = [], level = 0): Check<RowVariable> =>
-  check(function*() {
-    return { level, kind: "row-variable" as const, lacks: new Set(lacks) };
-  });
+  new Check(() => ({ ok: true, value: { kind: "row-variable", level, lacks: new Set(lacks) } }));
 
 const typeVariable = (value: Type): Variable | null => value.kind === "variable" ? value : null;
 const typeInstance = (variable: Variable): Type | undefined => variable.instance;
 
 export const prune = (type: Type): Type => pruneLink(type, typeVariable, typeInstance);
 export const flatten = (input: Row): Row => {
+  if (!input.tail?.instance) return input;
   const fields = new Map(input.fields);
-  let tail = input.tail;
+  let tail: RowVariable | null = input.tail;
   while (tail?.instance) {
     for (const [name, type] of tail.instance.fields) fields.set(name, type);
     tail = tail.instance.tail;
@@ -138,6 +135,24 @@ export const free = (type: Type, found = new Set<FreeVariable>()): Set<FreeVaria
   else if (type.kind === "data") { for (const arg of type.args) free(arg, found); }
   else if (type.kind === "forall") free(type.body, found);
   return found;
+};
+
+const occurs = (variable: Variable, input: Type): boolean => {
+  const type = prune(input);
+  switch (type.kind) {
+    case "variable":
+      return type === variable;
+    case "function":
+      return occurs(variable, type.param) || occurs(variable, type.result);
+    case "record":
+      return [...flatten(type.row).fields.values()].some((field) => occurs(variable, field));
+    case "data":
+      return type.args.some((arg) => occurs(variable, arg));
+    case "forall":
+      return occurs(variable, type.body);
+    default:
+      return false;
+  }
 };
 
 export const exclude = (input: Row, labels: Iterable<string>): Check<void> =>
@@ -218,7 +233,7 @@ const unifyTypes = (left: Type, right: Type): Check<void> =>
     const b = prune(right);
     if (a === b) return;
     if (a.kind === "variable") {
-      if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
+      if (occurs(a, b)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
       if (b.kind === "forall") {
         return yield* fail(
           "Cannot infer an impredicative type; add an explicit polymorphic annotation",
@@ -246,9 +261,8 @@ const unifyTypes = (left: Type, right: Type): Check<void> =>
       );
     } else if (a.kind === "generic" && b.kind === "generic" && a.id === b.id) return;
     else if (a.kind === "skolem" && b.kind === "skolem" && a.id === b.id) return;
-    else if (a.kind !== b.kind || !["number", "boolean", "string"].includes(a.kind)) {
-      return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
-    }
+    else if (a.kind === b.kind && (a.kind === "number" || a.kind === "boolean" || a.kind === "string")) return;
+    else return yield* fail(`Cannot unify ${show(a)} with ${show(b)}`);
   });
 
 export const unify = (left: Type, right: Type): Check<void> =>
@@ -274,6 +288,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Sch
 
 export const instantiate = (scheme: Scheme, level = 0): Check<Type> =>
   check(function*() {
+    if (scheme.variables.size === 0) return scheme.type;
     const replacements = new Map<Variable, Variable>();
     const rows = new Map<RowVariable, RowVariable>();
     const visitRow = (input: Row): Row => {

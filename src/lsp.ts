@@ -1,8 +1,7 @@
-import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
 import { TextDocument } from "vscode-languageserver-textdocument";
 import {
   createConnection,
+  type Diagnostic as LspDiagnostic,
   DiagnosticSeverity,
   MarkupKind,
   PositionEncodingKind,
@@ -10,11 +9,23 @@ import {
   TextDocuments,
   TextDocumentSyncKind,
 } from "vscode-languageserver/node";
-import { type Analysis, definitionAt, semanticTokens, type Token, tokenKinds, typeAt, unanalyzed } from "./analysis.ts";
-import type { Span } from "./diagnostic.ts";
+import {
+  type Analysis,
+  definitionAt,
+  referenceAt,
+  semanticTokens,
+  type Token,
+  tokenKinds,
+  typeAt,
+  unanalyzed,
+} from "./analysis.ts";
+import { type Diagnostic, diagnostic, site, type Span } from "./diagnostic.ts";
+import { readFileUri } from "./modules.ts";
+
+const kindIndex = new Map(tokenKinds.map((kind, index) => [kind, index]));
 
 /** LSP tokens cannot cross line endings; lengths and columns are UTF-16. */
-export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): number[] => {
+const encodeTokens = (document: TextDocument, tokens: readonly Token[]): number[] => {
   const source = document.getText();
   const parts: { line: number; character: number; length: number; type: number; }[] = [];
   for (const token of tokens) {
@@ -22,7 +33,7 @@ export const encodeTokens = (document: TextDocument, tokens: readonly Token[]): 
     const end = Math.max(start, Math.min(source.length, token.span.end));
     for (const match of source.slice(start, end).matchAll(/[^\r\n]+/g)) {
       const position = document.positionAt(start + match.index);
-      parts.push({ ...position, length: match[0].length, type: tokenKinds.indexOf(token.kind) });
+      parts.push({ ...position, length: match[0].length, type: kindIndex.get(token.kind)! });
     }
   }
   parts.sort((a, b) => a.line - b.line || a.character - b.character);
@@ -60,6 +71,7 @@ export const serve = <T>(
   const connection = createConnection(process.stdin, process.stdout);
   const documents = new TextDocuments(TextDocument);
   const analyses = new Map<string, Analysis<T>>();
+  const encoded = new Map<string, number[]>();
   const dependencies = new Map<string, Set<string>>();
   const range = (document: TextDocument, span: Span): Range => ({
     start: document.positionAt(span.start),
@@ -79,13 +91,7 @@ export const serve = <T>(
     },
   }));
 
-  const read = (uri: string): string => {
-    const open = documents.get(uri);
-    if (open) return open.getText();
-    const url = new URL(uri);
-    if (url.protocol !== "file:") throw new Error("Only local file imports are supported");
-    return readFileSync(fileURLToPath(url), "utf8");
-  };
+  const read = (uri: string): string => documents.get(uri)?.getText() ?? readFileUri(uri);
   const sourceDocument = (analysis: Analysis<T>, uri: string): TextDocument | undefined => {
     const open = documents.get(uri);
     if (open) return open;
@@ -94,6 +100,39 @@ export const serve = <T>(
     } catch {
       return undefined;
     }
+  };
+
+  /** Groups diagnostics by the document they report in, resolving related ranges against known sources. */
+  const route = (analysis: Analysis<T>, document: TextDocument): Map<string, LspDiagnostic[]> => {
+    const routed = new Map<string, LspDiagnostic[]>([[document.uri, []]]);
+    const sources = new Map<string, TextDocument | undefined>();
+    const source = (uri: string): TextDocument | undefined => {
+      if (!sources.has(uri)) sources.set(uri, sourceDocument(analysis, uri));
+      return sources.get(uri);
+    };
+    const locate = (error: Diagnostic): { uri: string; range: Range; } => {
+      const location = site(error, document.uri);
+      const target = location && source(location.uri);
+      return target && location
+        ? { uri: location.uri, range: range(target, location.span) }
+        : { uri: document.uri, range: range(document, error.span ?? { start: 0, end: 0 }) };
+    };
+    for (const error of analysis.diagnostics) {
+      const { uri, range: errorRange } = locate(error);
+      const relatedInformation = (error.related ?? []).flatMap(({ location, message }) => {
+        const target = source(location.uri);
+        return target ? [{ location: { uri: location.uri, range: range(target, location.span) }, message }] : [];
+      });
+      const item: LspDiagnostic = {
+        range: errorRange,
+        severity: DiagnosticSeverity.Error,
+        source: "langkit",
+        message: error.context.length ? `${error.message}\n${error.context.join(" > ")}` : error.message,
+        ...(relatedInformation.length ? { relatedInformation } : {}),
+      };
+      routed.set(uri, [...(routed.get(uri) ?? []), item]);
+    }
+    return routed;
   };
 
   const update = (document: TextDocument): void => {
@@ -108,55 +147,14 @@ export const serve = <T>(
       analysis = analyze(document.getText(), { uri: document.uri, read: trackedRead });
     } catch (error) {
       connection.console.error(`Analysis failed for ${document.uri}: ${String(error)}`);
-      analysis = unanalyzed([{ message: "Internal analysis error", context: [] }]);
+      analysis = unanalyzed([diagnostic("Internal analysis error")]);
     }
     for (const uri of analysis.dependencyUris ?? []) reads.add(uri);
     for (const uri of analysis.sources?.keys() ?? []) reads.add(uri);
     dependencies.set(document.uri, reads);
     analyses.set(document.uri, analysis);
-    type RoutedDiagnostic = {
-      range: Range;
-      severity: DiagnosticSeverity;
-      source: string;
-      message: string;
-      relatedInformation?: { location: { uri: string; range: Range; }; message: string; }[];
-    };
-    const diagnostics = new Map<string, RoutedDiagnostic[]>();
-    const sources = new Map<string, TextDocument | undefined>();
-    const source = (uri: string): TextDocument | undefined => {
-      if (!sources.has(uri)) sources.set(uri, sourceDocument(analysis, uri));
-      return sources.get(uri);
-    };
-    for (const error of analysis.diagnostics) {
-      const location = error.location ?? error.origin
-        ?? (error.span ? { uri: document.uri, span: error.span } : undefined);
-      const target = location ? source(location.uri) : document;
-      const uri = target && location ? location.uri : document.uri;
-      const localSpan = error.span ?? { start: 0, end: 0 };
-      const item: RoutedDiagnostic = {
-        range: target && location ? range(target, location.span) : range(document, localSpan),
-        severity: DiagnosticSeverity.Error,
-        source: "langkit",
-        message: error.context.length
-          ? `${error.message}\n${error.context.join(" > ")}`
-          : error.message,
-        ...(error.related
-          ? {
-            relatedInformation: error.related.flatMap(({ location: related, message }) => {
-              const relatedDocument = source(related.uri);
-              return relatedDocument
-                ? [{ location: { uri: related.uri, range: range(relatedDocument, related.span) }, message }]
-                : [];
-            }),
-          }
-          : {}),
-      };
-      const uriDiagnostics = diagnostics.get(uri) ?? [];
-      uriDiagnostics.push(item);
-      diagnostics.set(uri, uriDiagnostics);
-    }
-    if (!diagnostics.has(document.uri)) diagnostics.set(document.uri, []);
-    for (const [uri, items] of diagnostics) {
+    encoded.delete(document.uri);
+    for (const [uri, items] of route(analysis, document)) {
       const target = documents.get(uri);
       void connection.sendDiagnostics({
         uri,
@@ -191,6 +189,7 @@ export const serve = <T>(
 
   documents.onDidClose(({ document }) => {
     analyses.delete(document.uri);
+    encoded.delete(document.uri);
     dependencies.delete(document.uri);
     void connection.sendDiagnostics({ uri: document.uri, diagnostics: [] });
     refresh(document.uri, false);
@@ -205,12 +204,7 @@ export const serve = <T>(
     const definition = value ? undefined : definitionAt(analysis, offset);
     const type = value?.type ?? definition?.type;
     if (type === undefined) return null;
-    const reference = definition
-      ? analysis.references.find((candidate) =>
-        candidate.id === definition.id && candidate.span.start <= offset && offset <= candidate.span.end
-      )
-      : undefined;
-    const hoverSpan = value?.span ?? reference?.span ?? definition?.span;
+    const hoverSpan = value?.span ?? referenceAt(analysis, offset)?.span ?? definition?.span;
     if (!hoverSpan) return null;
     return {
       contents: { kind: MarkupKind.PlainText, value: show(type) },
@@ -232,7 +226,13 @@ export const serve = <T>(
   connection.languages.semanticTokens.on(({ textDocument }) => {
     const document = documents.get(textDocument.uri);
     const analysis = analyses.get(textDocument.uri);
-    return { data: document && analysis ? encodeTokens(document, semanticTokens(analysis)) : [] };
+    if (!document || !analysis) return { data: [] };
+    let data = encoded.get(textDocument.uri);
+    if (!data) {
+      data = encodeTokens(document, semanticTokens(analysis));
+      encoded.set(textDocument.uri, data);
+    }
+    return { data };
   });
 
   documents.listen(connection);

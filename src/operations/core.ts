@@ -1,5 +1,7 @@
-import type { Binding, Body, OperationFeature, OperationNode, OperationValue, Operator, Value } from "../ir.ts";
+import type { Binding, Body, OperationFeature, OperationNode, OperationValue, Value } from "../ir.ts";
 import { defineOperation, type OperationDescriptor } from "./descriptor.ts";
+
+export type Operator = "+" | "-" | "*" | "/" | ">" | "==";
 
 type Literal = OperationNode & { readonly kind: "literal"; readonly value: number | boolean | string; };
 type ReferenceNode<T> = OperationNode & { readonly kind: "ref"; readonly binding: Binding<T>; };

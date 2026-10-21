@@ -1,8 +1,7 @@
 import { extname } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { Diagnostic } from "../diagnostic.ts";
-import { type HostLanguage, project, type Projection } from "../host.ts";
-import { place } from "./place.ts";
+import { type Diagnostic, site } from "../diagnostic.ts";
+import { hostFor, type HostLanguage, project, type Projection } from "../host.ts";
 
 type MapperDiagnostic = {
   readonly messageText: string;
@@ -25,9 +24,9 @@ const emptyModule = "export {};\n";
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 const mapperDiagnostic = (diagnostic: Diagnostic, uri: string): readonly MapperDiagnostic[] => {
-  const site = place(diagnostic, uri);
-  if (site.kind === "elsewhere") return [];
-  const span = site.span ?? { start: 0, end: 0 };
+  const location = site(diagnostic, uri);
+  if (location && location.uri !== uri) return [];
+  const span = location?.span ?? { start: 0, end: 0 };
   return [{ messageText: diagnostic.message, start: span.start, length: span.end - span.start, code: 1 }];
 };
 
@@ -39,11 +38,11 @@ const failed = (messageText: string): TransformResult => ({
 });
 
 const transform = (
-  languages: ReadonlyMap<string, HostLanguage>,
+  languages: (fileName: string) => HostLanguage | undefined,
   fileName: string,
   content: string,
 ): TransformResult => {
-  const language = languages.get(extname(fileName));
+  const language = languages(fileName);
   if (!language) return failed(`No langkit host is registered for ${extname(fileName)} files`);
   const uri = pathToFileURL(fileName).href;
   try {
@@ -60,7 +59,7 @@ const transform = (
   }
 };
 
-const reply = (languages: ReadonlyMap<string, HostLanguage>, method: string, params: unknown): Reply => {
+const reply = (languages: (fileName: string) => HostLanguage | undefined, method: string, params: unknown): Reply => {
   switch (method) {
     case "initialize":
       return { result: { positionEncoding: "utf-16", diagnosticSource: "langkit" } };
@@ -84,7 +83,7 @@ export const serveContentMapper = (
     output: process.stdout,
   },
 ): void => {
-  const registry = new Map<string, HostLanguage>(languages.map((language) => [language.extension, language]));
+  const registry = hostFor(languages);
   const send = (message: Record<string, unknown>) => {
     const body = JSON.stringify({ jsonrpc: "2.0", ...message });
     io.output.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);

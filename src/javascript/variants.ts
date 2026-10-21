@@ -13,14 +13,14 @@ export const variantsJavaScript = <T>(descriptors: VariantDescriptors<T>) =>
         const bindings = branch.bindings
           .map((binding, index) => `const ${context.name(binding)} = ${temporary}.fields[${index}];`)
           .join(" ");
-        return `case ${JSON.stringify(branch.tag)}: { ${bindings} return (() => ${context.block(branch.body, 1)})(); }`;
+        return `case ${JSON.stringify(branch.tag)}: { ${bindings} return ${context.iife(branch.body, 1)}; }`;
       });
       if (node.fallback) {
         const binding = node.fallback.binding;
         branches.push(
-          `default: { ${binding ? `const ${context.name(binding)} = ${temporary};` : ""} return (() => ${
-            context.block(node.fallback.body, 1)
-          })(); }`,
+          `default: { ${binding ? `const ${context.name(binding)} = ${temporary};` : ""} return ${
+            context.iife(node.fallback.body, 1)
+          }; }`,
         );
       } else branches.push("default: throw new Error(\"Internal non-exhaustive match\");");
       return `((${temporary}) => { switch (${temporary}.tag) { ${branches.join(" ")} } })(${context.expr(node.value)})`;

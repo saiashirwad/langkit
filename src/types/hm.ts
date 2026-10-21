@@ -1,4 +1,4 @@
-import { type Check, check, fail } from "../check.ts";
+import { Check, check, fail } from "../check.ts";
 import { assign, pruneLink, variableNames } from "../inference.ts";
 
 export type Type =
@@ -12,10 +12,7 @@ export type Scheme = { readonly type: Type; readonly variables: ReadonlySet<Vari
 export const number: Type = { kind: "number" };
 export const boolean: Type = { kind: "boolean" };
 export const fn = (param: Type, result: Type): Type => ({ kind: "function", param, result });
-export const fresh = (): Check<Variable> =>
-  check(function*() {
-    return { kind: "variable" };
-  });
+export const fresh = (): Check<Variable> => new Check(() => ({ ok: true, value: { kind: "variable" } }));
 export const prune = (type: Type): Type =>
   pruneLink(type, (value) => value.kind === "variable" ? value : null, (variable) => variable.instance);
 
@@ -39,13 +36,19 @@ export const free = (input: Type, found = new Set<Variable>()): Set<Variable> =>
   return found;
 };
 
+const occurs = (variable: Variable, input: Type): boolean => {
+  const type = prune(input);
+  if (type.kind === "variable") return type === variable;
+  return type.kind === "function" && (occurs(variable, type.param) || occurs(variable, type.result));
+};
+
 const unifyTypes = (left: Type, right: Type): Check<void> =>
   check(function*() {
     const a = prune(left);
     const b = prune(right);
     if (a === b) return;
     if (a.kind === "variable") {
-      if (free(b).has(a)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
+      if (occurs(a, b)) return yield* fail(`Infinite type: ${show(a)} occurs in ${show(b)}`);
       yield* assign(a, "instance", b);
     } else if (b.kind === "variable") yield* unifyTypes(b, a);
     else if (a.kind === "function" && b.kind === "function") {
@@ -71,6 +74,7 @@ export const generalize = (type: Type, environment: Iterable<Scheme>): Check<Sch
 
 export const instantiate = (scheme: Scheme): Check<Type> =>
   check(function*() {
+    if (scheme.variables.size === 0) return scheme.type;
     const replacements = new Map<Variable, Variable>();
     const visit = (input: Type): Type => {
       const type = prune(input);

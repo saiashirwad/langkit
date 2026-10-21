@@ -187,23 +187,17 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
         if (expr.annotation) yield* subsume(target.param, parameter, current);
         const binding = code.binding(expr.param, parameter);
         yield* facts.define(binding, expr.paramSpan, "parameter");
-        const body = yield* code.body(function*() {
-          return yield* bind(
-            env,
-            [[expr.param, { binding, scheme: mono(parameter) }]],
-            checkExpr(expr.body, target.result),
-          );
-        });
+        const body = yield* code.body(bind(
+          env,
+          [[expr.param, { binding, scheme: mono(parameter) }]],
+          checkExpr(expr.body, target.result),
+        ));
         return code.fn(expected, binding, body);
       }
       if (expr.kind === "if") {
         const cond = yield* checkExpr(expr.cond, boolean);
-        const then = yield* code.body(function*() {
-          return yield* checkExpr(expr.then, expected);
-        });
-        const otherwise = yield* code.body(function*() {
-          return yield* checkExpr(expr.else, expected);
-        });
+        const then = yield* code.body(checkExpr(expr.then, expected));
+        const otherwise = yield* code.body(checkExpr(expr.else, expected));
         return code.conditional(expected, cond, then, otherwise);
       }
       if (expr.kind === "let") return yield* elaborateLet(expr, expected);
@@ -276,20 +270,16 @@ const elaborateMatch = (
       if (pattern.kind === "binding") {
         if (pattern.name === "_") {
           fallback = {
-            body: yield* code.body(function*() {
-              return yield* checkExpr(branch.body, result);
-            }),
+            body: yield* code.body(checkExpr(branch.body, result)),
           };
         } else {
           const binding = code.binding(pattern.name, value.type);
           yield* facts.define(binding, pattern.span);
-          const body = yield* code.body(function*() {
-            return yield* bind(
-              env,
-              [[pattern.name, { binding, scheme: mono(value.type) }]],
-              checkExpr(branch.body, result),
-            );
-          });
+          const body = yield* code.body(bind(
+            env,
+            [[pattern.name, { binding, scheme: mono(value.type) }]],
+            checkExpr(branch.body, result),
+          ));
           fallback = { binding, body };
         }
         continue;
@@ -327,9 +317,7 @@ const elaborateMatch = (
         type = arrow.result;
       }
       yield* unify(value.type, type).at(pattern.span);
-      const body = yield* code.body(function*() {
-        return yield* bind(env, entries, checkExpr(branch.body, result));
-      });
+      const body = yield* code.body(bind(env, entries, checkExpr(branch.body, result)));
       cases.push({ tag: constructor.tag, bindings, body });
     }
     if (!fallback) {
@@ -410,9 +398,9 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
           const type = expr.annotation ? yield* resolve(expr.annotation) : yield* fresh(current);
           const binding = code.binding(expr.param, type);
           yield* facts.define(binding, expr.paramSpan, "parameter");
-          const body = yield* code.body(function*() {
-            return yield* bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body));
-          });
+          const body = yield* code.body(
+            bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body)),
+          );
           return code.fn(fn(type, body.result.type), binding, body);
         }
         case "call": {
@@ -423,12 +411,8 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         }
         case "if": {
           const cond = yield* checkExpr(expr.cond, boolean);
-          const then = yield* code.body(function*() {
-            return yield* elaborate(expr.then);
-          });
-          const otherwise = yield* code.body(function*() {
-            return yield* checkExpr(expr.else, then.result.type);
-          });
+          const then = yield* code.body(elaborate(expr.then));
+          const otherwise = yield* code.body(checkExpr(expr.else, then.result.type));
           return code.conditional(then.result.type, cond, then, otherwise);
         }
         case "annotated":
@@ -438,10 +422,7 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       }
     }),
   );
-export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function*() {
-    return yield* elaborate(expr);
-  });
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
 const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> =>
   code.check(function*() {
     const existing = yield* get(definitions);

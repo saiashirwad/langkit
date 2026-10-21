@@ -40,23 +40,7 @@ export type Definition<T = unknown> = {
   readonly uri?: string;
 };
 
-export type DefinitionKind =
-  | "variable"
-  | "parameter"
-  | "function"
-  | "type"
-  | "model"
-  | "enum"
-  | "enumMember"
-  | "macro"
-  | "field"
-  | "class"
-  | "interface"
-  | "namespace"
-  | "property"
-  | "method"
-  | "constructor"
-  | "constant";
+export type DefinitionKind = Exclude<TokenKind, "keyword" | "number" | "operator" | "string">;
 
 export type Reference = { readonly id: symbol; readonly span: Span; };
 
@@ -87,11 +71,21 @@ export type TokenRule = {
   readonly kind: TokenKind | ((text: string) => TokenKind | undefined);
 };
 
+const compiled = new WeakMap<readonly TokenRule[], readonly TokenRule[]>();
+const scannersFor = (rules: readonly TokenRule[]): readonly TokenRule[] => {
+  let scanners = compiled.get(rules);
+  if (!scanners) {
+    scanners = rules.map((rule) => ({
+      ...rule,
+      pattern: new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y"),
+    }));
+    compiled.set(rules, scanners);
+  }
+  return scanners;
+};
+
 export const highlight = (source: string, rules: readonly TokenRule[]): readonly Token[] => {
-  const scanners = rules.map((rule) => ({
-    ...rule,
-    pattern: new RegExp(rule.pattern.source, rule.pattern.flags.replace(/[gy]/g, "") + "y"),
-  }));
+  const scanners = scannersFor(rules);
   const tokens: Token[] = [];
   for (let offset = 0; offset < source.length;) {
     let consumed = false;
@@ -112,17 +106,28 @@ export const highlight = (source: string, rules: readonly TokenRule[]): readonly
   return tokens;
 };
 
+type Located<T> = Typed<T> & { readonly document: string | undefined; };
 type Facts<T> = {
-  types: (Typed<T> & { readonly document: string | undefined; })[];
+  types: Located<T>[];
   definitions: Definition<T>[];
   references: Reference[];
 };
 
-type Binding<T> = {
+type Declared<T> = {
   readonly id: symbol;
   readonly name: string;
   readonly type?: T;
   readonly uri?: string;
+};
+
+/** A type recorded strictly around a failing span is unreliable, so it is dropped. */
+const enclosesError = <T>(value: Located<T>, error: Diagnostic): boolean => {
+  const location = error.location ?? error.origin;
+  const span = location?.span ?? error.span;
+  if (!span || location?.uri !== value.document) return false;
+  const inside = value.span.start <= span.start && span.end <= value.span.end;
+  const same = value.span.start === span.start && value.span.end === span.end;
+  return inside && !same;
 };
 
 /** Optional observation: without collect, these operations do not retain facts. */
@@ -147,11 +152,7 @@ export const create = <T>() => {
     typed: (type: T, span: Span): Check<void> =>
       record((facts, document) => facts.types.push({ type, span, document })),
 
-    define: (
-      binding: Binding<T>,
-      span: Span,
-      kind: DefinitionKind = "variable",
-    ): Check<void> =>
+    define: (binding: Declared<T>, span: Span, kind: DefinitionKind = "variable"): Check<void> =>
       record((facts, document) => {
         facts.definitions.push({ ...binding, span, kind });
         if (binding.type !== undefined) facts.types.push({ type: binding.type, span, document });
@@ -170,15 +171,10 @@ export const create = <T>() => {
       const facts: Facts<T> = { types: [], definitions: [], references: [] };
       const selected = state(() => facts, checkpoint);
       const result = run(within(collecting, () => selected, body));
-      const types = facts.types.filter((value) =>
-        result.success || !result.errors.some((diagnostic) => {
-          const location = diagnostic.location ?? diagnostic.origin;
-          const errorSpan = location?.span ?? diagnostic.span;
-          if (!errorSpan || value.span.start > errorSpan.start || value.span.end < errorSpan.end) return false;
-          if (value.span.start === errorSpan.start && value.span.end === errorSpan.end) return false;
-          return value.document === location?.uri;
-        })
-      ).map(({ type, span }) => ({ type, span }));
+      const errors = result.success ? [] : result.errors;
+      const types = facts.types
+        .filter((value) => !errors.some((error) => enclosesError(value, error)))
+        .map(({ type, span }) => ({ type, span }));
       return {
         result,
         analysis: {
@@ -208,11 +204,11 @@ export const typeAt = <T>(analysis: Analysis<T>, offset: number): Typed<T> | und
   return found;
 };
 
-export const definitionAt = <T>(
-  analysis: Analysis<T>,
-  offset: number,
-): Definition<T> | undefined => {
-  const reference = analysis.references.find((value) => contains(value.span, offset));
+export const referenceAt = <T>(analysis: Analysis<T>, offset: number): Reference | undefined =>
+  analysis.references.find((value) => contains(value.span, offset));
+
+export const definitionAt = <T>(analysis: Analysis<T>, offset: number): Definition<T> | undefined => {
+  const reference = referenceAt(analysis, offset);
   return reference
     ? analysis.definitions.find((value) => value.id === reference.id)
     : analysis.definitions.find((value) => !value.uri && contains(value.span, offset));
@@ -221,17 +217,21 @@ export const definitionAt = <T>(
 /** Refine lexical tokens without introducing overlapping or duplicate ranges. */
 export const semanticTokens = <T>(analysis: Analysis<T>): readonly Token[] => {
   const definitions = new Map(analysis.definitions.map((value) => [value.id, value]));
-  const roles = new Map<string, TokenKind>();
-  const key = (span: Span) => `${span.start}:${span.end}`;
+  const roles = new Map<number, Map<number, TokenKind>>();
+  const assign = (span: Span, kind: TokenKind) => {
+    const ends = roles.get(span.start) ?? new Map<number, TokenKind>();
+    ends.set(span.end, kind);
+    roles.set(span.start, ends);
+  };
   for (const definition of analysis.definitions) {
-    if (!definition.uri) roles.set(key(definition.span), definition.kind);
+    if (!definition.uri) assign(definition.span, definition.kind);
   }
   for (const reference of analysis.references) {
     const definition = definitions.get(reference.id);
-    if (definition) roles.set(key(reference.span), definition.kind);
+    if (definition) assign(reference.span, definition.kind);
   }
   return analysis.tokens.map((token) => ({
     ...token,
-    kind: roles.get(key(token.span)) ?? token.kind,
+    kind: roles.get(token.span.start)?.get(token.span.end) ?? token.kind,
   }));
 };

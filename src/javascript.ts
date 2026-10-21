@@ -4,6 +4,8 @@ import type { DescriptorNode, DescriptorRecord, DescriptorType } from "./operati
 export type JavaScriptContext<T> = {
   readonly expr: (value: Value<T>) => string;
   readonly block: (body: Body<T>, indent?: number) => string;
+  /** A block wrapped as an immediately invoked arrow, so it reads as an expression. */
+  readonly iife: (body: Body<T>, indent?: number) => string;
   readonly name: (binding: Binding<T>) => string;
   readonly fresh: (prefix: string) => string;
 };
@@ -62,17 +64,19 @@ export const createJavaScriptEmitter = <T>(...sets: readonly (readonly JavaScrip
         `${"  ".repeat(depth)}}`,
       ].join("\n");
     };
+    const iife = (body: Body<T>, depth: number): string => `(() => ${block(body, depth)})()`;
     const expr = (value: Value<T>, depth: number): string => {
       const handler = handlers.get(value.operationId);
       if (!handler) throw new Error(`Missing JavaScript handler for operation: ${value.node.kind}`);
       return handler.emit(value.node, {
         expr: (child) => expr(child, depth),
         block: (body, indent = 0) => block(body, depth + indent),
+        iife: (body, indent = 0) => iife(body, depth + indent),
         name,
         fresh,
       });
     };
-    return `(() => ${block(program.body, 0)})()\n`;
+    return `${iife(program.body, 0)}\n`;
   };
   return { emit };
 };

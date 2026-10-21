@@ -259,9 +259,7 @@ const rules: RuleTable<Expr, Type, Value<Type>> = {
     *synth(expr) {
       return yield* bindings.parameter(expr.param, yield* fresh(), expr.paramSpan, (param) =>
         code.check(function*() {
-          const body = yield* code.body(function*() {
-            return yield* elaborate(expr.body);
-          });
+          const body = yield* code.body(elaborate(expr.body));
           return synthesized(code.fn(fn(param.type, body.result.type), param, body));
         }));
     },
@@ -283,12 +281,8 @@ const rules: RuleTable<Expr, Type, Value<Type>> = {
     *synth(expr) {
       const cond = yield* elaborate(expr.cond);
       yield* unify(cond.type, boolean).at(expr.cond.span).recover();
-      const then = yield* code.body(function*() {
-        return yield* elaborate(expr.then);
-      });
-      const otherwise = yield* code.body(function*() {
-        return yield* elaborate(expr.else);
-      });
+      const then = yield* code.body(elaborate(expr.then));
+      const otherwise = yield* code.body(elaborate(expr.else));
       yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
       return synthesized(code.conditional(then.result.type, cond, then, otherwise));
     },
@@ -304,10 +298,7 @@ const judgments = createJudgments(rules, {
 });
 const elaborate = (expr: Expr): Check<Value<Type>> => judgments.synth(expr).map(({ term }) => code.at(term, expr.span));
 
-export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function*() {
-    return yield* elaborate(expr);
-  });
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => code.body(elaborate(expr));
 
 export type Compiled = {
   readonly type: Type;

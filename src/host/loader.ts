@@ -1,32 +1,27 @@
-import { readFileSync } from "node:fs";
 import { registerHooks } from "node:module";
-import { extname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type Diagnostic, render } from "../diagnostic.ts";
-import type { HostLanguage } from "../host.ts";
-import { place } from "./place.ts";
+import { type Diagnostic, render, site } from "../diagnostic.ts";
+import { hostFor, type HostLanguage } from "../host.ts";
+import { readFileUri } from "../modules.ts";
 
 const describe = (diagnostic: Diagnostic, url: string, source: string): string => {
-  const site = place(diagnostic, url);
-  if (site.kind === "elsewhere") return `${site.location.uri}: ${render(diagnostic)}`;
-  const file = fileURLToPath(url);
-  return site.span
-    ? `${file}: ${render({ ...diagnostic, span: site.span }, source)}`
-    : `${file}: ${render(diagnostic)}`;
+  const location = site(diagnostic, url);
+  if (location && location.uri !== url) return `${location.uri}: ${render(diagnostic)}`;
+  return `${fileURLToPath(url)}: ${render(location ? { ...diagnostic, span: location.span } : diagnostic, source)}`;
 };
 
 export const registerHostLanguages = (languages: readonly HostLanguage[]): void => {
-  const registry = new Map<string, HostLanguage>(languages.map((language) => [language.extension, language]));
+  const language = hostFor(languages);
   registerHooks({
     resolve(specifier, context, nextResolve) {
-      if (!registry.has(extname(specifier)) || context.parentURL === undefined) return nextResolve(specifier, context);
+      if (!language(specifier) || context.parentURL === undefined) return nextResolve(specifier, context);
       return { url: new URL(specifier, context.parentURL).href, format: "module", shortCircuit: true };
     },
     load(url, context, nextLoad) {
-      const language = url.startsWith("file:") ? registry.get(extname(fileURLToPath(url))) : undefined;
-      if (!language) return nextLoad(url, context);
-      const source = readFileSync(fileURLToPath(url), "utf8");
-      const hosted = language.host(source, url);
+      const host = url.startsWith("file:") ? language(fileURLToPath(url)) : undefined;
+      if (!host) return nextLoad(url, context);
+      const source = readFileUri(url);
+      const hosted = host.host(source, url);
       if (hosted.javascript === undefined || hosted.diagnostics.length > 0) {
         throw new SyntaxError(hosted.diagnostics.map((diagnostic) => describe(diagnostic, url, source)).join("\n"));
       }
