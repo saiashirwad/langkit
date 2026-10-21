@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync } from "node:fs";
+import { type Dirent, readdirSync, readFileSync } from "node:fs";
 import { dirname, extname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { type Diagnostic, site } from "../diagnostic.ts";
@@ -61,8 +61,24 @@ const transform = (
   }
 };
 
+const entries = (directory: string): Dirent[] => {
+  try {
+    return readdirSync(directory, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+};
+
+const contents = (file: string): Buffer | undefined => {
+  try {
+    return readFileSync(file);
+  } catch {
+    return undefined;
+  }
+};
+
 const guestFiles = (directory: string, extensions: ReadonlySet<string>): string[] =>
-  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+  entries(directory).flatMap((entry) => {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
       return entry.name === "node_modules" || entry.name.startsWith(".") ? [] : guestFiles(path, extensions);
@@ -71,10 +87,10 @@ const guestFiles = (directory: string, extensions: ReadonlySet<string>): string[
   });
 
 /** A guest file's projection can read other guest files, so any change on disk reopens the project and retransforms it. */
-const openProject = (configFileName: string, extensions: ReadonlySet<string>) => {
-  const watchedFiles = guestFiles(dirname(configFileName), extensions).sort();
+const openProject = (configFileName: string | undefined, extensions: ReadonlySet<string>) => {
+  const watchedFiles = configFileName ? guestFiles(dirname(configFileName), extensions).sort() : [];
   const identity = createHash("sha256");
-  for (const file of watchedFiles) identity.update(file).update("\0").update(readFileSync(file)).update("\0");
+  for (const file of watchedFiles) identity.update(file).update("\0").update(contents(file) ?? "").update("\0");
   return { watchedFiles, configIdentity: identity.digest("hex") };
 };
 
@@ -89,9 +105,10 @@ const reply = (
       return { result: { positionEncoding: "utf-16", diagnosticSource: "langkit" } };
     case "openProject":
       return {
-        result: isRecord(params) && typeof params.configFileName === "string" && params.configFileName
-          ? openProject(params.configFileName, extensions)
-          : {},
+        result: openProject(
+          isRecord(params) && typeof params.configFileName === "string" ? params.configFileName : undefined,
+          extensions,
+        ),
       };
     case "closeProject":
       return { result: null };
