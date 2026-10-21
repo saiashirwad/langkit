@@ -112,6 +112,7 @@ try {
     processId: process.pid,
     rootUri,
     workspaceFolders: [{ uri: rootUri, name: "langkit" }],
+    initializationOptions: { runExternalCode: true },
     capabilities: {
       general: { positionEncodings: ["utf-16"] },
       textDocument: {

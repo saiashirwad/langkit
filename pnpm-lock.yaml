@@ -24,6 +24,9 @@ importers:
       dprint:
         specifier: 0.62.0
         version: 0.62.0
+      langkit-content-mapper:
+        specifier: link:./content-mapper
+        version: link:content-mapper
       typescript:
         specifier: 7.1.0-beta
         version: 7.1.0-beta

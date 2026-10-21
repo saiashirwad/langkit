@@ -22,6 +22,7 @@ export function compile(config: string, extra: string[] = []) {
     "false",
     "--incremental",
     "false",
+    "--runExternalCode",
     ...extra,
   ], { cwd: root, encoding: "utf8", timeout: 120_000 });
   if (result.error) throw result.error;

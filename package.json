@@ -38,7 +38,7 @@
   "scripts": {
     "fmt": "dprint fmt",
     "fmt:check": "dprint check",
-    "typecheck": "tsc --noEmit",
+    "typecheck": "tsc --noEmit --runExternalCode",
     "test": "node --test tests/*.test.ts",
     "type:contracts": "node tools/type-contracts.ts",
     "editor:check": "node tools/editor-check.ts",
@@ -71,6 +71,7 @@
   "devDependencies": {
     "@types/node": "^26.1.1",
     "dprint": "0.62.0",
+    "langkit-content-mapper": "link:./content-mapper",
     "typescript": "7.1.0-beta"
   },
   "engines": {
