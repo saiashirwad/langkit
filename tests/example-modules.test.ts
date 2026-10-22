@@ -1,10 +1,10 @@
 import { definitionAt, typeAt } from "langkit/analysis";
+import { loadModules } from "langkit/modules";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { runInNewContext } from "node:vm";
 import { parseImports } from "../examples/advanced/advanced-imports.ts";
-import { loadModules } from "../examples/advanced/advanced-modules.ts";
 import * as advanced from "../examples/advanced/advanced.ts";
 
 const extension = "advanced";

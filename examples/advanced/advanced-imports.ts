@@ -1,5 +1,5 @@
+import type { ImportParser } from "langkit/modules";
 import { commit, createLexemes, many, parsePrefixResult, parser, regex } from "langkit/parse";
-import type { ImportParser } from "./advanced-modules.ts";
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*|--[^\r\n]*)*/),

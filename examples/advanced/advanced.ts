@@ -17,6 +17,7 @@ import { type Analysis, create as createAnalysis, highlight, unanalyzed } from "
 import type { Binding, Body, Declaration, Value } from "langkit/ir";
 import * as ir from "langkit/ir";
 import * as javascript from "langkit/javascript";
+import { loadModules, type ModuleGraph, type ModuleOptions } from "langkit/modules";
 import { parseResult } from "langkit/parse";
 import {
   boolean,
@@ -50,7 +51,6 @@ import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
 import { parseImports } from "./advanced-imports.ts";
-import { loadModules, type ModuleGraph, type ModuleOptions } from "./advanced-modules.ts";
 import { type DataDecl, type Expr, type Module, program, tokens, type TypeExpr } from "./advanced-syntax.ts";
 
 export { show, type Type } from "langkit/types/higher-rank";

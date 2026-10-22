@@ -1,6 +1,6 @@
+import { type ImportParser, loadModules } from "langkit/modules";
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { type ImportParser, loadModules } from "../examples/advanced/advanced-modules.ts";
 
 const root = "file:///workspace/main.strict";
 const useImports: ImportParser = (source) => ({

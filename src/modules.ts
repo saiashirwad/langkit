@@ -1,7 +1,8 @@
-import { type Diagnostic, type Result, type SourceLocation, type Span, withDocument } from "langkit";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import type { Result } from "./check.ts";
+import { type Diagnostic, type SourceLocation, type Span, withDocument } from "./diagnostic.ts";
 
 export type ModuleOptions = { readonly uri?: string; readonly read?: (uri: string) => string; };
 export type ImportDirective = { readonly path: string; readonly span: Span; };

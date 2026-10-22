@@ -14,7 +14,8 @@
     "./lsp": "./src/lsp.ts",
     "./host": "./src/host.ts",
     "./host/content-mapper": "./src/host/content-mapper.ts",
-    "./host/loader": "./src/host/loader.ts"
+    "./host/loader": "./src/host/loader.ts",
+    "./modules": "./src/modules.ts"
   },
   "scripts": {
     "fmt": "dprint fmt",
