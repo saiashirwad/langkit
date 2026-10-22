@@ -32,7 +32,9 @@
     "advanced": "node examples/advanced/advanced.ts",
     "advanced:lsp": "node examples/advanced/advanced-lsp.ts --stdio",
     "schema": "node examples/schema/schema.ts",
-    "schema:lsp": "node examples/schema/schema-lsp.ts --stdio"
+    "schema:lsp": "node examples/schema/schema-lsp.ts --stdio",
+    "machine": "node examples/machine/machine.ts",
+    "machine:lsp": "node examples/machine/machine-lsp.ts --stdio"
   },
   "dependencies": {
     "parserator": "0.4.0",
