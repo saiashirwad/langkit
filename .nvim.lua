@@ -10,10 +10,11 @@ vim.filetype.add({
     [vim.pesc(root) .. "/.*%.schema"] = "schema",
     [vim.pesc(root) .. "/.*%.domain"] = "domain",
     [vim.pesc(root) .. "/.*%.grammar"] = "grammar",
+    [vim.pesc(root) .. "/.*%.reactor"] = "reactor",
   },
 })
 
-for _, language in ipairs({ "toy", "hm", "advanced", "schema", "domain", "grammar" }) do
+for _, language in ipairs({ "toy", "hm", "advanced", "schema", "domain", "grammar", "reactor" }) do
   vim.lsp.config(language, {
     cmd = { "node", root .. "/examples/" .. language .. "/" .. language .. "-lsp.ts", "--stdio" },
     filetypes = { language },

@@ -1,8 +1,11 @@
-import { definitionAt, typeAt } from "langkit/analysis";
+import { definitionAt, semanticTokens, typeAt } from "langkit/analysis";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import type { Module } from "../examples/reactor/reactor-model.ts";
+import { fileURLToPath } from "node:url";
 import { analyze, checkSource } from "../examples/reactor/reactor.ts";
 
 const player = readFileSync(new URL("../examples/reactor/player.reactor", import.meta.url), "utf8");
@@ -16,7 +19,7 @@ const diagnose = (source: string) => {
   }));
 };
 
-const moduleOf = (source: string): Module => {
+const moduleOf = (source: string) => {
   const result = checkSource(source);
   assert.ok(result.success, result.success ? "" : result.errors.map(({ message }) => message).join("\n"));
   return result.value;
@@ -564,4 +567,71 @@ test("a machine's nodes come after every node they read, whatever order they are
     }
     assert.ok(order.indexOf("clip") < order.indexOf("steps"), order.join(" "));
   }
+});
+
+test("semantic tokens tell inputs, cells, signals, members and keywords apart", () => {
+  const tokens = semanticTokens(analyze(player));
+  const kind = (text: string, from = 0) => tokens.find(({ span }) => span.start === player.indexOf(text, from))?.kind;
+  assert.equal(kind("press :"), "method");
+  assert.equal(kind("press if"), "method");
+  assert.equal(kind("steps :"), "property");
+  assert.equal(kind("clip :", player.indexOf("signal")), "function");
+  assert.equal(kind("clip c"), "function");
+  assert.equal(kind("Half", player.indexOf("unless")), "enumMember");
+  assert.equal(kind("unless"), "keyword");
+  assert.equal(kind("..3"), "operator");
+});
+
+test("cli: pnpm reactor summarizes a clean file, and prints the overflow and fails on the broken one", () => {
+  const directory = mkdtempSync(join(tmpdir(), "reactor-"));
+  try {
+    const script = fileURLToPath(new URL("../examples/reactor/reactor.ts", import.meta.url));
+    writeFileSync(join(directory, "player.reactor"), player);
+    writeFileSync(
+      join(directory, "broken.reactor"),
+      edit("      [a, b, _]            ->  [a, b, Loop(c)]\n", "", player),
+    );
+    const cli = (name: string) => spawnSync(process.execPath, [script, name], { cwd: directory, encoding: "utf8" });
+    const passing = cli("player.reactor");
+    assert.equal(passing.status, 0, passing.stderr);
+    assert.equal(
+      passing.stdout,
+      "Player: 2 inputs, 4 cells, 1 signal, 3 properties (properties are not model checked yet)\n",
+    );
+    const failing = cli("broken.reactor");
+    assert.equal(failing.status, 1);
+    assert.equal(failing.stdout, "");
+    assert.equal(
+      failing.stderr,
+      [
+        "broken.reactor line 23, column 32: steps holds at most 3, but this row can make it hold 4",
+        "      [..s]                ->  [..s, Loop(c)]",
+        "                               ^^^^^^^^^^^^^^",
+        "",
+      ].join("\n"),
+    );
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
+});
+
+test("outside examples/reactor, only reactor.ts is imported", () => {
+  const root = fileURLToPath(new URL("..", import.meta.url));
+  const files = (directory: string): readonly string[] =>
+    readdirSync(join(root, directory)).flatMap((name) => {
+      const path = join(directory, name);
+      if (statSync(join(root, path)).isDirectory()) {
+        return name === "node_modules" || path === "examples/reactor"
+          ? []
+          : files(path);
+      }
+      return name.endsWith(".ts") ? [path] : [];
+    });
+  const reaching = ["src", "examples", "tests", "tools", "content-mapper"].flatMap(files).flatMap((path) =>
+    [...readFileSync(join(root, path), "utf8").matchAll(/from "([^"]*reactor\/[^"]*)"/g)].map(([, specifier]) =>
+      `${path}: ${specifier}`
+    )
+  );
+  assert.deepEqual(reaching.filter((use) => !use.endsWith("reactor/reactor.ts")), []);
+  assert.ok(reaching.length > 0);
 });

@@ -58,13 +58,11 @@ const list = (names: readonly string[]): string =>
   names.length < 3 ? names.join(" and ") : `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
 
 /** Every name an item mentions, whatever it turns out to mean. */
-const mentions = (node: unknown, into = new Set<string>()): ReadonlySet<string> => {
-  if (Array.isArray(node)) { for (const child of node) mentions(child, into); }
-  else if (typeof node === "object" && node !== null) {
-    if ("kind" in node && node.kind === "Name" && "name" in node) into.add(String(node.name));
-    else for (const child of Object.values(node)) mentions(child, into);
-  }
-  return into;
+const mentions = (node: unknown): readonly string[] => {
+  if (Array.isArray(node)) return node.flatMap(mentions);
+  if (typeof node !== "object" || node === null) return [];
+  if ("kind" in node && node.kind === "Name" && "name" in node) return [String(node.name)];
+  return Object.values(node).flatMap(mentions);
 };
 
 /**
@@ -327,7 +325,7 @@ export const elaborateMachine = (
     const nodes: Node[] = [];
     const unknownCarriers = declaration.items.some((item) => item.kind === "input" && broken.has(item.name.name));
     for (const declared of declarations) {
-      if ([...mentions(declared.item)].some((name) => broken.has(name))) continue;
+      if (mentions(declared.item).some((name) => broken.has(name))) continue;
       if (unknownCarriers && declared.item.kind === "cell" && declared.item.init.kind === "last") continue;
       if (declared.kind === "input") {
         inputs.push(declared.entity);
@@ -338,12 +336,12 @@ export const elaborateMachine = (
         : yield* attempt(signal(env, declared.item, declared.entity));
       if (node) nodes.push(node);
     }
-    const written = declarations.filter(({ kind }) => kind !== "input").length;
+    const complete = nodes.length === declarations.filter(({ kind }) => kind !== "input").length;
     const { order, cycles } = causality(nodes);
-    if (nodes.length === written) { for (const cycle of cycles) yield* attempt(error(cycle[0], showCycle(cycle))); }
+    for (const cycle of complete ? cycles : []) yield* attempt(error(cycle[0], showCycle(cycle)));
     const properties: Property[] = [];
     for (const item of declaration.items) {
-      if (item.kind !== "property" || [...mentions(item)].some((name) => broken.has(name))) continue;
+      if (item.kind !== "property" || mentions(item).some((name) => broken.has(name))) continue;
       const checked = yield* attempt(property({ ...env, moment: "property" }, item, properties));
       if (checked) properties.push(checked);
     }

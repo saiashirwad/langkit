@@ -1,5 +1,8 @@
-import { type Check, check, type Result } from "langkit";
+import { type Check, check, render, type Result } from "langkit";
 import { type Analysis, highlight, unanalyzed } from "langkit/analysis";
+import { readFileSync } from "node:fs";
+import { relative, resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { type DataType, type TypeDecl, type TypeKey, typeKey } from "../data/data-model.ts";
 import {
   attempt,
@@ -15,7 +18,7 @@ import {
   typescript,
 } from "../data/data-types.ts";
 import { elaborateMachine, hover, type MachineDeclaration } from "./machine.ts";
-import type { Module } from "./reactor-model.ts";
+import type { Machine, Module } from "./reactor-model.ts";
 import { lowerDeclaration, parse, tokens } from "./reactor-syntax.ts";
 import type * as G from "./reactor.grammar";
 import { constructors } from "./values.ts";
@@ -129,3 +132,28 @@ export const analyze = (source: string, options: Options = {}): Analysis<Type> =
   if (!parsed.success) return unanalyzed(parsed.errors, lexical);
   return facts.collect(elaborate(uriOf(options), parsed.value), lexical).analysis;
 };
+
+const count = (n: number, one: string, many = `${one}s`): string => `${n} ${n === 1 ? one : many}`;
+
+const summary = ({ name, inputs, nodes, properties }: Machine): string => {
+  const cells = nodes.filter(({ kind }) => kind === "cell").length;
+  const counts = [
+    count(inputs.length, "input"),
+    count(cells, "cell"),
+    count(nodes.length - cells, "signal"),
+    count(properties.length, "property", "properties"),
+  ];
+  return `${name.name}: ${counts.join(", ")} (properties are not model checked yet)`;
+};
+
+if (import.meta.main) {
+  const file = process.argv[2] ? pathToFileURL(resolve(process.argv[2])) : new URL("./player.reactor", import.meta.url);
+  const path = relative(process.cwd(), fileURLToPath(file));
+  const source = readFileSync(file, "utf8");
+  const result = checkSource(source, { uri: file.href });
+  if (result.success) { for (const machine of result.value.machines) console.log(summary(machine)); }
+  else {
+    for (const error of result.errors) console.error(`${path} ${render(error, source)}`);
+    process.exitCode = 1;
+  }
+}
