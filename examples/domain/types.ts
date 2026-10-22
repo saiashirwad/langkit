@@ -1,21 +1,24 @@
 import { type Check, check, pure } from "langkit";
 import {
   type DataType,
+  type Enum,
   type Field,
   isScalar,
   showType,
   showTypeDecl,
+  type Tagged,
   type TypeDecl,
   type TypeKey,
   type Universe,
+  type Variant,
 } from "./domain-model.ts";
-import type { Declaration, Entry, Field as Written, Name, TypeExpr } from "./domain-syntax.ts";
+import type { Declaration, Entry, Field as Written, Member, Name, TypeExpr } from "./domain-syntax.ts";
 import { attempt, type Binder, error, facts, reserved, type Scope } from "./scope.ts";
 
-export type TypeDeclaration = Extract<Declaration, { readonly kind: "brand" | "enum" | "record"; }>;
+export type TypeDeclaration = Extract<Declaration, { readonly kind: "brand" | "union" | "record"; }>;
 
 /** What each declaration becomes in TypeScript, for semantic tokens. */
-const definitionKind = { brand: "type", enum: "enum", record: "interface" } as const;
+const definitionKind = { brand: "type", enum: "enum", tagged: "enum", record: "interface" } as const;
 
 const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
   switch (kind) {
@@ -27,6 +30,8 @@ const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
       return "a brand";
     case "enum":
       return "an enum";
+    case "tagged":
+      return "a tagged union";
     case "record":
       return "a record";
   }
@@ -110,6 +115,46 @@ export const collect = (
     return fields;
   });
 
+const enumeration = (declared: Omit<Enum, "kind" | "members">, members: readonly Member[]): Check<Enum> =>
+  check(function*() {
+    for (const member of members) {
+      yield* facts.define(
+        { id: Symbol(member.name.name), name: member.name.name, type: declared.name.name },
+        member.name.span,
+        "enumMember",
+      );
+    }
+    return { kind: "enum", ...declared, members: members.map((member) => member.name) };
+  });
+
+/**
+ * Each variant becomes an interface inside `namespace PayMethod`, so its name follows the state rules, and `tag`
+ * is the discriminant, so no variant may have a field of that name.
+ */
+const tagged = (scope: Scope, declared: Omit<Tagged, "kind" | "variants">, members: readonly Member[]): Check<Tagged> =>
+  check(function*() {
+    const variants: Variant[] = [];
+    for (const member of members) {
+      const { name } = member;
+      if (reserved.type.has(name.name)) {
+        yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
+      }
+      if (scope.top.has(name.name)) yield* attempt(error(name, `Duplicate declaration: ${name.name}`));
+      const fields = yield* collect(scope, name, asEntries(member.fields ?? []), "property");
+      for (const field of fields.filter((field) => field.name.name === "tag")) {
+        yield* attempt(error(field.name, "TypeScript cannot represent tag, a variant field name"));
+      }
+      const variant: Variant = { id: Symbol(name.name), name, fields };
+      yield* facts.define(
+        { id: variant.id, name: name.name, type: `${declared.name.name}.${name.name}` },
+        name.span,
+        "enumMember",
+      );
+      variants.push(variant);
+    }
+    return { kind: "tagged", ...declared, variants };
+  });
+
 /**
  * Brands, enums and records of one file. Records resolve after every name in the file is bound. A brand wraps a
  * scalar: over a record it would add nothing a record does not already have.
@@ -132,21 +177,18 @@ export const elaborateTypes = (
           type = { kind: "brand", id, key, uri, name, underlying: underlying.name };
           break;
         }
-        case "enum": {
-          const members: Name[] = [];
+        case "union": {
+          const members: Member[] = [];
           for (const member of declaration.members) {
-            if (members.some((seen) => seen.name === member.name)) {
-              yield* attempt(error(member, `Duplicate member: ${name.name}.${member.name}`));
+            if (members.some((seen) => seen.name.name === member.name.name)) {
+              yield* attempt(error(member.name, `Duplicate member: ${name.name}.${member.name.name}`));
               continue;
             }
             members.push(member);
-            yield* facts.define(
-              { id: Symbol(member.name), name: member.name, type: name.name },
-              member.span,
-              "enumMember",
-            );
           }
-          type = { kind: "enum", id, key, uri, name, members };
+          type = members.every(({ fields }) => fields === undefined)
+            ? yield* enumeration({ id, key, uri, name }, members)
+            : yield* tagged(scope, { id, key, uri, name }, members);
           break;
         }
         case "record": {
@@ -169,6 +211,19 @@ export const elaborateTypes = (
 export const typeNames = (type: TypeExpr): readonly Name[] =>
   type.kind === "named" ? [type.name] : typeNames(type.kind === "list" ? type.element : type.inner);
 
+/** The fields a value of this type carries, across every variant. */
+export const fieldsOf = (type: TypeDecl): readonly Field[] => {
+  switch (type.kind) {
+    case "brand":
+    case "enum":
+      return [];
+    case "tagged":
+      return type.variants.flatMap(({ fields }) => fields);
+    case "record":
+      return type.fields;
+  }
+};
+
 /** Every declaration `roots` mention, transitively, in discovery order: the runtime's decode tables. */
 export const closure = (universe: Universe, roots: readonly DataType[]): readonly TypeDecl[] => {
   const found = new Map<TypeKey, TypeDecl>();
@@ -180,7 +235,7 @@ export const closure = (universe: Universe, roots: readonly DataType[]): readonl
         if (found.has(type.key)) return;
         const declaration = universe.get(type.key)!;
         found.set(type.key, declaration);
-        if (declaration.kind === "record") { for (const field of declaration.fields) visit(field.type); }
+        for (const field of fieldsOf(declaration)) visit(field.type);
         return;
       }
       case "list":

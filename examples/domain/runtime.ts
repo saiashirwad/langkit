@@ -27,6 +27,8 @@ export type Named =
   & (
     | { readonly kind: "brand"; readonly scalar: Scalar; }
     | { readonly kind: "enum"; readonly members: readonly string[]; }
+    /** `{ tag: "Card", last4: "4242" }`: the tag picks the variant, then its fields decode as a record's do. */
+    | { readonly kind: "tagged"; readonly variants: readonly (readonly [tag: string, fields: Fields])[]; }
     | { readonly kind: "record"; readonly fields: Fields; }
   );
 
@@ -111,6 +113,16 @@ const decode = (types: Types, shape: Shape, input: unknown, path: string): unkno
           return decode(types, { kind: named.scalar }, input, path);
         case "enum":
           return typeof input === "string" && named.members.includes(input) ? input : reject(types, shape, input, path);
+        case "tagged": {
+          if (!isObject(input)) return reject(types, shape, input, path);
+          const { tag, ...rest } = input;
+          const variant = named.variants.find(([name]) => name === tag);
+          if (!variant) {
+            const tags = named.variants.map(([name]) => JSON.stringify(name)).join(" | ");
+            throw new TypeError(`${path}.tag: expected ${tags}, found ${found(tag)}`);
+          }
+          return Object.freeze({ tag: variant[0], ...decodeFields(types, variant[1], rest, path) });
+        }
         case "record":
           return isObject(input) ? decodeFields(types, named.fields, input, path) : reject(types, shape, input, path);
       }

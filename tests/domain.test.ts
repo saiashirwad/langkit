@@ -160,6 +160,27 @@ const cases: readonly Case[] = [
     line: 8,
   },
   {
+    rule: "a duplicate variant",
+    source: base + "type Pay = Card { last4 : String } | Card\n",
+    message: "Duplicate member: Pay.Card",
+    at: "Card",
+    line: 8,
+  },
+  {
+    rule: "a variant field named tag",
+    source: base + "type Pay = Card { tag : String } | Cash\n",
+    message: "TypeScript cannot represent tag, a variant field name",
+    at: "tag",
+    line: 8,
+  },
+  {
+    rule: "a variant named like a top-level type",
+    source: base + "type Note = { text : String }\ntype Pay = Note { text : String } | Cash\n",
+    message: "Duplicate declaration: Note",
+    at: "Note",
+    line: 9,
+  },
+  {
     rule: "nondeterminism",
     source: edit("on go -> Middle", "on go -> Middle |> on go -> End"),
     message: "Start already handles go",
@@ -420,6 +441,24 @@ test("host: a brand is nominal over its scalar, and every named type is also its
   ) assert.ok(text.includes(expected), `${expected}\n---\n${text}`);
 });
 
+const payments = base + "type Pay = Card { last4 : String, saved : Bool? } | Transfer { reference : String } | Cash\n";
+
+test("host: a union with a payload member projects as a tagged union, and a bare member has only its tag", () => {
+  const { text } = hosted(payments).projection;
+  for (
+    const expected of [
+      "export type Pay = Pay.Card | Pay.Transfer | Pay.Cash;\n",
+      "  interface Card {\n    readonly tag: \"Card\";\n    readonly last4: string;\n    readonly saved: boolean | null;\n  }\n",
+      "  interface Cash {\n    readonly tag: \"Cash\";\n  }\n",
+      "  parse(input: unknown): Pay;\n",
+    ]
+  ) assert.ok(text.includes(expected), `${expected}\n---\n${text}`);
+  assert.equal(
+    typeAt(analyze(payments), payments.indexOf("type Pay") + 5)?.type,
+    "type Pay = Card { last4 : String, saved : Bool? } | Transfer { reference : String } | Cash",
+  );
+});
+
 test("host: names in the projection map back to the guest binders", () => {
   const { projection } = hosted(checkout);
   for (const [virtualStart, virtualLength, originalStart, originalLength] of projection.mappings) {
@@ -599,6 +638,19 @@ test("runtime: a named type parses a request body and names the bad path", async
     () => PaymentId.parse(3),
     (error) => error instanceof TypeError && error.message === "PaymentId: expected String, found 3",
   );
+});
+
+test("runtime: a tagged union decodes the variant its tag names", async () => {
+  const Pay = await load(payments, "Pay");
+  assert.deepEqual(Pay.parse({ tag: "Card", last4: "4242" }), { tag: "Card", last4: "4242", saved: null });
+  assert.deepEqual(Pay.parse({ tag: "Cash" }), { tag: "Cash" });
+  assert.ok(Object.isFrozen(Pay.parse({ tag: "Transfer", reference: "r1" })));
+  const rejects = (input: unknown, message: string) =>
+    assert.throws(() => Pay.parse(input), (error) => error instanceof TypeError && error.message === message);
+  rejects({ tag: "Cheque" }, "Pay.tag: expected \"Card\" | \"Transfer\" | \"Cash\", found \"Cheque\"");
+  rejects({ tag: "Card" }, "Pay.last4: expected String, found nothing");
+  rejects({ tag: "Cash", last4: "4242" }, "Pay: unexpected field last4");
+  rejects("Cash", "Pay: expected Pay, found \"Cash\"");
 });
 
 test("runtime: an optional field may be missing from a snapshot", async () => {

@@ -51,11 +51,15 @@ export type MachineItem =
     readonly on: readonly On[];
   };
 
+/** A union member; `fields` is undefined when it is written bare. */
+export type Member = { readonly name: Name; readonly fields: readonly Field[] | undefined; };
+
 /** One `.domain` file: any mix of types and machines. Every top-level name is exported. */
 export type Declaration =
   /** `brand OrderId = String`; `underlying` must name a scalar, which the checker decides. */
   | { readonly kind: "brand"; readonly name: Name; readonly underlying: Name; }
-  | { readonly kind: "enum"; readonly name: Name; readonly members: readonly Name[]; }
+  /** `Post | Courier`, or with payloads, `Card { last4 : String } | Transfer { reference : String }`. */
+  | { readonly kind: "union"; readonly name: Name; readonly members: readonly Member[]; }
   | { readonly kind: "record"; readonly name: Name; readonly fields: readonly Field[]; }
   | { readonly kind: "machine"; readonly name: Name; readonly items: readonly MachineItem[]; };
 
@@ -103,6 +107,11 @@ const field: Parser<Field> = parser(function*() {
 });
 
 const fields = between(symbol("{"), symbol("}"), sepEndBy(field, symbol(",")));
+
+const member: Parser<Member> = parser(function*() {
+  const id = yield* name;
+  return { name: id, fields: yield* optional(fields) };
+});
 
 const entry: Parser<Entry> = choice(
   symbol("...").zipRight(name).map((record): Entry => ({ kind: "spread", record })),
@@ -161,7 +170,7 @@ const declaration: Parser<Declaration> = choice(
     yield* symbol("=");
     return yield* choice(
       fields.map((fields) => ({ kind: "record" as const, name: id, fields })),
-      sepBy1(name, symbol("|")).map((members) => ({ kind: "enum" as const, name: id, members })),
+      sepBy1(member, symbol("|")).map((members) => ({ kind: "union" as const, name: id, members })),
     );
   }),
   parser(function*() {

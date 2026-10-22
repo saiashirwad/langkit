@@ -34,9 +34,14 @@ export type Brand = Declared & { readonly kind: "brand"; readonly underlying: Sc
 
 export type Enum = Declared & { readonly kind: "enum"; readonly members: readonly Name[]; };
 
+export type Variant = { readonly id: symbol; readonly name: Name; readonly fields: readonly Field[]; };
+
+/** A union with any payload member. Projected as a `{ tag }` union; a bare member is a variant with no fields. */
+export type Tagged = Declared & { readonly kind: "tagged"; readonly variants: readonly Variant[]; };
+
 export type Record = Declared & { readonly kind: "record"; readonly fields: readonly Field[]; };
 
-export type TypeDecl = Brand | Enum | Record;
+export type TypeDecl = Brand | Enum | Tagged | Record;
 
 /** Every type a module can mention, its own and every import's, transitively. */
 export type Universe = ReadonlyMap<TypeKey, TypeDecl>;
@@ -133,6 +138,11 @@ export const showTypeDecl = (type: TypeDecl): string => {
       return `brand ${type.name.name} = ${type.underlying}`;
     case "enum":
       return `type ${type.name.name} = ${type.members.map((member) => member.name).join(" | ")}`;
+    case "tagged":
+      return `type ${type.name.name} = ${
+        type.variants.map(({ name, fields }) => fields.length ? `${name.name} { ${showFields(fields)} }` : name.name)
+          .join(" | ")
+      }`;
     case "record":
       return `type ${type.name.name} = { ${showFields(type.fields)} }`;
   }

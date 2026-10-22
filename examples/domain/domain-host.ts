@@ -59,6 +59,27 @@ const typeOnly = (type: TypeDecl): readonly Piece[] => {
         ]),
         ";\n",
       ];
+    case "tagged":
+      return [
+        "export type ",
+        verbatim(type.name.name, type.name.span),
+        ` = ${type.variants.map((variant) => `${type.name.name}.${variant.name.name}`).join(" | ")};\n`,
+        `export declare namespace ${type.name.name} {\n`,
+        ...type.variants.flatMap(({ name, fields }): readonly Piece[] => [
+          "  interface ",
+          verbatim(name.name, name.span),
+          " {\n    readonly tag: \"",
+          verbatim(name.name, name.span),
+          "\";\n",
+          ...fields.flatMap(({ name, type }): readonly Piece[] => [
+            "    readonly ",
+            verbatim(name.name, name.span),
+            `: ${ts(type)};\n`,
+          ]),
+          "  }\n",
+        ]),
+        "}\n",
+      ];
     case "record":
       return [
         "export interface ",
@@ -194,6 +215,12 @@ export const compiled = (module: Module): {
         return { kind: "brand", name: type.name.name, scalar: type.underlying };
       case "enum":
         return { kind: "enum", name: type.name.name, members: type.members.map((member) => member.name) };
+      case "tagged":
+        return {
+          kind: "tagged",
+          name: type.name.name,
+          variants: type.variants.map((variant) => [variant.name.name, fields(variant.fields)]),
+        };
       case "record":
         return { kind: "record", name: type.name.name, fields: fields(type.fields) };
     }

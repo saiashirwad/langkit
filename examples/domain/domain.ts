@@ -21,8 +21,9 @@ import { elaborateTypes, type TypeDeclaration, typeNames } from "./types.ts";
 const usedTypes = (declaration: Declaration): readonly Name[] => {
   switch (declaration.kind) {
     case "brand":
-    case "enum":
       return [];
+    case "union":
+      return declaration.members.flatMap(({ fields }) => (fields ?? []).flatMap(({ type }) => typeNames(type)));
     case "record":
       return declaration.fields.flatMap(({ type }) => typeNames(type));
     case "machine":
