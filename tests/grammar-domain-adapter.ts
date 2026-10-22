@@ -1,9 +1,11 @@
+import type * as M from "../examples/data/data-model.ts";
+import type * as D from "../examples/data/data-types.ts";
 import type * as H from "../examples/domain/domain-syntax.ts";
 import type * as G from "../examples/grammar/domain.grammar";
 
-const name = ({ name, span }: G.Name | G.FieldName): H.Name => ({ name, span });
+const name = ({ name, span }: G.Name | G.FieldName): M.Name => ({ name, span });
 
-const dataType = (type: G.DataType): H.TypeExpr => {
+const dataType = (type: G.DataType): D.TypeExpr => {
   switch (type.kind) {
     case "named":
       return { kind: "named", name: name(type.name), span: type.span };
@@ -14,9 +16,9 @@ const dataType = (type: G.DataType): H.TypeExpr => {
   }
 };
 
-const field = ({ name: id, type }: G.Field): H.Field => ({ name: name(id), type: dataType(type) });
+const field = ({ name: id, type }: G.Field): D.FieldExpr => ({ name: name(id), type: dataType(type) });
 
-const entry = (value: G.Entry): H.Entry =>
+const entry = (value: G.Entry): D.Entry =>
   value.kind === "spread"
     ? { kind: "spread", record: name(value.record) }
     : { kind: "field", field: field(value.field) };

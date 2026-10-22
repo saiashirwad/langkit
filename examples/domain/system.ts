@@ -1,23 +1,21 @@
 import { type Check, check } from "langkit";
+import { type Field, type Name, same, showType } from "../data/data-model.ts";
+import { article, attempt, error, facts } from "../data/data-types.ts";
 import {
   type Claim,
   type Component,
   componentId,
-  type Field,
   type Formula,
   type Port,
   type Property,
-  same,
   showClaim,
   showEvent,
-  showType,
   type StateId,
   type Sync,
   type System,
 } from "./domain-model.ts";
-import type { ClaimExpr, Declaration, FormulaExpr, Name, Port as Written, SystemClause } from "./domain-syntax.ts";
-import { attempt, type Binder, error, facts, reserved, type Scope } from "./scope.ts";
-import { article } from "./types.ts";
+import type { ClaimExpr, Declaration, FormulaExpr, Port as Written, SystemClause } from "./domain-syntax.ts";
+import { type Binder, reserved, type Scope } from "./scope.ts";
 
 export type SystemDeclaration = Extract<Declaration, { readonly kind: "system"; }>;
 
@@ -159,7 +157,7 @@ export const elaborateSystem = (
         const machine = scope.machines.get(target.key);
         if (!machine) return false;
         const { name } = part;
-        if (reserved.field.has(name.name)) {
+        if (scope.dialect.reserved.field.has(name.name)) {
           return yield* error(name, `TypeScript cannot represent ${name.name}, a component name`);
         }
         if (components.has(name.name)) return yield* error(name, `Duplicate component: ${name.name}`);

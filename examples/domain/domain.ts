@@ -4,26 +4,26 @@ import { loadModules, type ModuleGraph, type ModuleOptions, type ModuleSource } 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { type Name, showTypeDecl, type TypeDecl, type TypeKey, typeKey } from "../data/data-model.ts";
 import {
-  type Machine,
-  type Module,
-  scalars,
-  showEvent,
-  showState,
-  showTypeDecl,
-  type System,
-  type TypeDecl,
-  type TypeKey,
-  typeKey,
-} from "./domain-model.ts";
-import { type Declaration, type File, imports, type Name, parse, tokens } from "./domain-syntax.ts";
+  attempt,
+  claim,
+  definitionKind,
+  elaborateTypes,
+  error,
+  facts,
+  type Type,
+  type TypeDeclaration,
+  typeNames,
+} from "../data/data-types.ts";
+import { type Machine, type Module, showEvent, showState, type System } from "./domain-model.ts";
+import { type Declaration, type File, imports, parse, tokens } from "./domain-syntax.ts";
 import { type Outcome, outcome } from "./explore.ts";
 import { elaborateMachine, type MachineDeclaration } from "./machine.ts";
 import { key, lower } from "./product.ts";
-import { attempt, type Binder, error, facts, reserved, type Scope, type Type } from "./scope.ts";
+import { type Binder, dialect, type Scope } from "./scope.ts";
 import { elaborateSystem, type SystemDeclaration } from "./system.ts";
 import { checkLimit, diagnose, fails, renderTrace, tooLarge, verdict } from "./trace.ts";
-import { definitionKind, elaborateTypes, type TypeDeclaration, typeNames } from "./types.ts";
 
 const language = { extension: "domain", imports } as const;
 
@@ -64,15 +64,6 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
     const types: (readonly [TypeDeclaration, Binder])[] = [];
     const machines: (readonly [MachineDeclaration, Binder])[] = [];
     const systems: (readonly [SystemDeclaration, Binder])[] = [];
-    const claim = (name: Name): Check<void> =>
-      check(function*() {
-        if (reserved.type.has(name.name)) {
-          yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
-        }
-        if (top.has(name.name) || Object.hasOwn(scalars, name.name)) {
-          return yield* error(name, `Duplicate declaration: ${name.name}`);
-        }
-      });
     for (const directive of file.imports) {
       const edge = source.imports.find(({ span }) => span.start === directive.span.start)!;
       const exported = linked.exports.get(edge.uri)!;
@@ -83,7 +74,7 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
           if (binder.kind === "system") {
             return yield* error(name, `${name.name} is a system; systems do not compose yet`);
           }
-          yield* claim(name);
+          yield* claim({ top, dialect }, name);
           yield* facts.reference(binder, name.span);
           top.set(name.name, binder);
         }));
@@ -92,7 +83,7 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
     for (const declaration of file.declarations) {
       const { name } = declaration;
       yield* attempt(check(function*() {
-        yield* claim(name);
+        yield* claim({ top, dialect }, name);
         const binder: Binder = {
           kind: declaration.kind === "machine" || declaration.kind === "system" ? declaration.kind : "type",
           id: Symbol(name.name),
@@ -122,7 +113,7 @@ const elaborate = (linked: Linked, source: ModuleSource, file: File): Check<Modu
     const { uri } = source;
     const bound = yield* bind(linked, source, file);
     const { top } = bound;
-    const scope: Scope = { uri, top, universe: linked.universe, machines: linked.machines };
+    const scope: Scope = { uri, top, universe: linked.universe, machines: linked.machines, dialect };
     const types = yield* elaborateTypes(scope, bound.types);
     for (const type of types) linked.universe.set(type.key, type);
 
@@ -143,7 +134,7 @@ const elaborate = (linked: Linked, source: ModuleSource, file: File): Check<Modu
     for (const use of [...file.imports.flatMap(({ names }) => names), ...file.declarations.flatMap(usedTypes)]) {
       const binder = top.get(use.name);
       const type = binder && linked.universe.get(binder.key);
-      if (type) yield* facts.typed(showTypeDecl(type), use.span);
+      if (type) yield* facts.typed(showTypeDecl(type, dialect.variants), use.span);
     }
     linked.exports.set(uri, bound.own);
     return { uri, types, machines, systems, universe: linked.universe };
@@ -156,7 +147,7 @@ const definitionsOf = ({ uri, types, machines }: Module): readonly Definition<Ty
     name: type.name.name,
     span: type.name.span,
     kind: definitionKind[type.kind],
-    type: showTypeDecl(type),
+    type: showTypeDecl(type, dialect.variants),
     uri,
   })),
   ...machines.flatMap(({ id, name, events, states }) => [

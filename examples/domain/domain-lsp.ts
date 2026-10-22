@@ -1,5 +1,5 @@
 import { serve } from "langkit/lsp";
+import { show } from "../data/data-types.ts";
 import { analyze } from "./domain.ts";
-import { show } from "./scope.ts";
 
 serve(analyze, show);

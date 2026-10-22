@@ -17,24 +17,8 @@ import {
   sepBy1,
   sepEndBy,
 } from "langkit/parse";
-
-export type Name = { readonly name: string; readonly span: Span; };
-
-/** `String`, `[LineItem]`, `Address?`. A name resolves to a scalar or a declared type. */
-export type TypeExpr =
-  & { readonly span: Span; }
-  & (
-    | { readonly kind: "named"; readonly name: Name; }
-    | { readonly kind: "list"; readonly element: TypeExpr; }
-    | { readonly kind: "optional"; readonly inner: TypeExpr; }
-  );
-
-export type Field = { readonly name: Name; readonly type: TypeExpr; };
-
-/** A field, or `...Placed` splicing a record's fields in place. */
-export type Entry =
-  | { readonly kind: "field"; readonly field: Field; }
-  | { readonly kind: "spread"; readonly record: Name; };
+import type { Name } from "../data/data-model.ts";
+import type { Entry, FieldExpr, Member, TypeDeclaration, TypeExpr } from "../data/data-types.ts";
 
 /** `|> on pay -> Paid`; `span` covers the clause and is where a trace step through it points. */
 export type On = { readonly event: Name; readonly target: Name; readonly span: Span; };
@@ -43,7 +27,7 @@ export type Role = "initial" | "final" | "step";
 
 export type MachineItem =
   /** `sync event pay`: only a system's sync can fire it, so its machine's values get no method for it. */
-  | { readonly kind: "event"; readonly sync: boolean; readonly name: Name; readonly payload: readonly Field[]; }
+  | { readonly kind: "event"; readonly sync: boolean; readonly name: Name; readonly payload: readonly FieldExpr[]; }
   | {
     readonly kind: "state";
     readonly name: Name;
@@ -77,19 +61,12 @@ export type SystemClause =
 
 export type Part = { readonly name: Name; readonly machine: Name; };
 
-/** A union member; `fields` is undefined when it is written bare. */
-export type Member = { readonly name: Name; readonly fields: readonly Field[] | undefined; };
-
 /** `import { Address, LineItem } from "./commerce.domain"`; `span` covers the whole directive. */
 export type Import = { readonly names: readonly Name[]; readonly path: string; readonly span: Span; };
 
 /** One `.domain` file: any mix of types and machines. Every top-level name is exported. */
 export type Declaration =
-  /** `brand OrderId = String`; `underlying` must name a scalar, which the checker decides. */
-  | { readonly kind: "brand"; readonly name: Name; readonly underlying: Name; }
-  /** `Post | Courier`, or with payloads, `Card { last4 : String } | Transfer { reference : String }`. */
-  | { readonly kind: "union"; readonly name: Name; readonly members: readonly Member[]; }
-  | { readonly kind: "record"; readonly name: Name; readonly fields: readonly Field[]; }
+  | TypeDeclaration
   | { readonly kind: "machine"; readonly name: Name; readonly items: readonly MachineItem[]; }
   | {
     readonly kind: "system";
@@ -157,7 +134,7 @@ const dataType: Parser<TypeExpr> = parser(function*(): Generator<Parser<unknown>
   return type;
 });
 
-const field: Parser<Field> = parser(function*() {
+const field: Parser<FieldExpr> = parser(function*() {
   const id = yield* fieldName;
   yield* symbol(":");
   yield* commit();

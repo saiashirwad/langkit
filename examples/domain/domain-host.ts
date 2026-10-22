@@ -2,15 +2,22 @@ import { type HostLanguage, type Piece, specifier, unhosted, verbatim } from "la
 import { type Binding, binding, call, data, type Json, type Module as Program, ref } from "langkit/ir";
 import { emitModule } from "langkit/javascript";
 import {
-  type Component,
+  closure,
   type DataType,
   type Field,
+  fieldsOf,
+  scalars,
+  type TypeDecl,
+  type TypeKey,
+  typeKey,
+} from "../data/data-model.ts";
+import {
+  type Component,
   type Formula,
   type Machine,
   type Module,
   type Port,
   type Property,
-  scalars,
   showFormula,
   showSync,
   type State,
@@ -19,13 +26,9 @@ import {
   type System,
   type Transition,
   transitionsOf,
-  type TypeDecl,
-  type TypeKey,
-  typeKey,
 } from "./domain-model.ts";
 import { checkSource } from "./domain.ts";
 import type { CompiledFormula, CompiledMachine, CompiledSystem, Fields, Named, Shape, Types } from "./runtime.ts";
-import { closure, fieldsOf } from "./types.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
 

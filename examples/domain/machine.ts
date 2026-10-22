@@ -1,23 +1,21 @@
 import { type Check, check, pure } from "langkit";
+import { assignable, type Field, type Name, showType } from "../data/data-model.ts";
+import { asEntries, attempt, collect, error, facts } from "../data/data-types.ts";
 import {
-  assignable,
   type Event,
-  type Field,
   type Fill,
   type Machine,
   showEvent,
   showState,
   showTransition,
-  showType,
   type State,
   type StateId,
   stateId,
   type Transition,
 } from "./domain-model.ts";
-import type { Declaration, MachineItem, Name, On } from "./domain-syntax.ts";
+import type { Declaration, MachineItem, On } from "./domain-syntax.ts";
 import { audit, type Finding } from "./graph.ts";
-import { attempt, type Binder, error, facts, reserved, type Scope } from "./scope.ts";
-import { asEntries, collect } from "./types.ts";
+import { type Binder, reserved, type Scope } from "./scope.ts";
 
 export type MachineDeclaration = Extract<Declaration, { readonly kind: "machine"; }>;
 
@@ -141,7 +139,7 @@ const declare = (scope: Scope, items: readonly MachineItem[]) =>
         if (reserved.state.has(name.name)) {
           yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a state name`));
         }
-        if (reserved.type.has(name.name)) {
+        if (scope.dialect.reserved.type.has(name.name)) {
           yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
         }
         // A state that shadows a type inside `namespace Order` is still the machine's state, so its clauses are checked.

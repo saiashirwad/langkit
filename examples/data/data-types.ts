@@ -1,9 +1,12 @@
-import { type Check, check, pure } from "langkit";
+import { type Check, check, fail, pure, type Span } from "langkit";
+import { create } from "langkit/analysis";
 import {
   type DataType,
   type Enum,
   type Field,
   isScalar,
+  type Name,
+  scalars,
   showType,
   showTypeDecl,
   type Tagged,
@@ -11,36 +14,132 @@ import {
   type TypeKey,
   type Universe,
   type Variant,
-} from "./domain-model.ts";
-import type { Declaration, Entry, Field as Written, Member, Name, TypeExpr } from "./domain-syntax.ts";
-import { attempt, type Binder, error, facts, reserved, type Scope } from "./scope.ts";
+  type VariantStyle,
+} from "./data-model.ts";
 
-export type TypeDeclaration = Extract<Declaration, { readonly kind: "brand" | "union" | "record"; }>;
+/** `String`, `[LineItem]`, `Address?`. A name resolves to a scalar or a declared type. */
+export type TypeExpr =
+  & { readonly span: Span; }
+  & (
+    | { readonly kind: "named"; readonly name: Name; }
+    | { readonly kind: "list"; readonly element: TypeExpr; }
+    | { readonly kind: "optional"; readonly inner: TypeExpr; }
+  );
+
+export type FieldExpr = { readonly name: Name; readonly type: TypeExpr; };
+
+/** A field, or `...Placed` splicing a record's fields in place. */
+export type Entry =
+  | { readonly kind: "field"; readonly field: FieldExpr; }
+  | { readonly kind: "spread"; readonly record: Name; };
+
+/** A union member; `fields` is undefined when it is written bare. */
+export type Member = { readonly name: Name; readonly fields: readonly FieldExpr[] | undefined; };
+
+export type TypeDeclaration =
+  /** `brand OrderId = String`; `underlying` must name a scalar, which the checker decides. */
+  | { readonly kind: "brand"; readonly name: Name; readonly underlying: Name; }
+  /** `Post | Courier`, or with payloads, `Card { last4 : String } | Transfer { reference : String }`. */
+  | { readonly kind: "union"; readonly name: Name; readonly members: readonly Member[]; }
+  | { readonly kind: "record"; readonly name: Name; readonly fields: readonly FieldExpr[]; };
+
+/** Hover text. Guest syntax, as in v1. */
+export type Type = string;
+
+export const show = (type: Type): string => type;
+
+/** The one facts sink every elaborator writes to. */
+export const facts = create<Type>();
+
+/** A top-level name, bound before anything it names is elaborated, so declaration order never matters. */
+export type Binder<K extends string = string> = {
+  readonly kind: "type" | K;
+  readonly id: symbol;
+  readonly key: TypeKey;
+  readonly uri: string;
+  readonly name: Name;
+};
+
+/** Names TypeScript or the runtime value cannot carry. Checked here, not in the host, so the guest LSP shows them. */
+export type Reserved = { readonly type: ReadonlySet<string>; readonly field: ReadonlySet<string>; };
+
+export type Dialect = { readonly reserved: Reserved; readonly variants: VariantStyle; };
+
+/**
+ * What a file's declarations can name: its own top-level declarations, in one namespace, and every type
+ * elaborated so far. A state name may not repeat a type's name, because inside the projected
+ * `namespace Order` it would shadow the type.
+ */
+export type Scope<K extends string = string> = {
+  readonly uri: string;
+  readonly top: ReadonlyMap<string, Binder<K>>;
+  readonly universe: Universe;
+  readonly dialect: Dialect;
+};
+
+export const error = (at: { readonly span: Span; }, message: string): Check<never> => fail(message).at(at.span);
+
+export const attempt = <A>(body: Check<A>): Check<A | undefined> => body.recover(pure(undefined));
+
+/** `__proto__` would reset the value's prototype in Object.assign. */
+export const typescript: Reserved = {
+  type: new Set([
+    "any",
+    "bigint",
+    "boolean",
+    "class",
+    "const",
+    "delete",
+    "enum",
+    "export",
+    "function",
+    "import",
+    "interface",
+    "never",
+    "new",
+    "null",
+    "number",
+    "object",
+    "package",
+    "private",
+    "protected",
+    "public",
+    "static",
+    "string",
+    "symbol",
+    "undefined",
+    "unknown",
+    "void",
+    "yield",
+  ]),
+  field: new Set(["__proto__"]),
+};
 
 /** What each declaration becomes in TypeScript, for semantic tokens. */
 export const definitionKind = { brand: "type", enum: "enum", tagged: "enum", record: "interface" } as const;
 
-export const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
+export const article = (kind: string): string => {
   switch (kind) {
-    case "type":
-      return "a type";
-    case "machine":
-      return "a machine";
-    case "system":
-      return "a system";
-    case "brand":
-      return "a brand";
-    case "enum":
-      return "an enum";
     case "tagged":
       return "a tagged union";
-    case "record":
-      return "a record";
+    default:
+      return `${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind}`;
   }
 };
 
+/** A top-level name may not be a reserved type name, a scalar, or a repeat. */
+export const claim = (scope: Pick<Scope, "top" | "dialect">, name: Name): Check<void> =>
+  check(function*() {
+    if (scope.dialect.reserved.type.has(name.name)) {
+      yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
+    }
+    if (scope.top.has(name.name) || Object.hasOwn(scalars, name.name)) {
+      return yield* error(name, `Duplicate declaration: ${name.name}`);
+    }
+  });
+
 /** `Missing` -> `Unknown type: Missing`; `String??` -> `A type is optional at most once`. References the name. */
-const resolveType = (scope: Scope, type: TypeExpr): Check<DataType> =>
+export const resolveType = (scope: Scope, type: TypeExpr): Check<DataType> =>
   check<DataType>(function*() {
     switch (type.kind) {
       case "named": {
@@ -62,7 +161,7 @@ const resolveType = (scope: Scope, type: TypeExpr): Check<DataType> =>
     }
   });
 
-export const asEntries = (fields: readonly Written[]): readonly Entry[] =>
+export const asEntries = (fields: readonly FieldExpr[]): readonly Entry[] =>
   fields.map((field): Entry => ({ kind: "field", field }));
 
 /**
@@ -105,7 +204,7 @@ export const collect = (
           return;
         }
         const { name, type } = entry.field;
-        if (reserved.field.has(name.name)) {
+        if (scope.dialect.reserved.field.has(name.name)) {
           yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a field name`));
         }
         yield* claim(name, name.name);
@@ -138,7 +237,7 @@ const tagged = (scope: Scope, declared: Omit<Tagged, "kind" | "variants">, membe
     const variants: Variant[] = [];
     for (const member of members) {
       const { name } = member;
-      if (reserved.type.has(name.name)) {
+      if (scope.dialect.reserved.type.has(name.name)) {
         yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
       }
       if (scope.top.get(name.name)?.kind === "type") yield* attempt(error(name, `Duplicate declaration: ${name.name}`));
@@ -200,7 +299,7 @@ export const elaborateTypes = (
         }
       }
       yield* facts.define(
-        { id, name: name.name, type: showTypeDecl(type) },
+        { id, name: name.name, type: showTypeDecl(type, scope.dialect.variants) },
         name.span,
         definitionKind[type.kind],
       );
@@ -212,40 +311,3 @@ export const elaborateTypes = (
 /** Named types in written order, for hover: a type name shows its definition. */
 export const typeNames = (type: TypeExpr): readonly Name[] =>
   type.kind === "named" ? [type.name] : typeNames(type.kind === "list" ? type.element : type.inner);
-
-/** The fields a value of this type carries, across every variant. */
-export const fieldsOf = (type: TypeDecl): readonly Field[] => {
-  switch (type.kind) {
-    case "brand":
-    case "enum":
-      return [];
-    case "tagged":
-      return type.variants.flatMap(({ fields }) => fields);
-    case "record":
-      return type.fields;
-  }
-};
-
-/** Every declaration `roots` mention, transitively, in discovery order: the runtime's decode tables. */
-export const closure = (universe: Universe, roots: readonly DataType[]): readonly TypeDecl[] => {
-  const found = new Map<TypeKey, TypeDecl>();
-  const visit = (type: DataType): void => {
-    switch (type.kind) {
-      case "scalar":
-        return;
-      case "named": {
-        if (found.has(type.key)) return;
-        const declaration = universe.get(type.key)!;
-        found.set(type.key, declaration);
-        for (const field of fieldsOf(declaration)) visit(field.type);
-        return;
-      }
-      case "list":
-        return visit(type.element);
-      case "optional":
-        return visit(type.inner);
-    }
-  };
-  for (const root of roots) visit(root);
-  return [...found.values()];
-};
