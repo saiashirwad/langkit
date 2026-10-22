@@ -40,7 +40,7 @@ export const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
 };
 
 /** `Missing` -> `Unknown type: Missing`; `String??` -> `A type is optional at most once`. References the name. */
-export const resolveType = (scope: Scope, type: TypeExpr): Check<DataType> =>
+const resolveType = (scope: Scope, type: TypeExpr): Check<DataType> =>
   check<DataType>(function*() {
     switch (type.kind) {
       case "named": {

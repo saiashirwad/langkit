@@ -84,7 +84,7 @@ const sync = (components: Components, clause: Clause<"sync">, synced: Map<symbol
     return { id: Symbol(name.name), span: clause.span, name, ports: [first!, second!, ...rest], payload };
   });
 
-export const elaborateFormula = (components: Components, formula: FormulaExpr): Check<Formula> =>
+const elaborateFormula = (components: Components, formula: FormulaExpr): Check<Formula> =>
   check<Formula>(function*() {
     switch (formula.kind) {
       case "is": {

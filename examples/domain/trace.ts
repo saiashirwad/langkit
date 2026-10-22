@@ -5,7 +5,10 @@ import { showFormula, showSync, type System } from "./domain-model.ts";
 import type { Finding, Outcome, Step } from "./explore.ts";
 import { type Code, digit, type Product } from "./product.ts";
 
-/** The CLI's limit: past it a JS Map of states would exhaust memory long before it overflows at 2^24 entries. */
+/**
+ * The CLI's limit in reachable states: under the 2^24 entries a JS Map holds, and at about 370MB per million
+ * states (tools/domain-bench.ts) inside a default heap, so a huge system stops with an error instead of a crash.
+ */
 export const checkLimit = 5_000_000;
 
 const at = (location: SourceLocation, message: string): Diagnostic => ({
@@ -31,7 +34,7 @@ const row = (system: System, product: Product, step: Step, number: number): Rela
   const moved = (component: System["components"][number]) => {
     const from = component.machine.states[digit(product, step.from, component.id)]!;
     const to = component.machine.states[digit(product, step.to, component.id)]!;
-    return { from, to, text: `${component.name.name} ${from.name.name} -> ${to.name.name}` };
+    return { from, text: `${component.name.name} ${from.name.name} -> ${to.name.name}` };
   };
   if (origin.kind === "sync") {
     const sync = system.syncs[origin.sync]!;

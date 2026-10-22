@@ -117,7 +117,7 @@ export const first = (product: Product, space: StateSpace, test: Test): StateInd
 };
 
 /** Syncs whose action labels no edge. */
-export const deadSyncs = (product: Product, space: StateSpace): readonly SyncIndex[] => {
+const deadSyncs = (product: Product, space: StateSpace): readonly SyncIndex[] => {
   const fired = new Set(space.actions);
   return product.actions.flatMap(({ origin }, action) =>
     origin.kind === "sync" && !fired.has(action) ? [origin.sync] : []
