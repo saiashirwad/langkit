@@ -1,5 +1,6 @@
 import type { Result, Span } from "langkit";
 import type { TokenRule } from "langkit/analysis";
+import type { ImportParser } from "langkit/modules";
 import {
   between,
   choice,
@@ -8,6 +9,7 @@ import {
   many,
   named,
   optional,
+  parsePrefixResult,
   type Parser,
   parser,
   parseResult,
@@ -54,6 +56,9 @@ export type MachineItem =
 /** A union member; `fields` is undefined when it is written bare. */
 export type Member = { readonly name: Name; readonly fields: readonly Field[] | undefined; };
 
+/** `import { Address, LineItem } from "./commerce.domain"`; `span` covers the whole directive. */
+export type Import = { readonly names: readonly Name[]; readonly path: string; readonly span: Span; };
+
 /** One `.domain` file: any mix of types and machines. Every top-level name is exported. */
 export type Declaration =
   /** `brand OrderId = String`; `underlying` must name a scalar, which the checker decides. */
@@ -65,7 +70,18 @@ export type Declaration =
 
 const words = /[a-zA-Z_][a-zA-Z_0-9]*/;
 
-export const keywords = ["type", "brand", "machine", "event", "state", "initial", "final", "on"] as const;
+export const keywords = [
+  "import",
+  "from",
+  "type",
+  "brand",
+  "machine",
+  "event",
+  "state",
+  "initial",
+  "final",
+  "on",
+] as const;
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
@@ -182,12 +198,38 @@ const declaration: Parser<Declaration> = choice(
   }),
 );
 
-export const program = lex.complete(many(declaration));
+const directive: Parser<Import> = parser(function*() {
+  const start = yield* at(keyword("import"));
+  yield* commit();
+  const names = yield* between(symbol("{"), symbol("}"), sepEndBy(name, symbol(",")));
+  yield* keyword("from");
+  const path = yield* at(lex.token(regex(/"[^"\\\r\n]*"/)));
+  return { names, path: path.text.slice(1, -1), span: { start: start.span.start, end: path.span.end } };
+});
 
-export const parse = (source: string): Result<readonly Declaration[]> => parseResult(program, source);
+const directives = lex.trivia.zipRight(many(directive));
+
+/** Imports come first, so `imports` reads them without parsing the rest of the file. */
+export type File = { readonly imports: readonly Import[]; readonly declarations: readonly Declaration[]; };
+
+export const program: Parser<File> = lex.complete(parser(function*() {
+  const imports = yield* many(directive);
+  return { imports, declarations: yield* many(declaration) };
+}));
+
+export const parse = (source: string): Result<File> => parseResult(program, source);
+
+/** The prefix parser `loadModules` calls; the names inside are elaboration's business. */
+export const imports: ImportParser = (source) => {
+  const parsed = parsePrefixResult(directives, source);
+  return parsed.success
+    ? { success: true, value: parsed.value.map(({ path, span }) => ({ path, span })) }
+    : parsed;
+};
 
 export const tokens: readonly TokenRule[] = [
   { pattern: /\/\/[^\r\n]*/, kind: () => undefined },
+  { pattern: /"[^"\r\n]*"/, kind: "string" },
   {
     pattern: words,
     kind: (text) => ((keywords as readonly string[]).includes(text) ? "keyword" : "variable"),

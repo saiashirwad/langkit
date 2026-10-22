@@ -1,0 +1,35 @@
+import { Address, CancelReason, Carrier, LineItem, OrderId, PaymentId, Placed } from "./commerce.domain"
+
+machine Order {
+  event edit(items : [LineItem])
+  event checkout(address : Address, paymentId : PaymentId)
+  event pay
+  event ship(carrier : Carrier, tracking : String)
+  event deliver
+  event cancel(reason : CancelReason)
+  event refund
+
+  initial state Cart = { id : OrderId, items : [LineItem] }
+    |> on edit -> Cart
+    |> on checkout -> Checkout
+    |> on cancel -> Cancelled
+
+  state Checkout = { id : OrderId, ...Placed, paymentId : PaymentId }
+    |> on edit -> Checkout
+    |> on pay -> Paid
+    |> on cancel -> Cancelled
+
+  state Paid = { id : OrderId, ...Placed, paymentId : PaymentId }
+    |> on ship -> Shipped
+    |> on cancel -> Refunding
+
+  state Shipped = { id : OrderId, ...Placed, carrier : Carrier, tracking : String }
+    |> on deliver -> Delivered
+
+  state Refunding = { id : OrderId, paymentId : PaymentId, reason : CancelReason }
+    |> on refund -> Cancelled
+
+  final state Delivered = { id : OrderId, ...Placed, carrier : Carrier, tracking : String }
+
+  final state Cancelled = { id : OrderId, reason : CancelReason }
+}

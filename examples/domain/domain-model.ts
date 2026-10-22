@@ -21,8 +21,11 @@ export type DataType =
 /** `String??` would project to `string | null | null`, so an optional never wraps an optional. */
 export type Present = Exclude<DataType, { readonly kind: "optional"; }>;
 
-/** One binder: record fields, state data, and event payload all use it. `id` is its LSP identity. */
-export type Field = { readonly id: symbol; readonly name: Name; readonly type: DataType; };
+/**
+ * One binder: record fields, state data, and event payload all use it. `id` is its LSP identity, and `uri` the
+ * file it is written in, which a spread can carry into another file's states.
+ */
+export type Field = { readonly id: symbol; readonly uri: string; readonly name: Name; readonly type: DataType; };
 
 type Declared = { readonly id: symbol; readonly key: TypeKey; readonly uri: string; readonly name: Name; };
 

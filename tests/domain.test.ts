@@ -756,3 +756,99 @@ test("lsp: keywords and operators highlight, and names take the kind of their de
   assert.equal(kinds.get(at("Paid") + 0), "class");
   assert.equal(kinds.get(at("// An order")), undefined);
 });
+
+const shopFile = (name: string) => new URL(`../examples/domain/${name}`, import.meta.url);
+const commerce = readFileSync(shopFile("commerce.domain"), "utf8");
+const order = readFileSync(shopFile("order.domain"), "utf8");
+
+const files = (overrides: Readonly<Record<string, string>>) => ({
+  uri: shopFile("order.domain").href,
+  read: (uri: string) => overrides[uri] ?? readFileSync(new URL(uri), "utf8"),
+});
+
+const spanOf = (source: string, text: string, from = 0) => {
+  const start = source.indexOf(text, from);
+  assert.notEqual(start, -1, `${text} is not in the source`);
+  return { start, end: start + text.length };
+};
+
+test("modules: an error in an imported file lands on the import line, and the original is related", () => {
+  const broken = commerce.replace("sku : Sku,", "sku : Skuu,");
+  const result = checkSource(order, files({ [shopFile("commerce.domain").href]: broken }));
+  assert.ok(!result.success);
+  const [error] = result.errors;
+  assert.equal(result.errors.length, 1);
+  assert.equal(error.message, "Unknown type: Skuu");
+  assert.deepEqual(error.location, {
+    uri: shopFile("order.domain").href,
+    span: spanOf(order, order.slice(0, order.indexOf("\n"))),
+  });
+  assert.deepEqual(error.related?.at(-1), {
+    location: { uri: shopFile("commerce.domain").href, span: spanOf(broken, "Skuu") },
+    message: "Original diagnostic",
+  });
+});
+
+test("modules: an import names only what the file exports", () => {
+  const source = order.replace("CancelReason, Carrier", "CancelReason, Carier");
+  const result = checkSource(source, files({}));
+  assert.ok(!result.success);
+  assert.deepEqual(
+    result.errors.map(({ message, span }) => [message, source.slice(span!.start, span!.end)]),
+    [
+      ["Unknown export: ./commerce.domain has no Carier", "Carier"],
+      ...Array(3).fill(["Unknown type: Carrier", "Carrier"]),
+    ],
+  );
+});
+
+test("lsp: go to definition and hover cross into the imported file", () => {
+  const analysis = analyze(order, files({}));
+  assert.deepEqual(analysis.diagnostics, []);
+  const definition = definitionAt(analysis, order.indexOf("[LineItem]") + 1)!;
+  assert.equal(definition.uri, shopFile("commerce.domain").href);
+  assert.deepEqual(definition.span, spanOf(commerce, "LineItem", commerce.indexOf("type LineItem")));
+  assert.equal(
+    typeAt(analysis, order.indexOf("[LineItem]") + 1)?.type,
+    "type LineItem = { sku : Sku, quantity : Int, price : Cents }",
+  );
+  assert.equal(typeAt(analysis, order.indexOf("OrderId"))?.type, "brand OrderId = String");
+  assert.equal(analysis.sources?.get(shopFile("commerce.domain").href), commerce);
+});
+
+test("host: imported types print through import type lines, renamed when a local name would shadow them", () => {
+  const { text } = project(host.host(order, shopFile("order.domain").href).declarations);
+  assert.ok(
+    text.startsWith(
+      "import type { Address, CancelReason, Carrier, LineItem, OrderId, PaymentId } from \"./commerce.domain\";\n",
+    ),
+    text,
+  );
+  const shadowing = "import { Placed } from \"./commerce.domain\"\n\ntype Address = { street : String }\n"
+    + "machine Box { event close initial state Open = { ...Placed, at : Address } |> on close -> Shut final state Shut }\n";
+  const projected = project(host.host(shadowing, shopFile("box.domain").href).declarations).text;
+  assert.ok(
+    projected.includes("import type { Address as Address$2, LineItem } from \"./commerce.domain\";\n"),
+    projected,
+  );
+  assert.ok(projected.includes("    readonly address: Address$2;\n    readonly at: Address;\n"), projected);
+});
+
+test("runtime: a module's tables close over imported types, so it runs importing only the runtime", async () => {
+  const file = pathToFileURL(join(scratch, `module-${modules++}.mjs`));
+  const { javascript, diagnostics } = host.host(order, shopFile("order.domain").href);
+  assert.deepEqual(diagnostics, []);
+  writeFileSync(
+    file,
+    javascript!().replace(
+      /from "[^"]*runtime\.ts"/,
+      `from "${new URL("../examples/domain/runtime.ts", import.meta.url).href}"`,
+    ),
+  );
+  const { Order } = (await import(file.href)) as Readonly<Record<string, Runtime>>;
+  const cart = Order!.start({ id: "ord_1", items: [{ sku: "kbd-60", quantity: 1, price: 12900 }] });
+  assert.throws(
+    () => fire(cart, "edit", { items: [{ sku: "kbd-60", quantity: 1, price: 1.5 }] }),
+    /Order\.Cart\.edit\.items\[0\]\.price: expected Int, found 1\.5/,
+  );
+});

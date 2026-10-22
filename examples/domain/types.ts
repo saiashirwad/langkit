@@ -18,7 +18,7 @@ import { attempt, type Binder, error, facts, reserved, type Scope } from "./scop
 export type TypeDeclaration = Extract<Declaration, { readonly kind: "brand" | "union" | "record"; }>;
 
 /** What each declaration becomes in TypeScript, for semantic tokens. */
-const definitionKind = { brand: "type", enum: "enum", tagged: "enum", record: "interface" } as const;
+export const definitionKind = { brand: "type", enum: "enum", tagged: "enum", record: "interface" } as const;
 
 const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
   switch (kind) {
@@ -107,7 +107,7 @@ export const collect = (
           yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a field name`));
         }
         yield* claim(name, name.name);
-        const field: Field = { id: Symbol(name.name), name, type: yield* resolveType(scope, type) };
+        const field: Field = { id: Symbol(name.name), uri: scope.uri, name, type: yield* resolveType(scope, type) };
         yield* facts.define({ id: field.id, name: name.name, type: showType(field.type) }, name.span, kind);
         fields.push(field);
       }));

@@ -1,0 +1,18 @@
+// The shop's shared vocabulary. Every name here is a TypeScript type and a parser of the same name.
+
+brand OrderId = String
+brand PaymentId = String
+brand Sku = String
+brand Cents = Int
+
+type Carrier = Post | Courier
+
+type CancelReason = ChangedMind | OutOfStock | PaymentDeclined
+
+type PayMethod = Card { last4 : String } | Transfer { reference : String }
+
+type LineItem = { sku : Sku, quantity : Int, price : Cents }
+
+type Address = { name : String, line1 : String, city : String, postcode : String }
+
+type Placed = { items : [LineItem], address : Address }
