@@ -1,3 +1,4 @@
+import { definitionAt, semanticTokens, typeAt } from "langkit/analysis";
 import { project } from "langkit/host";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -8,7 +9,7 @@ import { pathToFileURL } from "node:url";
 import { audit, finishing, reachable, unhandled } from "../examples/machine/graph.ts";
 import { host } from "../examples/machine/machine-host.ts";
 import type { Machine } from "../examples/machine/machine-model.ts";
-import { checkSource } from "../examples/machine/machine.ts";
+import { analyze, checkSource } from "../examples/machine/machine.ts";
 
 const checkout = readFileSync(new URL("../examples/machine/checkout.machine", import.meta.url), "utf8");
 
@@ -566,4 +567,72 @@ test("runtime: Float, Bool, optional lists and payload-free events behave", asyn
   );
   assert.throws(() => fire(idle, "record", { samples: [], ok: "yes" }), /ok: expected Bool, found "yes"/);
   assert.throws(() => fire(idle, "reset", { stray: 1 }), /Gauge\.Idle\.reset: unexpected field stray/);
+});
+
+const analysis = analyze(checkout);
+const at = (text: string, nth = 0) => {
+  let index = -1;
+  for (let seen = 0; seen <= nth; seen++) index = checkout.indexOf(text, index + 1);
+  assert.notEqual(index, -1, `${text} is not in checkout.machine`);
+  return index;
+};
+
+test("lsp: every declaration kind is a definition of the kind it becomes in TypeScript", () => {
+  const kinds = (name: string) =>
+    analysis.definitions.filter((definition) => definition.name === name).map(({ kind }) => kind);
+  assert.deepEqual(analysis.diagnostics, []);
+  assert.deepEqual(
+    [
+      ...["Order", "Carrier", "Post", "LineItem", "sku", "pay", "Paid"].map(kinds),
+      [...new Set(kinds("paymentId"))],
+    ].flat(),
+    ["namespace", "enum", "enumMember", "interface", "property", "method", "class", "parameter", "property"],
+  );
+});
+
+test("lsp: go to definition follows clauses, targets, spreads and type names", () => {
+  const definition = (offset: number) => {
+    const found = definitionAt(analysis, offset)!;
+    return `${found.kind} ${checkout.slice(found.span.start, found.span.end)} at ${found.span.start}`;
+  };
+  assert.equal(definition(at("on ship") + 3), `method ship at ${at("event ship") + 6}`);
+  assert.equal(definition(at("-> Paid") + 3), `class Paid at ${at("state Paid") + 6}`);
+  assert.equal(definition(at("...Placed") + 3), `interface Placed at ${at("type Placed") + 5}`);
+  assert.equal(definition(at("[LineItem]") + 1), `interface LineItem at ${at("type LineItem") + 5}`);
+  assert.equal(definition(at("carrier : Carrier") + 10), `enum Carrier at ${at("type Carrier") + 5}`);
+});
+
+test("lsp: hover shows the data flow on a clause and the definition on a name", () => {
+  const hover = (offset: number) => typeAt(analysis, offset)?.type;
+  assert.equal(hover(at("on pay") + 3), "Checkout -> Paid: carries items, address; pay gives paymentId, paidAt");
+  assert.equal(hover(at("on cancel -> Cancelled") + 3), "Cart -> Cancelled: cancel gives reason; refundId starts null");
+  assert.equal(
+    hover(at("-> Paid") + 3),
+    "state Paid = { items : [LineItem], address : Address, paymentId : String, paidAt : String }",
+  );
+  assert.equal(hover(at("event pay") + 6), "event pay(paymentId : String, paidAt : String)");
+  assert.equal(hover(at("[LineItem]") + 1), "type LineItem = { sku : String, quantity : Int, cents : Int }");
+  assert.equal(hover(at("carrier : Carrier") + 10), "type Carrier = Post | Courier");
+  assert.equal(
+    hover(at("final state Delivered") + 12),
+    "final state Delivered = { items : [LineItem], address : Address, deliveredAt : String }",
+  );
+});
+
+test("lsp: a file with an error still has definitions and one diagnostic", () => {
+  const broken = edit("-> End", "-> Edn");
+  const result = analyze(broken);
+  assert.deepEqual(result.diagnostics.map(({ message }) => message), ["Unknown state: Edn"]);
+  assert.equal(definitionAt(result, broken.indexOf("on go") + 3)?.name, "go");
+  assert.equal(definitionAt(result, broken.indexOf("state Middle") + 6)?.kind, "class");
+});
+
+test("lsp: keywords and operators highlight, and names take the kind of their definition", () => {
+  const kinds = new Map(semanticTokens(analysis).map(({ span, kind }) => [span.start, kind]));
+  assert.equal(kinds.get(at("initial")), "keyword");
+  assert.equal(kinds.get(at("|>")), "operator");
+  assert.equal(kinds.get(at("->")), "operator");
+  assert.equal(kinds.get(at("...")), "operator");
+  assert.equal(kinds.get(at("Paid") + 0), "class");
+  assert.equal(kinds.get(at("// An order")), undefined);
 });
