@@ -664,7 +664,7 @@ test("cli: pnpm reactor summarizes a clean file, and prints the overflow and fai
   }
 });
 
-test("outside examples/reactor, only reactor.ts is imported", () => {
+test("outside examples/reactor, only reactor.ts and reactor-host.ts are imported", () => {
   const root = fileURLToPath(new URL("..", import.meta.url));
   const files = (directory: string): readonly string[] =>
     readdirSync(join(root, directory)).flatMap((name) => {
@@ -681,6 +681,7 @@ test("outside examples/reactor, only reactor.ts is imported", () => {
       `${path}: ${specifier}`
     )
   );
-  assert.deepEqual(reaching.filter((use) => !use.endsWith("reactor/reactor.ts")), []);
+  const surface = ["reactor/reactor.ts", "reactor/reactor-host.ts"];
+  assert.deepEqual(reaching.filter((use) => !surface.some((file) => use.endsWith(file))), []);
   assert.ok(reaching.length > 0);
 });

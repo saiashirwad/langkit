@@ -4,7 +4,8 @@ export type Shape =
   | { readonly kind: Scalar; }
   /** A key into the module's `Types`. */
   | { readonly kind: "named"; readonly key: string; }
-  | { readonly kind: "list"; readonly element: Shape; }
+  /** `max` is null for `[T]`, since JSON has no Infinity. */
+  | { readonly kind: "list"; readonly element: Shape; readonly max: number | null; }
   | { readonly kind: "optional"; readonly inner: Shape; };
 
 export type Fields = readonly (readonly [name: string, shape: Shape])[];
@@ -44,7 +45,7 @@ export const describe = (types: Types, shape: Shape): string => {
       return named.kind === "enum" ? named.members.map((member) => JSON.stringify(member)).join(" | ") : named.name;
     }
     case "list":
-      return `[${describe(types, shape.element)}]`;
+      return `[${describe(types, shape.element)}${shape.max === null ? "" : `; ..${shape.max}`}]`;
     case "optional":
       return `${describe(types, shape.inner)}?`;
     default:
@@ -93,9 +94,11 @@ export const decode = (types: Types, shape: Shape, input: unknown, path: string)
       }
     }
     case "list":
-      return Array.isArray(input)
-        ? Object.freeze(input.map((item, index) => decode(types, shape.element, item, `${path}[${index}]`)))
-        : reject(types, shape, input, path);
+      if (!Array.isArray(input)) return reject(types, shape, input, path);
+      if (shape.max !== null && input.length > shape.max) {
+        throw new TypeError(`${path}: expected at most ${shape.max} items, found ${input.length}`);
+      }
+      return Object.freeze(input.map((item, index) => decode(types, shape.element, item, `${path}[${index}]`)));
     case "optional":
       return input === null || input === undefined ? null : decode(types, shape.inner, input, path);
   }

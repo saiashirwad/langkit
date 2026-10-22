@@ -155,7 +155,7 @@ export const tables = (universe: Universe, roots: readonly DataType[]): Tables =
       case "named":
         return { kind: "named", key: local(type.key) };
       case "list":
-        return { kind: "list", element: shape(type.element) };
+        return { kind: "list", element: shape(type.element), max: type.max === Infinity ? null : type.max };
       case "optional":
         return { kind: "optional", inner: shape(type.inner) };
     }
