@@ -195,3 +195,14 @@ Doc = "let" name:ident ".." "." count:Digits label:Text
     ["\"hi\"", "string"],
   ]);
 });
+
+test("an expected identifier is named as a name, not by the word pattern, and a keyword says so", () => {
+  const parse = parser(`${header}Doc = "let" ~ name:ident "=" value:("[" | ident)\n`);
+  const message = (source: string) => {
+    const result = parse(source);
+    return result.success ? "" : result.errors[0].message.split("\n")[0];
+  };
+  assert.equal(message("let = x"), "Expected a name, found =");
+  assert.equal(message("let a = ;"), "Expected \"[\" or a name, found ;");
+  assert.equal(message("let let = x"), "\"let\" is a reserved keyword");
+});

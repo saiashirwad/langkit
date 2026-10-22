@@ -15,7 +15,7 @@ const generated = define(wire(checked.value)).parse;
 /** `Expected "}" or "x"` and `Expected "x" or "}"` name the same alternatives. */
 const alternatives = (message: string): string => {
   const [expected, found = ""] = message.split("\n")[0]!.split(/(?=, found )/);
-  return [...expected!.replace(/^Expected /, "").split(/ or (?=["/])/).sort(), found].join("\u0000");
+  return [...expected!.replace(/^Expected /, "").split(/ or (?=["/]|a name)/).sort(), found].join("\u0000");
 };
 
 type Tally = {
@@ -63,7 +63,8 @@ const compare = (input: string, label: string): void => {
   if (!expected || !actual) return;
   const generic = expected.message
     .replace(/closing delimiter/g, JSON.stringify(/"([})\]])"/.exec(actual.message)?.[1]))
-    .replace(String(/"[^"\\\r\n]*"/), "Path");
+    .replace(String(/"[^"\\\r\n]*"/), "Path")
+    .replace(String(/[a-zA-Z_][a-zA-Z_0-9]*/), "a name");
   if (expected.span?.start !== actual.span?.start) {
     tally.offsetDifferences++;
     const atClause = input.startsWith("|>", actual.span?.start) && expected.message.startsWith("Expected \"sync\" or");
@@ -157,7 +158,7 @@ test("every accepted input has the same AST, spans included, through the adapter
 
 /**
  * Documented, and nothing else. The hand parser names every `between` closer "closing delimiter", names the path
- * token by its regex, and lists alternatives in its own order. And it commits at the `|>` of a system clause, then
+ * token and identifiers by their regex, and lists alternatives in its own order. And it commits at the `|>` of a system clause, then
  * chooses sync, fair or property; the grammar language cuts per alternative, three alternatives share `|>`, so a
  * bad clause keyword fails at the `|>` instead of at the keyword.
  */

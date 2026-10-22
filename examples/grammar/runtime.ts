@@ -79,6 +79,14 @@ export const define = (grammar: Wire): Parsers => {
     );
   };
 
+  /** Named in expected-token lists as a reader says it; a keyword in its place keeps the lexer's own message. */
+  const identifier = makeParser((source, offset) => {
+    const reply = runParser(lex.identifier, source, offset);
+    return reply.ok || reply.diagnostic.kind !== "expected"
+      ? reply
+      : replyFailure({ ...reply.diagnostic, expected: ["a name"] }, reply.offset, reply.cut, reply.fatal);
+  });
+
   const literal = (text: string, kw: boolean): Parser<string> => kw ? lex.keyword(text) : symbol(text);
 
   const build = (e: Expr<object>): Parser<Cell> => {
@@ -90,7 +98,7 @@ export const define = (grammar: Wire): Parsers => {
         return token(e.name ? pattern.expected(e.name) : pattern);
       }
       case "ident":
-        return token(lex.identifier);
+        return token(identifier);
       case "ref":
         return makeParser((source, offset) => runParser(table[e.rule]!, source, offset));
       case "cut":
