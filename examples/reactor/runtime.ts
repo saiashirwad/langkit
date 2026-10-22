@@ -259,16 +259,17 @@ const tick = (table: CompiledMachine, previous: Data, given: Given): Data => {
   return Object.fromEntries(table.fields.map(([name]) => [name, slots.get(name)]));
 };
 
-/** Decodes an input's argument. Carried enums share no member, so the member says which type it is. */
+/**
+ * Decodes an input's argument. Two or more carried types are enums with no member in common, so the member says
+ * which type it is.
+ */
 const take = (types: Types, input: string, carries: readonly Shape[], argument: unknown, path: string): Given => {
   if (carries.length === 1) return { input, carried: 0, value: decode(types, carries[0]!, argument, path) };
-  for (const [carried, shape] of carries.entries()) {
-    try {
-      return { input, carried, value: decode(types, shape, argument, path) };
-    } catch {
-      continue;
-    }
-  }
+  const carried = carries.findIndex((shape) => {
+    const named = shape.kind === "named" ? types[shape.key] : undefined;
+    return named?.kind === "enum" && named.members.includes(argument as string);
+  });
+  if (carried >= 0) return { input, carried, value: argument };
   const expected = carries.map((shape) => describe(types, shape)).join(" | ");
   throw new TypeError(`${path}: expected ${expected}, found ${found(argument)}`);
 };

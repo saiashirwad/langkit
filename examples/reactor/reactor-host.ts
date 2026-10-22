@@ -130,13 +130,13 @@ const node = (value: Node): CompiledNode => {
 };
 
 /** Cells, then signals, each in the order they are written: the snapshot's fields and the projection's members. */
-export const declared = ({ nodes }: Machine): readonly Node[] => {
+const declared = ({ nodes }: Machine): readonly Node[] => {
   const written = nodes.toSorted((a, b) => a.slot.name.span.start - b.slot.name.span.start);
   return [...written.filter(({ kind }) => kind === "cell"), ...written.filter(({ kind }) => kind === "signal")];
 };
 
 /** A signal is absent in every tick it does not fire. */
-export const held = ({ slot }: Node): DataType => slot.kind === "signal" ? optionalOf(slot.type) : slot.type;
+const held = ({ slot }: Node): DataType => slot.kind === "signal" ? optionalOf(slot.type) : slot.type;
 
 const member = (printer: Printer, node: Node): readonly Piece[] => {
   const { slot } = node;
