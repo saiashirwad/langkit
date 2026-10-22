@@ -1,0 +1,25 @@
+grammar Expr
+
+skip = /\s+/
+word = /[a-z_][a-z0-9_]*/
+
+token Digits = /[0-9]+/
+
+Expr = precedence {
+  left "or"
+  left "and"
+  prefix "not"
+  none "==" | "!=" | "<" | "<=" | ">" | ">="
+  left "+" | "-"
+  left "*" | "/"
+  prefix "-"
+  postfix "!"
+  atom
+    | Num
+    | Path
+    | "(" Expr ")"
+}
+
+Num = value:Digits
+
+Path = head:ident tail:("." ident)*

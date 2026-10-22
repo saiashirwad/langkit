@@ -15,7 +15,7 @@ test("module graphs accept independently composed grammar and unsorted UTF-16 sp
   const source = "😀\r\nuse(\"./child.strict\")\nbody\nuse(\"./other.strict\")";
   const result = loadModules(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
   assert.ok(result.success);
-  const masked = result.value.module(root)!.source;
+  const masked = result.value.modules.find((module) => module.uri === root)!.source;
   assert.equal(masked.length, source.length);
   assert.equal(masked, "😀\r\n" + " ".repeat(21) + "\nbody\n" + " ".repeat(21));
   assert.equal(result.value.modules.length, 3);
@@ -89,15 +89,11 @@ test("module graphs propagate parser programming exceptions", () => {
     }), (error) => error === bug);
 });
 
-test("module graph snapshots cannot be corrupted through exposed collections", () => {
+test("module graph sources cannot be corrupted through the exposed map", () => {
   const source = "use(\"./child.strict\")";
   const result = loadModules(source, { uri: root, read: () => "child" }, { extension: "strict", imports: useImports });
   assert.ok(result.success);
   const graph = result.value;
-  assert.ok(Object.isFrozen(graph.modules));
-  assert.ok(Object.isFrozen(graph.dependencyUris));
-  assert.ok(Object.isFrozen(graph.module(root)!.imports));
-  assert.ok(Object.isFrozen(graph.module(root)!.imports[0]!.span));
   (graph.sources as Map<string, string>).clear();
   assert.equal(graph.sources.get(root), source);
 });

@@ -8,74 +8,41 @@ type Reply<A> =
   | { readonly ok: true; readonly value: A; }
   | { readonly ok: false; readonly error: Diagnostic; };
 
-const invariant = Symbol();
-
-type Checkpointable<T> = {
+export type State<T> = {
   readonly kind: "state";
   readonly init: () => T;
   readonly checkpoint: (value: T) => () => void;
 };
-
-export type State<T> = Checkpointable<T>;
-export type Scoped<T> = { readonly kind: "scoped"; readonly initial: T; readonly [invariant]: (value: T) => T; };
+declare const invariant: unique symbol;
+export type Scoped<T> = { readonly kind: "scoped"; readonly initial: T; readonly [invariant]?: (value: T) => T; };
 
 export const state = <T>(init: () => T, checkpoint: (value: T) => () => void): State<T> => ({
   kind: "state",
   init,
   checkpoint,
 });
-export const scoped = <T>(initial: T): Scoped<T> => ({ kind: "scoped", initial, [invariant]: (value) => value });
+export const scoped = <T>(initial: T): Scoped<T> => ({ kind: "scoped", initial });
 
 type Entry = { readonly value: unknown; readonly initialRestore: () => void; readonly checkpoint: () => () => void; };
-type Storage = {
-  readonly states: Map<State<unknown>, Entry>;
-  readonly errors: Diagnostic[];
-  readonly mapped: WeakMap<Diagnostic, Set<DiagnosticMapper>>;
-};
-type DiagnosticMapper = {
-  readonly map: (error: Diagnostic) => Diagnostic;
-  readonly outer: DiagnosticMapper | undefined;
-};
-type RuntimeInit = {
-  readonly storage: Storage;
+type Storage = { readonly states: Map<State<unknown>, Entry>; readonly errors: Diagnostic[]; };
+type Frame = {
   readonly values: ReadonlyMap<object, unknown>;
   readonly labels: readonly string[];
   readonly span: Span | undefined;
   readonly document: string | undefined;
-  readonly diagnosticMapper: DiagnosticMapper | undefined;
 };
 
 class Runtime {
   readonly storage: Storage;
-  readonly values: ReadonlyMap<object, unknown>;
-  readonly labels: readonly string[];
-  readonly span: Span | undefined;
-  readonly document: string | undefined;
-  readonly diagnosticMapper: DiagnosticMapper | undefined;
+  readonly frame: Frame;
 
-  constructor(init: Partial<RuntimeInit> = {}) {
-    this.storage = init.storage ?? { states: new Map(), errors: [], mapped: new WeakMap() };
-    this.values = init.values ?? new Map();
-    this.labels = init.labels ?? [];
-    this.span = init.span;
-    this.document = init.document;
-    this.diagnosticMapper = init.diagnosticMapper;
-  }
-
-  derive(changes: Partial<Omit<RuntimeInit, "storage">>): Runtime {
-    return new Runtime({
-      storage: this.storage,
-      values: this.values,
-      labels: this.labels,
-      span: this.span,
-      document: this.document,
-      diagnosticMapper: this.diagnosticMapper,
-      ...changes,
-    });
+  constructor(storage: Storage, frame: Frame) {
+    this.storage = storage;
+    this.frame = frame;
   }
 
   get<T>(key: State<T> | Scoped<T>): T {
-    if (key.kind === "scoped") return (this.values.has(key) ? this.values.get(key) : key.initial) as T;
+    if (key.kind === "scoped") return (this.frame.values.has(key) ? this.frame.values.get(key) : key.initial) as T;
     let entry = this.storage.states.get(key as State<unknown>);
     if (entry === undefined) {
       const value = key.init();
@@ -100,33 +67,9 @@ class Runtime {
   }
 
   diagnostic(message: string): Diagnostic {
-    const local: Diagnostic = this.span === undefined
-      ? { message, context: this.labels }
-      : { message, context: this.labels, span: this.span };
-    return this.document === undefined ? local : withDocument(local, this.document);
-  }
-
-  mapDiagnostics(error: Diagnostic): Diagnostic {
-    if (this.diagnosticMapper === undefined) return error;
-    const applied = new Set(this.storage.mapped.get(error));
-    for (
-      let mapper: DiagnosticMapper | undefined = this.diagnosticMapper;
-      mapper !== undefined;
-      mapper = mapper.outer
-    ) {
-      if (applied.has(mapper)) continue;
-      error = mapper.map(error);
-      applied.add(mapper);
-    }
-    this.storage.mapped.set(error, applied);
-    return error;
-  }
-
-  mapError(error: Diagnostic, map: (error: Diagnostic) => Diagnostic): Diagnostic {
-    const mapped = map(error);
-    const applied = this.storage.mapped.get(error);
-    if (applied !== undefined) this.storage.mapped.set(mapped, applied);
-    return mapped;
+    const { labels: context, span, document } = this.frame;
+    const local: Diagnostic = span === undefined ? { message, context } : { message, context, span };
+    return document === undefined ? local : withDocument(local, document);
   }
 }
 
@@ -134,217 +77,165 @@ type Instruction =
   | { readonly kind: "primitive"; readonly step: (runtime: Runtime) => Reply<unknown>; }
   | { readonly kind: "bind"; readonly child: Check<unknown>; readonly next: (value: unknown) => Check<unknown>; }
   | { readonly kind: "generator"; readonly body: () => Generator<Check<unknown>, unknown, unknown>; }
-  | { readonly kind: "scoped"; readonly child: Check<unknown>; readonly derive: (runtime: Runtime) => Runtime; }
+  | { readonly kind: "scoped"; readonly child: Check<unknown>; readonly change: (runtime: Runtime) => Partial<Frame>; }
   | { readonly kind: "recovery"; readonly child: Check<unknown>; readonly fallback: Check<unknown>; }
-  | { readonly kind: "transaction"; readonly child: Check<unknown>; readonly speculative: boolean; }
-  | { readonly kind: "mapError"; readonly child: Check<unknown>; readonly map: (error: Diagnostic) => Diagnostic; }
-  | { readonly kind: "choice"; readonly children: readonly Check<unknown>[]; };
+  | { readonly kind: "atomic"; readonly child: Check<unknown>; };
 
-type Completion = Reply<unknown> | { readonly kind: "throw"; readonly error: unknown; };
-type Frame =
-  | { readonly kind: "mapError"; readonly map: (error: Diagnostic) => Diagnostic; }
+type Continuation =
   | { readonly kind: "bind"; readonly next: (value: unknown) => Check<unknown>; }
   | { readonly kind: "generator"; readonly iterator: Generator<Check<unknown>, unknown, unknown>; }
   | { readonly kind: "scoped"; readonly outer: Runtime; }
   | { readonly kind: "recovery"; readonly fallback: Check<unknown>; }
-  | {
-    readonly kind: "transaction";
-    readonly restore: () => void;
-    readonly start: number;
-    readonly speculative: boolean;
-  }
-  | {
-    readonly kind: "choice";
-    readonly children: readonly Check<unknown>[];
-    readonly index: number;
-    readonly first: Reply<unknown> | undefined;
-  };
+  | { readonly kind: "atomic"; readonly restore: () => void; };
+
+type Completion = Reply<unknown> | { readonly ok: "throw"; readonly error: unknown; };
 
 const instructions = new WeakMap<Check<unknown>, Instruction>();
 const instructed = <A>(instruction: Instruction): Check<A> => {
-  const checker: Check<A> = new Check<A>((runtime) => evaluate(checker, runtime));
+  const checker: Check<A> = Object.create(Check.prototype);
   instructions.set(checker, instruction);
   return checker;
 };
 
+// An explicit continuation stack keeps deeply nested checks from overflowing the call stack.
 const evaluate = <A>(checker: Check<A>, initial: Runtime): Reply<A> => {
   let runtime = initial;
   let current: Check<unknown> | undefined = checker;
   let completion: Completion = { ok: true, value: undefined };
-  const frames: Frame[] = [];
+  const stack: Continuation[] = [];
   const advance = (iterator: Generator<Check<unknown>, unknown, unknown>, value?: unknown) => {
     const result = iterator.next(value);
     if (result.done) completion = { ok: true, value: result.value };
     else {
-      frames.push({ kind: "generator", iterator });
+      stack.push({ kind: "generator", iterator });
       current = result.value;
     }
   };
-  while (current !== undefined || frames.length > 0) {
+  while (current !== undefined || stack.length > 0) {
     try {
       if (current !== undefined) {
         const instruction: Instruction = instructions.get(current)!;
         current = undefined;
         switch (instruction.kind) {
-          case "primitive": {
-            const reply = instruction.step(runtime);
-            if (reply.ok) completion = reply;
-            else completion = { ok: false, error: runtime.mapDiagnostics(reply.error) };
-            break;
-          }
-          case "mapError":
-            frames.push({ kind: "mapError", map: instruction.map });
-            current = instruction.child;
+          case "primitive":
+            completion = instruction.step(runtime);
             break;
           case "bind":
-            frames.push({ kind: "bind", next: instruction.next });
+            stack.push({ kind: "bind", next: instruction.next });
             current = instruction.child;
             break;
           case "generator":
             advance(instruction.body());
             break;
-          case "scoped": {
-            const inner = instruction.derive(runtime);
-            frames.push({ kind: "scoped", outer: runtime });
-            runtime = inner;
+          case "scoped":
+            stack.push({ kind: "scoped", outer: runtime });
+            runtime = new Runtime(runtime.storage, { ...runtime.frame, ...instruction.change(runtime) });
             current = instruction.child;
             break;
-          }
           case "recovery":
-            frames.push({ kind: "recovery", fallback: instruction.fallback });
+            stack.push({ kind: "recovery", fallback: instruction.fallback });
             current = instruction.child;
             break;
-          case "transaction": {
-            const start = runtime.storage.errors.length;
-            const restore = runtime.checkpoint();
-            frames.push({ kind: "transaction", restore, start, speculative: instruction.speculative });
+          case "atomic":
+            stack.push({ kind: "atomic", restore: runtime.checkpoint() });
             current = instruction.child;
-            break;
-          }
-          case "choice":
-            frames.push({ kind: "choice", children: instruction.children, index: 0, first: undefined });
-            current = attempt(instruction.children[0]!);
             break;
         }
       } else {
-        const frame = frames.pop()!;
-        switch (frame.kind) {
+        const continuation = stack.pop()!;
+        switch (continuation.kind) {
           case "bind":
-            if (!("kind" in completion) && completion.ok) current = frame.next(completion.value);
-            break;
-          case "mapError":
-            if (!("kind" in completion) && !completion.ok) {
-              completion = { ok: false, error: runtime.mapError(completion.error, frame.map) };
-            }
+            if (completion.ok === true) current = continuation.next(completion.value);
             break;
           case "generator":
-            if (!("kind" in completion) && completion.ok) advance(frame.iterator, completion.value);
-            else if (!frame.iterator.return(undefined).done) {
+            if (completion.ok === true) advance(continuation.iterator, completion.value);
+            else if (!continuation.iterator.return(undefined).done) {
               throw new TypeError("Checks cannot be yielded during generator cleanup");
             }
             break;
           case "scoped":
-            runtime = frame.outer;
+            runtime = continuation.outer;
             break;
           case "recovery":
-            if (!("kind" in completion) && !completion.ok) {
+            if (completion.ok === false) {
               runtime.storage.errors.push(completion.error);
-              current = frame.fallback;
+              current = continuation.fallback;
             }
             break;
-          case "transaction": {
-            const recovered = frame.speculative ? runtime.storage.errors[frame.start] : undefined;
-            if ("kind" in completion || !completion.ok || recovered !== undefined) {
-              try {
-                frame.restore();
-              } finally {
-                if (frame.speculative) runtime.storage.errors.length = frame.start;
-              }
-              if (!("kind" in completion) && recovered !== undefined) completion = { ok: false, error: recovered };
-            }
-            break;
-          }
-          case "choice":
-            if (!("kind" in completion) && !completion.ok) {
-              const first: Reply<unknown> = frame.first ?? completion;
-              const index = frame.index + 1;
-              if (index === frame.children.length) completion = first;
-              else {
-                frames.push({ ...frame, first, index });
-                current = attempt(frame.children[index]!);
-              }
-            }
+          case "atomic":
+            if (completion.ok !== true) continuation.restore();
             break;
         }
       }
     } catch (error) {
       current = undefined;
-      completion = { kind: "throw", error };
+      completion = { ok: "throw", error };
     }
   }
-  if ("kind" in completion) throw completion.error;
+  if (completion.ok === "throw") throw completion.error;
   return completion as Reply<A>;
 };
 
 export class Check<A> {
-  readonly step: (runtime: Runtime) => Reply<A>;
-
   constructor(step: (runtime: Runtime) => Reply<A>) {
-    this.step = step;
     instructions.set(this, { kind: "primitive", step });
   }
-  *[Symbol.iterator](): Generator<Check<A>, A, unknown> {
-    return (yield this) as A;
+
+  // Hand-rolled so `yield*` on a check costs one small object, not a generator.
+  [Symbol.iterator](): Iterator<Check<A>, A, unknown> {
+    let yielded = false;
+    return {
+      next: (value?: unknown) => {
+        if (yielded) return { done: true, value: value as A };
+        yielded = true;
+        return { done: false, value: this };
+      },
+      return: (value?: unknown) => {
+        yielded = true;
+        return { done: true, value: value as A };
+      },
+      throw: (error?: unknown) => {
+        yielded = true;
+        throw error;
+      },
+    };
   }
 
   map<B>(f: (value: A) => B): Check<B> {
     return this.flatMap((value) => pure(f(value)));
   }
 
-  mapError(map: (error: Diagnostic) => Diagnostic): Check<A> {
-    return instructed({ kind: "mapError", child: this, map });
-  }
-
-  withDiagnostics(map: (error: Diagnostic) => Diagnostic): Check<A> {
-    return instructed({
-      kind: "scoped",
-      child: this,
-      derive: (runtime) => runtime.derive({ diagnosticMapper: { map, outer: runtime.diagnosticMapper } }),
-    });
-  }
-
   flatMap<B>(f: (value: A) => Check<B>): Check<B> {
     return instructed({ kind: "bind", child: this, next: (value) => f(value as A) });
   }
 
+  /** Records this failure as a diagnostic and continues with the fallback; `run` still fails. */
   recover<B>(fallback: Check<B>): Check<A | B>;
   recover(this: Check<void>): Check<void>;
   recover(fallback: Check<unknown> = pure(undefined)): Check<unknown> {
     return instructed({ kind: "recovery", child: this, fallback });
   }
 
+  /** Restores every `State` this check touched when it fails or throws. */
   atomic(): Check<A> {
-    return instructed({ kind: "transaction", child: this, speculative: false });
+    return instructed({ kind: "atomic", child: this });
   }
 
   context(label: string): Check<A> {
-    return instructed({
-      kind: "scoped",
-      child: this,
-      derive: (runtime) => runtime.derive({ labels: [...runtime.labels, label] }),
-    });
+    return scope(this, (runtime) => ({ labels: [...runtime.frame.labels, label] }));
   }
 
   at(span: Span | undefined): Check<A> {
-    return span === undefined
-      ? this
-      : instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ span }) });
+    return span === undefined ? this : scope(this, () => ({ span }));
   }
 
   inDocument(uri: string): Check<A> {
-    return instructed({ kind: "scoped", child: this, derive: (runtime) => runtime.derive({ document: uri }) });
+    return scope(this, () => ({ document: uri }));
   }
 }
+
+const scope = <A>(child: Check<A>, change: (runtime: Runtime) => Partial<Frame>): Check<A> =>
+  instructed({ kind: "scoped", child, change });
 
 export const check = <A>(body: () => Generator<Check<unknown>, A, unknown>): Check<A> =>
   instructed({ kind: "generator", body });
@@ -356,11 +247,7 @@ export const get = <T>(key: State<T> | Scoped<T>): Check<T> =>
   new Check((runtime) => ({ ok: true, value: runtime.get(key) }));
 
 export const within = <T, A>(key: Scoped<T>, update: (current: T) => T, body: Check<A>): Check<A> =>
-  instructed({
-    kind: "scoped",
-    child: body,
-    derive: (runtime) => runtime.derive({ values: new Map(runtime.values).set(key, update(runtime.get(key))) }),
-  });
+  scope(body, (runtime) => ({ values: new Map(runtime.frame.values).set(key, update(runtime.get(key))) }));
 
 export const bind = <T, A>(
   env: Scoped<ReadonlyMap<string, T>>,
@@ -371,53 +258,86 @@ export const bind = <T, A>(
 export const lookup = <T>(env: Scoped<ReadonlyMap<string, T>>, name: string): Check<T> =>
   get(env).flatMap((current) => current.has(name) ? pure(current.get(name) as T) : fail(`Unbound variable: ${name}`));
 
-type Value<C> = C extends Check<infer A> ? A : never;
-type Values<Checks extends readonly Check<unknown>[]> = { -readonly [K in keyof Checks]: Value<Checks[K]>; };
-
-export const sequence = <const Checks extends readonly Check<unknown>[]>(checks: Checks): Check<Values<Checks>> =>
-  check(function*() {
-    const values: unknown[] = [];
-    for (const checker of checks) values.push(yield* checker);
-    return values as Values<Checks>;
-  });
-
-export const attempt = <A>(checker: Check<A>): Check<A> =>
-  instructed({ kind: "transaction", child: checker, speculative: true });
-
-export const choice = <const Checks extends readonly [Check<unknown>, ...Check<unknown>[]]>(
-  ...checks: Checks
-): Check<Value<Checks[number]>> => instructed({ kind: "choice", children: checks });
-
 export const run = <A>(checker: Check<A>): Result<A> => {
-  const runtime = new Runtime();
-  const reply = evaluate(checker, runtime);
-  const errors = runtime.storage.errors;
-  if (!reply.ok) {
-    const allErrors: [Diagnostic, ...Diagnostic[]] = errors.length === 0
-      ? [reply.error]
-      : [errors[0]!, ...errors.slice(1), reply.error];
-    return { success: false, errors: allErrors };
+  const storage: Storage = { states: new Map(), errors: [] };
+  const frame: Frame = { values: new Map(), labels: [], span: undefined, document: undefined };
+  const reply = evaluate(checker, new Runtime(storage, frame));
+  const [first, ...rest] = storage.errors;
+  if (!reply.ok) return { success: false, errors: first ? [first, ...rest, reply.error] : [reply.error] };
+  return first === undefined ? { success: true, value: reply.value } : { success: false, errors: [first, ...rest] };
+};
+
+type Undo = () => void;
+
+export type Transaction = {
+  assign<T extends object, K extends keyof T>(target: T, key: K, value: T[K]): void;
+  add<T>(target: Set<T>, value: T): void;
+  push<T>(target: T[], value: T): void;
+  fail(message: string): never;
+};
+
+class Failure {
+  readonly message: string;
+
+  constructor(message: string) {
+    this.message = message;
   }
-  return errors.length
-    ? { success: false, errors: [...errors] as [Diagnostic, ...Diagnostic[]] }
-    : { success: true, value: reply.value };
-};
+}
 
-export type DetailedResult<A> =
-  | { readonly status: "completed"; readonly value: A; readonly diagnostics: readonly Diagnostic[]; }
-  | { readonly status: "failed"; readonly diagnostics: readonly [Diagnostic, ...Diagnostic[]]; };
+class Journal implements Transaction {
+  readonly entries: Undo[] = [];
 
-export const runDetailed = <A>(checker: Check<A>): DetailedResult<A> => {
-  const runtime = new Runtime();
-  const reply = evaluate(checker, runtime);
-  const diagnostics = [...runtime.storage.errors];
-  return reply.ok
-    ? { status: "completed", value: reply.value, diagnostics }
-    : {
-      status: "failed",
-      diagnostics: diagnostics.length ? [diagnostics[0]!, ...diagnostics.slice(1), reply.error] : [reply.error],
-    };
-};
+  assign<T extends object, K extends keyof T>(target: T, key: K, value: T[K]): void {
+    const existed = Object.prototype.hasOwnProperty.call(target, key);
+    const previous = target[key];
+    if (existed && Object.is(previous, value)) return;
+    this.entries.push(() => {
+      if (existed) target[key] = previous;
+      else Reflect.deleteProperty(target, key);
+    });
+    target[key] = value;
+  }
 
-export const diagnostics = (): Check<readonly Diagnostic[]> =>
-  new Check((runtime) => ({ ok: true, value: [...runtime.storage.errors] }));
+  add<T>(target: Set<T>, value: T): void {
+    if (target.has(value)) return;
+    this.entries.push(() => {
+      target.delete(value);
+    });
+    target.add(value);
+  }
+
+  push<T>(target: T[], value: T): void {
+    const length = target.length;
+    this.entries.push(() => {
+      target.length = length;
+    });
+    target.push(value);
+  }
+
+  fail(message: string): never {
+    throw new Failure(message);
+  }
+
+  undo(length: number): void {
+    while (this.entries.length > length) this.entries.pop()!();
+  }
+}
+
+const journal = state(() => new Journal(), (current) => {
+  const length = current.entries.length;
+  return () => current.undo(length);
+});
+
+/** Runs `body` against the undo journal; a throw undoes its writes, and `tx.fail` becomes a check failure. */
+export const transaction = <A>(body: (tx: Transaction) => A): Check<A> =>
+  new Check((runtime) => {
+    const tx = runtime.get(journal);
+    const length = tx.entries.length;
+    try {
+      return { ok: true, value: body(tx) };
+    } catch (error) {
+      tx.undo(length);
+      if (error instanceof Failure) return { ok: false, error: runtime.diagnostic(error.message) };
+      throw error;
+    }
+  });

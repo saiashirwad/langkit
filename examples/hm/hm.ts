@@ -1,18 +1,18 @@
-import { type Check, fail, render, type Result, run, type Span } from "langkit";
-import { type Analysis, create as createAnalysis, highlight, type TokenRule } from "langkit/analysis";
-import { createBindings } from "langkit/bindings";
-import { type Binding, type Body, create, type Operator, type Program, type Value } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
-import { createJudgments, type RuleTable } from "langkit/judgments";
+import { bind, type Check, check, fail, get, lookup, render, type Result, run, scoped, type Span } from "langkit";
+import { type Analysis, create as createAnalysis, highlight, type TokenRule, unanalyzed } from "langkit/analysis";
+import type { Binding, Body, Operator, Value } from "langkit/ir";
+import * as ir from "langkit/ir";
+import * as javascript from "langkit/javascript";
 import {
   between,
   choice,
   commit,
   createLexemes,
+  located as locate,
+  named,
   type Parser,
   parser,
+  parseResult,
   postfix,
   precedence,
   recursive,
@@ -34,8 +34,8 @@ import {
   show,
   type Type,
   unify,
-} from "langkit/types/hm";
-export { show, type Type } from "langkit/types/hm";
+} from "langkit/types/higher-rank";
+export { show, type Type } from "langkit/types/higher-rank";
 
 type Syntax =
   | { readonly kind: "number"; readonly value: number; }
@@ -60,7 +60,7 @@ type Syntax =
 
 export type Expr = Syntax & { readonly span: Span; };
 
-const located = (p: Parser<Syntax>): Parser<Expr> => p.withSpan((node, span) => ({ ...node, span }));
+const located = locate<Syntax>;
 
 const words = /[a-zA-Z_]\w*/;
 const digits = /\d+(?:\.\d+)?/;
@@ -68,14 +68,11 @@ const keywords = ["let", "in", "fn", "if", "then", "else", "true", "false"] as c
 const reserved: ReadonlySet<string> = new Set(keywords);
 const lex = createLexemes({
   trivia: regex(/\s*/),
-  identifier: regex(words),
+  identifier: words,
   keywords,
 });
 const { keyword, symbol, identifier } = lex;
-const name = identifier.withSpan((name, span) => ({
-  name,
-  span: { start: span.start, end: span.start + name.length },
-}));
+const name = named(identifier);
 
 const tokens: readonly TokenRule[] = [
   {
@@ -165,9 +162,9 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
   };
 
   const operators = precedence(calls, [
-    { associativity: "left", operators: [binary("*"), binary("/")] },
-    { associativity: "left", operators: [binary("+"), binary("-")] },
-    { associativity: "left", operators: [binary(">"), binary("==")] },
+    { associativity: "left", operator: choice(binary("*"), binary("/")) },
+    { associativity: "left", operator: choice(binary("+"), binary("-")) },
+    { associativity: "left", operator: choice(binary(">"), binary("==")) },
   ]);
 
   return choice(binding, lambda, conditional, operators);
@@ -175,192 +172,108 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
 
 export const program = lex.complete(expression);
 
-const code = elaboration(create<Type>());
-const javascript = createJavaScriptEmitter<Type>(coreJavaScript(code.coreDescriptors));
 const facts = createAnalysis<Type>();
-const bindings = createBindings<Type, Value<Type>, Binding<Type>, Scheme>({
-  monomorphic: mono,
-  instantiate,
-  generalize,
-  parameter: code.binding,
-  declare: (name, value) =>
-    code.check(function*() {
-      return (yield* code.declare(name, value.term)).node.binding;
-    }),
-  reference: code.ref,
-  define: (binding, type, span, kind) =>
-    facts.define(
-      binding,
-      span,
-      kind === "parameter" ? kind : prune(type).kind === "function" ? "function" : "variable",
-    ),
-  use: (binding, _type, span) => facts.reference(binding, span),
-});
-const synthesized = (term: Value<Type>) => ({ type: term.type, term });
-const rules: RuleTable<Expr, Type, Value<Type>> = {
-  number: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
-      return synthesized(code.literal(number, expr.value));
-    },
-  },
-  boolean: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return synthesized(code.literal(boolean, expr.value));
-    },
-  },
-  name: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return yield* bindings.reference(expr.name, expr.span);
-    },
-  },
-  binary: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      const left = yield* elaborate(expr.left);
-      const right = yield* elaborate(expr.right);
-      yield* unify(left.type, number).at(expr.left.span).recover();
-      yield* unify(right.type, number).at(expr.right.span).recover();
-      return synthesized(code.binary(
-        expr.op === ">" || expr.op === "==" ? boolean : number,
-        expr.op,
-        left,
-        right,
-      ));
-    },
-  },
-  let: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return synthesized(
-        yield* code.check(function*() {
-          return yield* code.scope(function*() {
-            return yield* bindings.let(
-              expr.name,
-              expr.nameSpan,
-              elaborate(expr.value).map(synthesized),
-              () => elaborate(expr.body),
-            );
-          });
-        }),
-      );
-    },
-  },
-  fn: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return yield* bindings.parameter(expr.param, yield* fresh(), expr.paramSpan, (param) =>
-        code.check(function*() {
-          const body = yield* code.body(function*() {
-            return yield* elaborate(expr.body);
-          });
-          return synthesized(code.fn(fn(param.type, body.result.type), param, body));
+const env = scoped<ReadonlyMap<string, { readonly binding: Binding<Type>; readonly scheme: Scheme; }>>(new Map());
+
+const elaborate = (expr: Expr): Check<Value<Type>> =>
+  check(function*() {
+    const value = yield* synthesize(expr);
+    yield* facts.typed(value.type, expr.span);
+    return ir.at(value, expr.span);
+  }).at(expr.span);
+
+const synthesize = (expr: Expr): Check<Value<Type>> =>
+  check(function*() {
+    switch (expr.kind) {
+      case "number":
+        if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
+        return ir.literal(number, expr.value);
+      case "boolean":
+        return ir.literal(boolean, expr.value);
+      case "name": {
+        const { binding, scheme } = yield* lookup(env, expr.name);
+        const type = instantiate(scheme);
+        yield* facts.reference(binding, expr.span);
+        return ir.ref(binding, type);
+      }
+      case "binary": {
+        const left = yield* elaborate(expr.left);
+        const right = yield* elaborate(expr.right);
+        yield* unify(left.type, number).at(expr.left.span).recover();
+        yield* unify(right.type, number).at(expr.right.span).recover();
+        return ir.binary(expr.op === ">" || expr.op === "==" ? boolean : number, expr.op, left, right);
+      }
+      case "let":
+        return yield* ir.scope(check(function*() {
+          const initial = yield* elaborate(expr.value);
+          const outer = yield* get(env);
+          const scheme = generalize(initial.type, [...outer.values()].map((entry) => entry.scheme));
+          const { binding } = yield* ir.declare(expr.name, initial);
+          yield* facts.define(
+            binding,
+            expr.nameSpan,
+            prune(initial.type).kind === "function" ? "function" : "variable",
+          );
+          return yield* bind(env, [[expr.name, { binding, scheme }]], elaborate(expr.body));
         }));
-    },
-  },
-  call: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      const callee = yield* elaborate(expr.fn);
-      const arg = yield* elaborate(expr.arg);
-      const result = yield* fresh();
-      yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span).recover();
-      return synthesized(code.call(result, callee, arg));
-    },
-  },
-  if: {
-    mode: "synth",
-    check: "fromSynth",
-    *synth(expr) {
-      return yield* code.check(function*() {
+      case "fn": {
+        const type = fresh();
+        const param = ir.binding(expr.param, type);
+        yield* facts.define(param, expr.paramSpan, "parameter");
+        const body = yield* ir.body(
+          bind(env, [[expr.param, { binding: param, scheme: mono(type) }]], elaborate(expr.body)),
+        );
+        return ir.fn(fn(param.type, body.result.type), param, body);
+      }
+      case "call": {
+        const callee = yield* elaborate(expr.fn);
+        const arg = yield* elaborate(expr.arg);
+        const result = fresh();
+        yield* unify(callee.type, fn(arg.type, result)).at(expr.arg.span).recover();
+        return ir.call(result, callee, arg);
+      }
+      case "if": {
         const cond = yield* elaborate(expr.cond);
         yield* unify(cond.type, boolean).at(expr.cond.span).recover();
-        const then = yield* code.body(function*() {
-          return yield* elaborate(expr.then);
-        });
-        const otherwise = yield* code.body(function*() {
-          return yield* elaborate(expr.else);
-        });
+        const then = yield* ir.body(elaborate(expr.then));
+        const otherwise = yield* ir.body(elaborate(expr.else));
         yield* unify(then.result.type, otherwise.result.type).at(expr.else.span).recover();
-        return synthesized(code.conditional(then.result.type, cond, then, otherwise));
-      });
-    },
-  },
-};
-const judgments = createJudgments(rules, {
-  modes: {
-    enter: (expected, body) => body(expected),
-    accept: (actual, expected) => unify(actual.type, expected).map(() => actual.term),
-  },
-  source: (expr) => ({ span: expr.span }),
-  typed: facts.typed,
-});
-const elaborate = (expr: Expr): Check<Value<Type>> => judgments.synth(expr).map(({ term }) => code.at(term, expr.span));
-
-export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function*() {
-    return yield* elaborate(expr);
+        return ir.conditional(then.result.type, cond, then, otherwise);
+      }
+    }
   });
 
-export type Compiled = {
-  readonly type: Type;
-  readonly ir: Program<Type>;
-  readonly javascript: string;
-};
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => ir.body(elaborate(expr));
 
-const parse = (source: string): Result<Expr> => {
-  const parsed = program.parse(source);
-  return parsed.success
-    ? parsed
-    : {
-      success: false,
-      errors: [{
-        ...parsed.error.diagnostic,
-        message: parsed.error.message,
-        context: ["parsing", ...(parsed.error.diagnostic.context ?? [])],
-      }],
-    };
-};
+export type Checked = { readonly type: Type; readonly body: Body<Type>; readonly result: Span; };
+export type Compiled = Checked & { readonly javascript: string; };
+
+const finalExpression = (expr: Expr): Expr => expr.kind === "let" ? finalExpression(expr.body) : expr;
+
+const parse = (source: string): Result<Expr> => parseResult(program, source);
 
 export const analyze = (source: string): Analysis<Type> => {
   const lexical = highlight(source, tokens);
   const parsed = parse(source);
-  if (!parsed.success) {
-    return {
-      diagnostics: parsed.errors,
-      types: [],
-      definitions: [],
-      references: [],
-      tokens: lexical,
-    };
-  }
+  if (!parsed.success) return unanalyzed(parsed.errors, lexical);
   return facts.collect(elaborateBody(parsed.value), lexical).analysis;
 };
 
-export const compile = (source: string): Result<Compiled> => {
+export const checkSource = (source: string): Result<Checked> => {
   const parsed = parse(source);
   if (!parsed.success) return parsed;
   const built = run(elaborateBody(parsed.value));
   if (!built.success) return built;
-  const ir = code.program(built.value);
   return {
     success: true,
-    value: {
-      type: built.value.result.type,
-      ir,
-      javascript: javascript.emit(ir),
-    },
+    value: { type: built.value.result.type, body: built.value, result: finalExpression(parsed.value).span },
   };
+};
+
+export const compile = (source: string): Result<Compiled> => {
+  const checked = checkSource(source);
+  if (!checked.success) return checked;
+  return { success: true, value: { ...checked.value, javascript: javascript.emit(checked.value.body) } };
 };
 
 if (import.meta.main) {

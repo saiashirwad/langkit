@@ -6,8 +6,11 @@ import {
   choice,
   commit,
   createLexemes,
+  type Located,
+  located,
   many,
   many1,
+  named,
   optional,
   type Parser,
   parser,
@@ -19,8 +22,6 @@ import {
   sepBy1,
   sepEndBy,
 } from "langkit/parse";
-
-type Located<T> = T & { readonly span: Span; };
 
 export type TypeExpr = Located<
   | { readonly kind: "name"; readonly name: string; readonly args: readonly TypeExpr[]; }
@@ -127,18 +128,11 @@ const keywords = [
 const reserved: ReadonlySet<string> = new Set(keywords);
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
-  identifier: regex(words),
+  identifier: words,
   keywords,
 });
 const { keyword, symbol, identifier } = lex;
 
-const located = <T>(p: Parser<T>): Parser<Located<T>> => p.withSpan((value, span) => ({ ...value, span }));
-
-const named = (p: Parser<string>) =>
-  p.withSpan((name, span) => ({
-    name,
-    span: { start: span.start, end: span.start + name.length },
-  }));
 const name = named(identifier);
 const lower = identifier.validate(
   (text) => /^[a-z_]/.test(text),
@@ -396,9 +390,9 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
       }),
     );
   const operators = precedence(calls, [
-    { associativity: "left", operators: [binary("*"), binary("/")] },
-    { associativity: "left", operators: [binary("+"), binary("-")] },
-    { associativity: "left", operators: [binary(">"), binary("==")] },
+    { associativity: "left", operator: choice(binary("*"), binary("/")) },
+    { associativity: "left", operator: choice(binary("+"), binary("-")) },
+    { associativity: "left", operator: choice(binary(">"), binary("==")) },
   ]);
   return choice(binding, lambda, conditional, match, operators);
 });

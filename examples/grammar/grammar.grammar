@@ -1,0 +1,57 @@
+grammar Grammar
+
+skip = /\s+/ | /\/\/[^\r\n]*/
+word = /[A-Za-z_][A-Za-z0-9_]*/
+
+token String = /"(?:[^"\\\r\n]|\\.)*"/
+token Pattern = /\/(?:[^\/\\\r\n\[]|\\.|\[(?:[^\]\\\r\n]|\\.)*\])+\//
+
+File = "grammar" ~ name:Name items:Item*
+
+Item =
+  | #trivia "skip" ~ "=" patterns:Regex sepBy1 "|"
+  | #identifier "word" ~ "=" pattern:Regex
+  | #named "token" ~ name:Name "=" pattern:Regex
+  | #rule name:Name "=" ~ body:Body
+
+Body =
+  | #levels "precedence" ~ "{" levels:Level* "atom" atoms:Alts "}"
+  | #alts alts:Alts
+
+Level = assoc:("left" | "right" | "none" | "prefix" | "postfix") operators:Text sepBy1 "|"
+
+Alts = "|"? alts:Alt sepBy1 "|"
+
+Alt =
+  | #tagged "#" tag:Name elems:Elem*
+  | #untagged elems:Elem+
+
+Elem = label:(Name ":")? expr:Separated
+
+Separated =
+  | #sep item:Repetition op:Separator separator:Repetition
+  | Repetition !Separator
+
+Separator = keyword:("sepBy1" | "sepBy" | "sepEndBy1" | "sepEndBy")
+
+Repetition = precedence {
+  postfix "*" | "+" | "?"
+  atom Unary
+}
+
+Unary =
+  | #predicate op:("&" | "!") operand:Primary
+  | Primary
+
+Primary =
+  | #text value:Text
+  | #regex value:Regex
+  | #cut "~"
+  | #group "(" alts:Alts ")"
+  | #ref name:Name !"="
+
+Text = text:String
+
+Regex = source:Pattern
+
+Name = name:(ident | "left" | "right" | "none" | "prefix" | "postfix" | "atom" | "sepBy1" | "sepBy" | "sepEndBy1" | "sepEndBy")

@@ -13,19 +13,12 @@ import {
   type Span,
   within,
 } from "langkit";
-import { type Analysis, create as createAnalysis, highlight } from "langkit/analysis";
-import { type Binding, type Body, create, type Program, type Value } from "langkit/ir";
-import { elaboration } from "langkit/ir/check";
-import { createJavaScriptEmitter } from "langkit/javascript";
-import { coreJavaScript } from "langkit/javascript/core";
-import { printingJavaScript } from "langkit/javascript/printing";
-import { recordsJavaScript } from "langkit/javascript/records";
-import { variantsJavaScript } from "langkit/javascript/variants";
+import { type Analysis, create as createAnalysis, highlight, unanalyzed } from "langkit/analysis";
+import type { Binding, Body, Declaration, Value } from "langkit/ir";
+import * as ir from "langkit/ir";
+import * as javascript from "langkit/javascript";
 import { loadModules, type ModuleGraph, type ModuleOptions } from "langkit/modules";
-import { parseImports } from "langkit/modules/imports";
-import { printing } from "langkit/operations/printing";
-import { records } from "langkit/operations/records";
-import { variants } from "langkit/operations/variants";
+import { parseResult } from "langkit/parse";
 import {
   boolean,
   data,
@@ -57,6 +50,7 @@ import { readFileSync } from "node:fs";
 import { resolve as resolvePath } from "node:path";
 import { pathToFileURL } from "node:url";
 import { runInNewContext } from "node:vm";
+import { parseImports } from "./advanced-imports.ts";
 import { type DataDecl, type Expr, type Module, program, tokens, type TypeExpr } from "./advanced-syntax.ts";
 
 export { show, type Type } from "langkit/types/higher-rank";
@@ -75,23 +69,11 @@ type Constructor = {
 
 type Definition = { readonly type: TypeConstructor; readonly constructors: readonly string[]; };
 
-const recordFeature = records<Type>();
-const variantFeature = variants<Type>();
-const printingFeature = printing<Type>();
-const pureCode = create<Type>().use(recordFeature).use(variantFeature).use(printingFeature);
-const code = elaboration(pureCode);
-const javascript = createJavaScriptEmitter<Type>(
-  coreJavaScript(pureCode.coreDescriptors),
-  recordsJavaScript(recordFeature.descriptors),
-  variantsJavaScript(variantFeature.descriptors),
-  printingJavaScript(printingFeature.descriptors),
-);
 const facts = createAnalysis<Type>();
 const env = scoped<ReadonlyMap<string, Entry>>(new Map());
 const definitions = scoped<ReadonlyMap<string, Definition>>(new Map());
 const constructors = scoped<ReadonlyMap<string, Constructor>>(new Map());
 const level = scoped(0);
-const observe = scoped(true);
 
 const resolve = (
   syntax: TypeExpr,
@@ -162,8 +144,8 @@ const typed = (expr: Expr, computation: Check<Value<Type>>): Check<Value<Type>> 
   computation
     .flatMap((value) =>
       check(function*() {
-        if (yield* get(observe)) yield* facts.typed(value.type, expr.span);
-        return code.at(value, expr.span);
+        yield* facts.typed(value.type, expr.span);
+        return ir.at(value, expr.span);
       })
     )
     .at(expr.span);
@@ -178,33 +160,27 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
         const value = yield* within(
           level,
           () => current + 1,
-          checkExpr(expr, yield* skolemize(target, current + 1)),
+          checkExpr(expr, skolemize(target, current + 1)),
         );
         return { ...value, type: expected };
       }
       if (expr.kind === "fn" && target.kind === "function") {
         const parameter = expr.annotation ? yield* resolve(expr.annotation) : target.param;
         if (expr.annotation) yield* subsume(target.param, parameter, current);
-        const binding = code.binding(expr.param, parameter);
-        if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
-        const body = yield* code.body(function*() {
-          return yield* bind(
-            env,
-            [[expr.param, { binding, scheme: mono(parameter) }]],
-            checkExpr(expr.body, target.result),
-          );
-        });
-        return code.fn(expected, binding, body);
+        const binding = ir.binding(expr.param, parameter);
+        yield* facts.define(binding, expr.paramSpan, "parameter");
+        const body = yield* ir.body(bind(
+          env,
+          [[expr.param, { binding, scheme: mono(parameter) }]],
+          checkExpr(expr.body, target.result),
+        ));
+        return ir.fn(expected, binding, body);
       }
       if (expr.kind === "if") {
         const cond = yield* checkExpr(expr.cond, boolean);
-        const then = yield* code.body(function*() {
-          return yield* checkExpr(expr.then, expected);
-        });
-        const otherwise = yield* code.body(function*() {
-          return yield* checkExpr(expr.else, expected);
-        });
-        return code.conditional(expected, cond, then, otherwise);
+        const then = yield* ir.body(checkExpr(expr.then, expected));
+        const otherwise = yield* ir.body(checkExpr(expr.else, expected));
+        return ir.conditional(expected, cond, then, otherwise);
       }
       if (expr.kind === "let") return yield* elaborateLet(expr, expected);
       if (expr.kind === "match") return yield* elaborateMatch(expr, expected);
@@ -215,7 +191,7 @@ const checkExpr = (expr: Expr, expected: Type): Check<Value<Type>> =>
   );
 
 const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): Check<Value<Type>> =>
-  code.scope(function*() {
+  ir.scope(check(function*() {
     const environment = yield* get(env);
     const annotation = expr.annotation ? yield* resolve(expr.annotation) : undefined;
     let binding: Binding<Type>;
@@ -224,40 +200,37 @@ const elaborateLet = (expr: Extract<Expr, { kind: "let"; }>, expected?: Type): C
       if (expr.value.kind !== "fn") {
         return yield* fail("Recursive bindings require a function initializer");
       }
-      const type = annotation ?? (yield* fresh(yield* get(level)));
-      binding = code.binding(expr.name, type);
+      const type = annotation ?? fresh(yield* get(level));
+      binding = ir.binding(expr.name, type);
       const initial = yield* bind(
         env,
         [[expr.name, { binding, scheme: mono(type) }]],
         checkExpr(expr.value, type),
       );
-      yield* code.declareRecursive(binding, initial);
+      yield* ir.declareRecursive(binding, initial);
       scheme = annotation
         ? mono(annotation)
-        : yield* generalize(type, [...environment.values()].map((entry) => entry.scheme));
+        : generalize(type, [...environment.values()].map((entry) => entry.scheme));
     } else {
       const initial = annotation
         ? yield* checkExpr(expr.value, annotation)
         : yield* elaborate(expr.value);
-      const value = yield* code.declare(expr.name, initial);
-      binding = value.node.binding;
+      binding = (yield* ir.declare(expr.name, initial)).binding;
       scheme = annotation
         ? mono(annotation)
-        : yield* generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
+        : generalize(initial.type, [...environment.values()].map((entry) => entry.scheme));
     }
-    if (yield* get(observe)) {
-      yield* facts.define(
-        binding,
-        expr.nameSpan,
-        ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable",
-      );
-    }
+    yield* facts.define(
+      binding,
+      expr.nameSpan,
+      ["function", "forall"].includes(prune(binding.type).kind) ? "function" : "variable",
+    );
     return yield* bind(
       env,
       [[expr.name, { binding, scheme }]],
       expected ? checkExpr(expr.body, expected) : elaborate(expr.body),
     );
-  });
+  }));
 
 const elaborateMatch = (
   expr: Extract<Expr, { kind: "match"; }>,
@@ -266,7 +239,7 @@ const elaborateMatch = (
   check(function*() {
     const value = yield* elaborate(expr.value);
     const current = yield* get(level);
-    const result = expected ?? (yield* fresh(current));
+    const result = expected ?? fresh(current);
     const known = yield* get(constructors);
     const seen = new Set<string>();
     const cases: { tag: string; bindings: Binding<Type>[]; body: Body<Type>; }[] = [];
@@ -278,20 +251,16 @@ const elaborateMatch = (
       if (pattern.kind === "binding") {
         if (pattern.name === "_") {
           fallback = {
-            body: yield* code.body(function*() {
-              return yield* checkExpr(branch.body, result);
-            }),
+            body: yield* ir.body(checkExpr(branch.body, result)),
           };
         } else {
-          const binding = code.binding(pattern.name, value.type);
-          if (yield* get(observe)) yield* facts.define(binding, pattern.span);
-          const body = yield* code.body(function*() {
-            return yield* bind(
-              env,
-              [[pattern.name, { binding, scheme: mono(value.type) }]],
-              checkExpr(branch.body, result),
-            );
-          });
+          const binding = ir.binding(pattern.name, value.type);
+          yield* facts.define(binding, pattern.span);
+          const body = yield* ir.body(bind(
+            env,
+            [[pattern.name, { binding, scheme: mono(value.type) }]],
+            checkExpr(branch.body, result),
+          ));
           fallback = { binding, body };
         }
         continue;
@@ -307,33 +276,29 @@ const elaborateMatch = (
           `Constructor ${pattern.name} expects ${constructor.arity} fields, found ${pattern.fields.length}`,
         ).at(pattern.span);
       }
-      if (yield* get(observe)) {
-        yield* facts.reference(constructor.binding, {
-          start: pattern.span.start,
-          end: pattern.span.start + pattern.name.length,
-        });
-      }
-      let type = yield* instantiateForall(constructor.type, current);
+      yield* facts.reference(constructor.binding, {
+        start: pattern.span.start,
+        end: pattern.span.start + pattern.name.length,
+      });
+      let type = instantiateForall(constructor.type, current);
       const bindings: Binding<Type>[] = [];
       const entries = new Map<string, Entry>();
       for (const field of pattern.fields) {
         const arrow = prune(type);
         if (arrow.kind !== "function") throw new Error("Constructor arity does not match its type");
-        const binding = code.binding(field.name, arrow.param);
+        const binding = ir.binding(field.name, arrow.param);
         bindings.push(binding);
         if (field.name !== "_") {
           if (entries.has(field.name)) {
             return yield* fail(`Duplicate pattern binding: ${field.name}`).at(field.span);
           }
           entries.set(field.name, { binding, scheme: mono(arrow.param) });
-          if (yield* get(observe)) yield* facts.define(binding, field.span);
+          yield* facts.define(binding, field.span);
         }
         type = arrow.result;
       }
       yield* unify(value.type, type).at(pattern.span);
-      const body = yield* code.body(function*() {
-        return yield* bind(env, entries, checkExpr(branch.body, result));
-      });
+      const body = yield* ir.body(bind(env, entries, checkExpr(branch.body, result)));
       cases.push({ tag: constructor.tag, bindings, body });
     }
     if (!fallback) {
@@ -347,7 +312,7 @@ const elaborateMatch = (
         return yield* fail(`Non-exhaustive match; missing: ${missing.join(", ")}`);
       }
     }
-    return code.match(result, value, cases, fallback);
+    return ir.match(result, value, cases, fallback);
   }).at(expr.span);
 
 export const elaborate = (expr: Expr): Check<Value<Type>> =>
@@ -358,15 +323,15 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       switch (expr.kind) {
         case "number":
           if (!Number.isFinite(expr.value)) return yield* fail("Number literal is too large");
-          return code.literal(number, expr.value);
+          return ir.literal(number, expr.value);
         case "boolean":
-          return code.literal(boolean, expr.value);
+          return ir.literal(boolean, expr.value);
         case "string":
-          return code.literal(string, expr.value);
+          return ir.literal(string, expr.value);
         case "name": {
           const { binding, scheme } = yield* lookup(env, expr.name);
-          if (yield* get(observe)) yield* facts.reference(binding, expr.span);
-          return code.ref(binding, yield* instantiateForall(yield* instantiate(scheme, current), current));
+          yield* facts.reference(binding, expr.span);
+          return ir.ref(binding, instantiateForall(instantiate(scheme, current), current));
         }
         case "record": {
           const fields: { name: string; value: Value<Type>; }[] = [];
@@ -380,28 +345,28 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
             fields.push({ name: field.name, value });
             types.set(field.name, value.type);
           }
-          if (!expr.base) return code.record(record(row(types)), fields);
+          if (!expr.base) return ir.record(record(row(types)), fields);
           const base = yield* elaborate(expr.base);
-          const tail = yield* freshRow([], current);
+          const tail = freshRow([], current);
           yield* unify(base.type, record(row(new Map(), tail))).at(expr.base.span);
           yield* exclude(row(new Map(), tail), types.keys()).at(expr.base.span);
-          return code.record(record(row(types, tail)), fields, base);
+          return ir.record(record(row(types, tail)), fields, base);
         }
         case "field": {
           const value = yield* elaborate(expr.record);
-          const type = yield* fresh(current);
+          const type = fresh(current);
           yield* unify(
             value.type,
-            record(row(new Map([[expr.name, type]]), yield* freshRow([expr.name], current))),
+            record(row(new Map([[expr.name, type]]), freshRow([expr.name], current))),
           );
-          return code.field(type, value, expr.name);
+          return ir.field(type, value, expr.name);
         }
         case "binary": {
           const left = yield* elaborate(expr.left);
           const right = yield* elaborate(expr.right);
           yield* subsume(left.type, number, current).at(expr.left.span).recover();
           yield* subsume(right.type, number, current).at(expr.right.span).recover();
-          return code.binary(
+          return ir.binary(
             expr.op === ">" || expr.op === "==" ? boolean : number,
             expr.op,
             left,
@@ -411,29 +376,25 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
         case "let":
           return yield* elaborateLet(expr);
         case "fn": {
-          const type = expr.annotation ? yield* resolve(expr.annotation) : yield* fresh(current);
-          const binding = code.binding(expr.param, type);
-          if (yield* get(observe)) yield* facts.define(binding, expr.paramSpan, "parameter");
-          const body = yield* code.body(function*() {
-            return yield* bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body));
-          });
-          return code.fn(fn(type, body.result.type), binding, body);
+          const type = expr.annotation ? yield* resolve(expr.annotation) : fresh(current);
+          const binding = ir.binding(expr.param, type);
+          yield* facts.define(binding, expr.paramSpan, "parameter");
+          const body = yield* ir.body(
+            bind(env, [[expr.param, { binding, scheme: mono(type) }]], elaborate(expr.body)),
+          );
+          return ir.fn(fn(type, body.result.type), binding, body);
         }
         case "call": {
           const callee = yield* elaborate(expr.fn);
           const type = yield* expectFunction(callee.type, current).at(expr.fn.span);
           const arg = yield* checkExpr(expr.arg, type.param);
-          return code.call(type.result, callee, arg);
+          return ir.call(type.result, callee, arg);
         }
         case "if": {
           const cond = yield* checkExpr(expr.cond, boolean);
-          const then = yield* code.body(function*() {
-            return yield* elaborate(expr.then);
-          });
-          const otherwise = yield* code.body(function*() {
-            return yield* checkExpr(expr.else, then.result.type);
-          });
-          return code.conditional(then.result.type, cond, then, otherwise);
+          const then = yield* ir.body(elaborate(expr.then));
+          const otherwise = yield* ir.body(checkExpr(expr.else, then.result.type));
+          return ir.conditional(then.result.type, cond, then, otherwise);
         }
         case "annotated":
           return yield* checkExpr(expr.value, yield* resolve(expr.annotation));
@@ -442,12 +403,9 @@ export const elaborate = (expr: Expr): Check<Value<Type>> =>
       }
     }),
   );
-export const elaborateBody = (expr: Expr): Check<Body<Type>> =>
-  code.body(function*() {
-    return yield* elaborate(expr);
-  });
+export const elaborateBody = (expr: Expr): Check<Body<Type>> => ir.body(elaborate(expr));
 const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<A> =>
-  code.check(function*() {
+  check(function*() {
     const existing = yield* get(definitions);
     const added = new Map<string, Definition>();
     for (const declaration of declarations) {
@@ -476,7 +434,7 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
     return yield* bind(
       definitions,
       added,
-      code.check(function*() {
+      check(function*() {
         const known = yield* get(constructors);
         const addedConstructors = new Map<string, Constructor>();
         const entries = new Map<string, Entry>();
@@ -504,33 +462,28 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
                   field.span,
                 );
               }
-              fields.push(code.binding("field", type));
+              fields.push(ir.binding("field", type));
             }
             const tag = `${owner.name}.${syntax.name}`;
-            let initial = code.variant(
+            let initial = ir.variant(
               result,
               tag,
-              fields.map((field) => code.ref(field)),
+              fields.map((field) => ir.ref(field)),
             );
             for (const field of fields.toReversed()) {
-              initial = code.fn(
+              initial = ir.fn(
                 fn(field.type, initial.type),
                 field,
-                pureCode.body(function*() {
-                  return initial;
-                }),
+                { declarations: [], result: initial },
               );
             }
             const type = variables.length ? forall(variables, initial.type) : initial.type;
-            const value = yield* code.declare(syntax.name, { ...initial, type });
-            const binding = value.node.binding;
-            if (yield* get(observe)) {
-              yield* facts.define(
-                binding,
-                syntax.nameSpan,
-                fields.length ? "function" : "variable",
-              );
-            }
+            const { binding } = yield* ir.declare(syntax.name, { ...initial, type });
+            yield* facts.define(
+              binding,
+              syntax.nameSpan,
+              fields.length ? "function" : "variable",
+            );
             addedConstructors.set(syntax.name, { binding, type, arity: fields.length, tag, owner });
             entries.set(syntax.name, { binding, scheme: mono(type) });
           }
@@ -540,29 +493,37 @@ const withTypes = <A>(declarations: readonly DataDecl[], body: Check<A>): Check<
     );
   });
 
-export type Compiled = {
+/** A binding the root module takes from another module, with the type it was checked against and its first use. */
+export type Imported = {
+  readonly name: string;
+  readonly from: string;
+  readonly binding: Binding<Type>;
+  readonly kind: Export["kind"];
   readonly type: Type;
-  readonly ir: Program<Type>;
-  readonly javascript: string;
+  readonly span: Span;
 };
 
-const parse = (source: string): Result<Module> => {
-  const result = program.parse(source);
-  return result.success
-    ? result
-    : {
-      success: false,
-      errors: [{
-        message: result.error.message,
-        span: result.error.diagnostic.span,
-        context: ["parsing", ...(result.error.diagnostic.context ?? [])],
-      }],
-    };
+export type Checked = {
+  readonly type: Type;
+  readonly body: Body<Type>;
+  /** Every dependency inlined, which bundling places ahead of `body`. */
+  readonly dependencies: readonly Declaration<Type>[];
+  readonly imports: readonly Imported[];
+  readonly constructors: readonly (readonly [string, Binding<Type>])[];
+  readonly syntax: Module;
+  readonly datatypes: ReadonlyMap<string, string>;
 };
+export type Compiled = Checked & { readonly javascript: string; };
+
+type Root = Pick<Checked, "syntax" | "datatypes"> & { readonly imported: ReadonlyMap<string, Export>; };
+
+type Linked = Pick<Checked, "body" | "dependencies" | "constructors">;
+
+const parse = (source: string): Result<Module> => parseResult(program, source);
 
 type Origin = { readonly uri: string; readonly span: Span; readonly name: string; };
 
-type Export = Entry & { readonly identity: symbol; readonly origin: Origin; };
+type Export = Entry & { readonly identity: symbol; readonly origin: Origin; readonly kind: "constructor" | "field"; };
 
 type ModuleExports = {
   readonly values: ReadonlyMap<string, Export>;
@@ -586,28 +547,21 @@ const exportOrigins = (expr: Expr): Map<string, Span> => {
   return result;
 };
 
-const buildModules = (
-  graph: ModuleGraph,
-  external: Map<symbol, Export>,
-): Check<Body<Type>> =>
-  code.body(function*() {
-    const param = code.binding("value", yield* fresh());
-    const unit = record(row());
-    const printed = yield* code.declare(
-      "print",
-      code.fn(
-        fn(param.type, unit),
-        param,
-        pureCode.body(function*() {
-          return code.print(unit, code.ref(param));
-        }),
-      ),
-    );
-    const primitive: Entry = {
-      binding: printed.node.binding,
-      scheme: yield* generalize(printed.type, []),
-    };
+const declarePrint: Check<Entry> = check(function*() {
+  const param = ir.binding("value", fresh());
+  const unit = record(row());
+  const printed = yield* ir.declare(
+    "print",
+    ir.fn(fn(param.type, unit), param, { declarations: [], result: ir.print(unit, ir.ref(param)) }),
+  );
+  return { binding: printed.binding, scheme: generalize(printed.type, []) };
+});
+
+const buildModules = (graph: ModuleGraph, expose: (root: Root) => void = () => {}): Check<Linked> =>
+  check(function*() {
     const completed = new Map<string, ModuleExports>();
+    const declaredIn = new Map<symbol, string>();
+    const dependencies: Declaration<Type>[] = [];
     for (const module of graph.modules) {
       const imported = new Map<string, Export>();
       const importedDefinitions = new Map<string, Definition>();
@@ -636,27 +590,23 @@ const buildModules = (
           importedConstructors.set(name, constructor);
         }
       }
-      const environment = new Map<string, Entry>([["print", primitive], ...imported]);
       const parsed = parse(module.source);
       if (!parsed.success) {
         return yield* fail(parsed.errors[0].message).at(parsed.errors[0].span).inDocument(module.uri);
       }
       const inEnvironment = <A>(body: Check<A>): Check<A> =>
-        within(
-          env,
-          () => environment,
-          within(
-            definitions,
-            () => importedDefinitions,
-            within(constructors, () => importedConstructors, body),
-          ),
-        );
-      if (module.uri === graph.root) {
-        for (const entry of imported.values()) external.set(entry.binding.id, entry);
-        return yield* inEnvironment(withTypes(parsed.value.types, elaborate(parsed.value.body))).inDocument(module.uri);
-      }
-      let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
-      let moduleConstructors: ReadonlyMap<string, Constructor> = new Map();
+        check(function*() {
+          const print = yield* declarePrint;
+          return yield* within(
+            env,
+            () => new Map<string, Entry>([["print", print], ...imported]),
+            within(
+              definitions,
+              () => importedDefinitions,
+              within(constructors, () => importedConstructors, body),
+            ),
+          );
+        });
       const ownConstructors = new Map(
         parsed.value.types.flatMap((type) =>
           type.constructors.map(
@@ -664,79 +614,110 @@ const buildModules = (
           )
         ),
       );
-      const bundled = yield* within(
-        observe,
-        () => false,
-        inEnvironment(
-          code.scope(function*() {
-            const initial = yield* withTypes(
-              parsed.value.types,
-              code.check(function*() {
-                const value = yield* elaborate(parsed.value.body);
-                moduleDefinitions = yield* get(definitions);
-                moduleConstructors = yield* get(constructors);
-                return value;
-              }),
-            );
-            if (prune(initial.type).kind !== "record") {
-              return yield* fail(`Imported module must return a record: ${module.uri}`).at(parsed.value.body.span);
-            }
-            const result = yield* code.declare("exports", initial);
-            const fields = [{ name: "@values", value: result as Value<Type> }];
-            for (const name of ownConstructors.keys()) {
-              fields.push({ name: `@${name}`, value: code.ref(moduleConstructors.get(name)!.binding) });
-            }
-            return code.record(
-              record(row(new Map(fields.map((field) => [field.name, field.value.type])))),
-              fields,
-            );
+      if (module.uri === graph.root) {
+        expose({
+          syntax: parsed.value,
+          datatypes: new Map([
+            ...[...importedDefinitions].map(([name, definition]) =>
+              [name, declaredIn.get(definition.type.id)!] as const
+            ),
+            ...parsed.value.types.map((type) => [type.name, module.uri] as const),
+          ]),
+          imported,
+        });
+        let known: ReadonlyMap<string, Constructor> = new Map();
+        const body = yield* ir.body(inEnvironment(withTypes(
+          parsed.value.types,
+          check(function*() {
+            known = yield* get(constructors);
+            return yield* elaborate(parsed.value.body);
           }),
-        ),
-      ).inDocument(module.uri);
-      const bundle = yield* code.declare("module", bundled);
-      const bundledType = prune(bundle.type);
-      if (bundledType.kind !== "record") throw new Error("Expected module bundle");
-      const resultType = flatten(bundledType.row).fields.get("@values")!;
-      const type = prune(resultType);
-      if (type.kind !== "record") throw new Error("Expected record exports");
-      const result = code.field(resultType, bundle, "@values");
-      const entries = new Map(imported);
-      const constructorEntries = new Map(importedConstructors);
-      for (const [name, span] of ownConstructors) {
-        if (entries.has(name)) {
-          return yield* fail(`Conflicting exported name: ${name}`).at(span).inDocument(module.uri);
-        }
-        const original = moduleConstructors.get(name)!;
-        const value = yield* code.declare(name, code.field(original.type, bundle, `@${name}`));
-        const binding = value.node.binding;
-        entries.set(name, {
-          binding,
-          scheme: mono(original.type),
-          identity: original.binding.id,
-          origin: { uri: module.uri, name, span },
-        });
-        constructorEntries.set(name, { ...original, binding });
+        ))).inDocument(module.uri);
+        return {
+          dependencies,
+          body,
+          constructors: [...ownConstructors.keys()].map((name) => [name, known.get(name)!.binding] as const),
+        };
       }
-      const origins = exportOrigins(parsed.value.body);
-      for (const [name, fieldType] of flatten(type.row).fields) {
-        if (entries.has(name)) {
-          return yield* fail(`Conflicting exported name: ${name}`)
-            .at(origins.get(name) ?? parsed.value.body.span)
-            .inDocument(module.uri);
+      const linked = yield* ir.body(check(function*() {
+        let moduleDefinitions: ReadonlyMap<string, Definition> = new Map();
+        let moduleConstructors: ReadonlyMap<string, Constructor> = new Map();
+        const bundled = yield* facts.ignore(
+          inEnvironment(
+            ir.scope(check(function*() {
+              const initial = yield* withTypes(
+                parsed.value.types,
+                check(function*() {
+                  const value = yield* elaborate(parsed.value.body);
+                  moduleDefinitions = yield* get(definitions);
+                  moduleConstructors = yield* get(constructors);
+                  return value;
+                }),
+              );
+              if (prune(initial.type).kind !== "record") {
+                return yield* fail(`Imported module must return a record: ${module.uri}`).at(parsed.value.body.span);
+              }
+              const result = yield* ir.declare("exports", initial);
+              const fields = [{ name: "@values", value: result as Value<Type> }];
+              for (const name of ownConstructors.keys()) {
+                fields.push({ name: `@${name}`, value: ir.ref(moduleConstructors.get(name)!.binding) });
+              }
+              return ir.record(
+                record(row(new Map(fields.map((field) => [field.name, field.value.type])))),
+                fields,
+              );
+            })),
+          ),
+        ).inDocument(module.uri);
+        const bundle = yield* ir.declare("module", bundled);
+        const bundledType = prune(bundle.type);
+        if (bundledType.kind !== "record") throw new Error("Expected module bundle");
+        const resultType = flatten(bundledType.row).fields.get("@values")!;
+        const type = prune(resultType);
+        if (type.kind !== "record") throw new Error("Expected record exports");
+        const result = ir.field(resultType, bundle, "@values");
+        const entries = new Map(imported);
+        const constructorEntries = new Map(importedConstructors);
+        for (const [name, span] of ownConstructors) {
+          if (entries.has(name)) {
+            return yield* fail(`Conflicting exported name: ${name}`).at(span).inDocument(module.uri);
+          }
+          const original = moduleConstructors.get(name)!;
+          const { binding } = yield* ir.declare(name, ir.field(original.type, bundle, `@${name}`));
+          entries.set(name, {
+            binding,
+            scheme: mono(original.type),
+            identity: original.binding.id,
+            origin: { uri: module.uri, name, span },
+            kind: "constructor",
+          });
+          constructorEntries.set(name, { ...original, binding });
         }
-        const reference = yield* code.declare(name, code.field(fieldType, result, name));
-        entries.set(name, {
-          binding: reference.node.binding,
-          scheme: yield* generalize(fieldType, [...environment.values()].map((entry) => entry.scheme)),
-          identity: Symbol(name),
-          origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
+        for (const type of parsed.value.types) declaredIn.set(moduleDefinitions.get(type.name)!.type.id, module.uri);
+        const origins = exportOrigins(parsed.value.body);
+        for (const [name, fieldType] of flatten(type.row).fields) {
+          if (entries.has(name)) {
+            return yield* fail(`Conflicting exported name: ${name}`)
+              .at(origins.get(name) ?? parsed.value.body.span)
+              .inDocument(module.uri);
+          }
+          const reference = yield* ir.declare(name, ir.field(fieldType, result, name));
+          entries.set(name, {
+            binding: reference.binding,
+            scheme: generalize(fieldType, [...imported.values()].map((entry) => entry.scheme)),
+            identity: Symbol(name),
+            origin: { uri: module.uri, name, span: origins.get(name) ?? parsed.value.body.span },
+            kind: "field",
+          });
+        }
+        completed.set(module.uri, {
+          values: entries,
+          definitions: moduleDefinitions,
+          constructors: constructorEntries,
         });
-      }
-      completed.set(module.uri, {
-        values: entries,
-        definitions: moduleDefinitions,
-        constructors: constructorEntries,
-      });
+        return result;
+      }));
+      dependencies.push(...linked.declarations);
     }
     throw new Error("Module graph has no root");
   });
@@ -744,11 +725,10 @@ const buildModules = (
 export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   const lexical = highlight(source, tokens);
-  if (!graph.success) {
-    return { diagnostics: graph.errors, types: [], definitions: [], references: [], tokens: lexical };
-  }
-  const external = new Map<symbol, Export>();
-  const analysis = facts.collect(buildModules(graph.value, external), lexical).analysis;
+  if (!graph.success) return unanalyzed(graph.errors, lexical);
+  let imported: ReadonlyMap<string, Export> = new Map();
+  const analysis = facts.collect(buildModules(graph.value, (root) => (imported = root.imported)), lexical).analysis;
+  const referenced = new Set(analysis.references.map((reference) => reference.id));
   return {
     ...analysis,
     diagnostics: analysis.diagnostics.map((error) => graph.value.routeDiagnostic(error)),
@@ -756,8 +736,8 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
     dependencyUris: graph.value.dependencyUris,
     definitions: [
       ...analysis.definitions,
-      ...[...external.values()]
-        .filter((entry) => analysis.references.some((reference) => reference.id === entry.binding.id))
+      ...[...imported.values()]
+        .filter((entry) => referenced.has(entry.binding.id))
         .map((entry) => ({
           ...entry.binding,
           span: entry.origin.span,
@@ -770,10 +750,11 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   };
 };
 
-export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
+export const checkSource = (source: string, options: ModuleOptions = {}): Result<Checked> => {
   const graph = loadModules(source, options, { extension: "advanced", imports: parseImports });
   if (!graph.success) return graph;
-  const built = run(buildModules(graph.value, new Map()));
+  let root: Root | undefined;
+  const { result: built, analysis } = facts.collect(buildModules(graph.value, (exposed) => (root = exposed)));
   if (!built.success) {
     const errors: [Diagnostic, ...Diagnostic[]] = [graph.value.routeDiagnostic(built.errors[0])];
     for (let i = 1; i < built.errors.length; i++) {
@@ -781,15 +762,23 @@ export const compile = (source: string, options: ModuleOptions = {}): Result<Com
     }
     return { success: false, errors };
   }
-  const ir = code.program(built.value);
-  return {
-    success: true,
-    value: {
-      type: built.value.result.type,
-      ir,
-      javascript: javascript.emit(ir),
-    },
-  };
+  if (!root) throw new Error("Module graph has no root");
+  const { imported, ...exposed } = root;
+  const uses = new Map<symbol, Span>();
+  for (const { id, span } of analysis.references) if (!uses.has(id)) uses.set(id, span);
+  const imports = [...imported].flatMap(([name, { binding, origin, kind, scheme }]) => {
+    const span = uses.get(binding.id);
+    return span ? [{ name, from: origin.uri, binding, kind, type: scheme.type, span }] : [];
+  });
+  return { success: true, value: { type: built.value.body.result.type, ...built.value, imports, ...exposed } };
+};
+
+export const compile = (source: string, options: ModuleOptions = {}): Result<Compiled> => {
+  const checked = checkSource(source, options);
+  if (!checked.success) return checked;
+  const { dependencies, body } = checked.value;
+  const bundle = { ...body, declarations: [...dependencies, ...body.declarations] };
+  return { success: true, value: { ...checked.value, javascript: javascript.emit(bundle) } };
 };
 
 if (import.meta.main) {

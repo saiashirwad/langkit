@@ -4,7 +4,16 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { version } from "typescript";
-import { editorFile, observe, position, probes, record, validate, validateResponse } from "./editor-contracts.ts";
+import {
+  editorFile,
+  observe,
+  position,
+  type Probe,
+  probes,
+  record,
+  validate,
+  validateResponse,
+} from "./editor-contracts.ts";
 import { compiler, fragment, root } from "./type-contracts.ts";
 
 const args = process.argv.slice(2);
@@ -112,6 +121,7 @@ try {
     processId: process.pid,
     rootUri,
     workspaceFolders: [{ uri: rootUri, name: "langkit" }],
+    initializationOptions: { runExternalCode: true },
     capabilities: {
       general: { positionEncodings: ["utf-16"] },
       textDocument: {
@@ -155,14 +165,9 @@ try {
       replacement: (type: string) => type === "any" ? "pure<any>(\"ready\")" : "pure<never>(undefined as never)",
     },
     {
-      id: "judgment-synth-yield",
-      original: "judgments.synth({ kind: \"number\", value: 42 })",
-      replacement: (type: string) => `pure<${type}>(undefined as ${type})`,
-    },
-    {
-      id: "staged-output",
-      original: "staged.prop(stagedProgram.result, \"total\")",
-      replacement: (type: string) => `undefined as ${type}`,
+      id: "fresh-variable",
+      original: "const variable = rank.fresh()",
+      replacement: (type: string) => `const variable = undefined as ${type}`,
     },
   ];
   let documentVersion = 1;
@@ -196,6 +201,215 @@ try {
       observations[control.id],
       "restored hover must recover",
     );
+  }
+  type Hosted = {
+    readonly consumer: string;
+    readonly anchor: string;
+    readonly offset: number;
+    readonly require: readonly string[];
+    readonly guest?: string;
+    readonly binder?: string;
+    readonly binderOffset?: number;
+  };
+  const hosted: readonly Hosted[] = [
+    {
+      consumer: "examples/typescript/toy.ts",
+      anchor: "import main",
+      offset: 7,
+      require: ["main: number"],
+      guest: "examples/toy/main.toy",
+      binder: "let twice",
+    },
+    {
+      consumer: "examples/typescript/advanced.ts",
+      anchor: "both, fromList",
+      offset: 0,
+      require: ["both: (x: <A>(x: A) => A) =>"],
+      guest: "examples/advanced/trees.advanced",
+      binder: "both = fn",
+    },
+    {
+      consumer: "examples/typescript/hm.ts",
+      anchor: "import compose",
+      offset: 7,
+      require: ["main: <A, B>(x: (x: A) => B) => <C>(x: (x: C) => A) => (x: C) => B"],
+      guest: "examples/hm/compose.hm",
+      binder: "fn(f)",
+    },
+    {
+      consumer: "examples/typescript/schema.ts",
+      anchor: "type User }",
+      offset: 5,
+      require: ["interface User"],
+      guest: "examples/schema/simple.schema",
+      binder: "User = {",
+    },
+    {
+      consumer: "examples/typescript/schema.ts",
+      anchor: "type Role,",
+      offset: 5,
+      require: ["type Role = \"Admin\" | \"Member\""],
+      guest: "examples/schema/simple.schema",
+      binder: "Role = Member",
+    },
+    {
+      consumer: "examples/typescript/blog.ts",
+      anchor: "userByEmail({ email: \"sai",
+      offset: 0,
+      require: [
+        "(method) Database.userByEmail(params: {\n    readonly email: string;\n}): User | undefined",
+        "SELECT \"t0\".\"id\" AS \"id\"",
+        "WHERE \"t0\".\"email\" = :email LIMIT 1",
+      ],
+      guest: "examples/schema/blog.schema",
+      binder: "userByEmail(email",
+    },
+    {
+      consumer: "examples/typescript/blog.ts",
+      anchor: "entry.title,",
+      offset: 6,
+      require: ["title: string"],
+      guest: "examples/schema/blog.schema",
+      binder: "title,\n      .featured",
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "cart.checkout(",
+      offset: 5,
+      require: [
+        "(method) Order.Cart.checkout(event: {\n    readonly address: Address;\n}): Order.Checkout",
+        "Cart |> on checkout -> Checkout",
+      ],
+      guest: "examples/domain/checkout.domain",
+      binder: "checkout -> Checkout",
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "Order.start({ items: [] })",
+      offset: 6,
+      require: ["start(data: {\n    readonly items: readonly LineItem[];\n}): Order.Cart"],
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "paid.cancel({ reason",
+      offset: 13,
+      require: ["(property) reason: CancelReason"],
+      guest: "examples/domain/checkout.domain",
+      binder: "cancel(reason : CancelReason)",
+      binderOffset: 7,
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "shipped.items.length",
+      offset: 8,
+      require: ["(property) Order.Shipped.items: readonly LineItem[]"],
+      guest: "examples/domain/checkout.domain",
+      binder: "items : [LineItem], address : Address }",
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "shipped.carrier",
+      offset: 8,
+      require: ["(property) Order.Shipped.carrier: Carrier"],
+      guest: "examples/domain/checkout.domain",
+      binder: "carrier : Carrier, tracking : String }",
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "captured } = Checkout.pay",
+      offset: 22,
+      require: ["sync order.pay = payment.capture"],
+      guest: "examples/domain/checkout.domain",
+      binder: "pay = payment.capture",
+    },
+    {
+      consumer: "examples/typescript/shop.ts",
+      anchor: "Shop.pay({ ...checkedOut",
+      offset: 5,
+      require: [
+        "(method) pay<Order.Checkout, Payment.Authorized, Fulfilment.Waiting>(parts: {",
+        "sync order.pay = payment.capture = warehouse.reserve",
+      ],
+      guest: "examples/domain/shop.domain",
+      binder: "pay = payment.capture",
+    },
+    {
+      consumer: "examples/typescript/shop.ts",
+      anchor: "Shop.refundsNeverShip(row)",
+      offset: 5,
+      require: ["refundsNeverShip(parts: {"],
+      guest: "examples/domain/shop.domain",
+      binder: "refundsNeverShip = never",
+    },
+    {
+      consumer: "examples/typescript/domain-grammar.ts",
+      anchor: "clause.first, ...",
+      offset: 7,
+      require: ["(property) SystemClauseSync.first: Port"],
+      guest: "examples/grammar/domain.grammar",
+      binder: "first:Port",
+    },
+    {
+      consumer: "examples/typescript/domain-grammar.ts",
+      anchor: "type Port,",
+      offset: 5,
+      require: ["interface Port"],
+      guest: "examples/grammar/domain.grammar",
+      binder: "Port = component",
+    },
+    {
+      consumer: "examples/typescript/expr.ts",
+      anchor: "const operand = evaluate(expr.operand",
+      offset: 30,
+      require: ["(property) ExprPrefix.operand: Expr"],
+      guest: "examples/grammar/expr.grammar",
+      binder: "Expr = precedence",
+    },
+    {
+      consumer: "examples/typescript/shop.ts",
+      anchor: "method.last4",
+      offset: 7,
+      require: ["(property) PayMethod.Card.last4: string"],
+      guest: "examples/domain/commerce.domain",
+      binder: "last4 : String",
+    },
+  ];
+  for (const { consumer, anchor, offset, require, guest, binder, binderOffset = 0 } of hosted) {
+    const text = readFileSync(join(root, consumer), "utf8");
+    const textDocument = { uri: pathToFileURL(join(root, consumer)).href };
+    send({
+      method: "textDocument/didOpen",
+      params: { textDocument: { ...textDocument, languageId: "typescript", version: 1, text } },
+    });
+    const consumerDiagnostics = await request("textDocument/diagnostic", { textDocument });
+    record(consumerDiagnostics, "invalid diagnostics");
+    assert.deepEqual(consumerDiagnostics.items, [], `${consumer} must compile cleanly`);
+    const probe: Probe = { id: consumer, method: "hover", anchor, offset, require };
+    const at = position(text, probe);
+    const hover = observe(probe, await request("textDocument/hover", { textDocument, position: at }));
+    validate(probe, hover);
+    if (guest === undefined || binder === undefined) {
+      console.log(`Real LSP ${consumer}: hover ${JSON.stringify(hover.text)}`);
+      continue;
+    }
+    const definitions = await request("textDocument/definition", { textDocument, position: at });
+    assert.ok(Array.isArray(definitions), `${consumer}: invalid definition result`);
+    const targets = definitions.map((location: unknown) => {
+      record(location, `${consumer}: invalid definition location`);
+      const range = location.targetSelectionRange ?? location.range;
+      record(range, `${consumer}: invalid definition range`);
+      return { uri: location.targetUri ?? location.uri, start: range.start };
+    });
+    const binding: Probe = { id: guest, method: "hover", anchor: binder, offset: binderOffset, require: [] };
+    assert.deepEqual(
+      targets,
+      [{
+        uri: pathToFileURL(join(root, guest)).href,
+        start: position(readFileSync(join(root, guest), "utf8"), binding),
+      }],
+      `${consumer}: definition must land on ${binder} in ${guest}`,
+    );
+    console.log(`Real LSP ${consumer}: hover ${JSON.stringify(hover.text)}, definition on ${binder} in ${guest}`);
   }
   const snapshot = { compilerVersion: version, observations };
   if (args.includes("--update")) writeFileSync(snapshotFile, `${JSON.stringify(snapshot, null, 2)}\n`);

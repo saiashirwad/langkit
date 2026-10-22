@@ -1,51 +1,55 @@
 {
-  "compilerVersion": "7.0.2",
+  "compilerVersion": "7.1.0-beta",
   "observations": {
-    "contextual-record-node": {
-      "text": "```typescript\n(parameter) recordNode: RecordNode<rows.Type>\n```"
+    "narrowed-record": {
+      "text": "```typescript\nconst recordValue: {\n    readonly type: rank.Type;\n    readonly span?: Span;\n} & {\n    readonly kind: \"record\";\n    readonly fields: readonly RecordField<rank.Type>[];\n    readonly base?: Value<rank.Type>;\n}\n```"
     },
-    "contextual-literal-node": {
-      "text": "```typescript\n(parameter) literalNode: Literal<rows.Type>\n```"
+    "narrowed-literal": {
+      "text": "```typescript\nconst literalValue: {\n    readonly type: rank.Type;\n    readonly span?: Span;\n} & {\n    readonly kind: \"literal\";\n    readonly value: number | boolean | string;\n}\n```"
     },
-    "contextual-backend-context": {
-      "text": "```typescript\n(parameter) recordContext: JavaScriptContext<rows.Type>\n```"
+    "fresh-variable": {
+      "text": "```typescript\nconst variable: rank.Variable\n```"
     },
     "yield-literal": {
       "text": "```typescript\nconst yielded: \"ready\"\n```"
     },
-    "sequence-tuple": {
+    "yield-tuple": {
       "text": "```typescript\nconst tuple: [\"label\", 42, true]\n```"
     },
     "named-value": {
-      "text": "```typescript\nconst namedValue: Value<rows.Type>\n```"
+      "text": "```typescript\nconst namedValue: Value<rank.Type>\n```"
     },
     "named-check": {
-      "text": "```typescript\nconst namedCheck: Check<Value<rows.Type>>\n```"
+      "text": "```typescript\nconst namedCheck: Check<Value<rank.Type>>\n```"
     },
     "record-fields": {
-      "text": "```typescript\n(property) fields: readonly RecordField<rows.Type>[]\n```"
+      "text": "```typescript\n(property) fields: readonly RecordField<rank.Type>[]\n```"
     },
     "record-field-name": {
       "text": "```typescript\n(property) name: string\n```"
     },
     "record-field-value": {
-      "text": "```typescript\n(property) value: Value<rows.Type>\n```"
+      "text": "```typescript\n(property) value: Value<rank.Type>\n```"
     },
     "literal-value": {
       "text": "```typescript\n(property) value: string | number | boolean\n```"
     },
     "record-members": {
-      "text": "base\nfields\nkind",
+      "text": "base\nfields\nkind\nspan\ntype",
       "labels": [
         "base",
         "fields",
-        "kind"
+        "kind",
+        "span",
+        "type"
       ]
     },
     "literal-members": {
-      "text": "kind\nvalue",
+      "text": "kind\nspan\ntype\nvalue",
       "labels": [
         "kind",
+        "span",
+        "type",
         "value"
       ]
     },
@@ -56,49 +60,9 @@
         "value"
       ]
     },
-    "literal-keys": {
-      "text": "binary\nblock\ncall\nconditional\nfn\nliteral\nref",
-      "labels": [
-        "binary",
-        "block",
-        "call",
-        "conditional",
-        "fn",
-        "literal",
-        "ref"
-      ]
-    },
-    "backend-signature": {
-      "text": "defineJavaScriptBackend(dialect: Dialect<{ literal: OperationDescriptor<rows.Type, Literal<rows.Type>>; record: OperationDescriptor<rows.Type, RecordNode<rows.Type>>; }>, handlers: { readonly literal: (literalNode: Literal<rows.Type>) => string; readonly record: (recordNode: RecordNode<rows.Type>, recordContext: JavaScriptContext<rows.Type>) => string; }): readonly DispatcherHandler<JavaScriptContext<rows.Type>>[]",
-      "activeParameter": 1
-    },
     "literal-signature": {
-      "text": "literal(type: rows.Type, value: number | boolean | string): OperationValue<rows.Type, Literal<rows.Type>>",
+      "text": "literal(type: rank.Type, value: number | boolean | string): Value<rank.Type>",
       "activeParameter": 1
-    },
-    "judgment-rule-node": {
-      "text": "```typescript\n(parameter) numberRuleNode: {\n    readonly kind: \"number\";\n    readonly value: number;\n}\n```"
-    },
-    "judgment-synth-yield": {
-      "text": "```typescript\nconst synthesized: Synthesized<AuthorType, AuthorTerm>\n```"
-    },
-    "staged-arrow-parameter": {
-      "text": "```typescript\n(parameter) amount: staged.Ref<number>\n```"
-    },
-    "staged-arrow-result": {
-      "text": "```typescript\nconst stagedArrow: staged.Expr<(args_0: number, args_1: string) => {\n    total: number;\n    label: string;\n}>\n```"
-    },
-    "staged-record": {
-      "text": "```typescript\nconst stagedRecord: staged.Expr<{\n    total: number;\n    label: string;\n}>\n```"
-    },
-    "staged-output": {
-      "text": "```typescript\nconst stagedOutput: staged.Expr<number>\n```"
-    },
-    "program-result-handle": {
-      "text": "```typescript\nconst resultHandle: staged.Ref<{\n    total: number;\n    label: string;\n}>\n```"
-    },
-    "staged-program": {
-      "text": "```typescript\nconst stagedProgram: staged.Program<{\n    total: number;\n    label: string;\n}>\n```"
     }
   }
 }

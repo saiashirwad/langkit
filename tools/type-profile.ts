@@ -6,7 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 import { fileURLToPath } from "node:url";
 import { version } from "typescript";
-import { compile, isolatedProject, root } from "./type-contracts.ts";
+import { compile, root } from "./type-contracts.ts";
 
 export type Metrics = {
   types: number;
@@ -14,6 +14,10 @@ export type Metrics = {
   checkSeconds: number;
   totalSeconds: number;
   memoryBytes: number;
+};
+type Workload = {
+  name: string;
+  measurements: { metrics: Metrics; elapsedSeconds: number; raw: string; }[];
 };
 export function parseMetrics(output: string): Metrics {
   const metric = (label: string, unit: string): number => {
@@ -32,88 +36,6 @@ export function parseMetrics(output: string): Metrics {
   };
 }
 
-export function scalingConsumer(count: number): string {
-  assert.ok(Number.isInteger(count) && count > 0, "positive descriptor count required");
-  const cases = Array.from({ length: count }, (_, index) => `case${index}`);
-  return [
-    "import { check, createJudgments, pure, sequence, type Synthesized } from \"langkit\";",
-    "import * as staged from \"langkit/staging\";",
-    "import type { Value } from \"langkit/ir\";",
-    "import { defineOperation } from \"langkit/operations/descriptor\";",
-    "import { defineDialect } from \"langkit/operations/dialect\";",
-    "import { defineJavaScriptBackend } from \"langkit/javascript/operations\";",
-    "import type { Type } from \"langkit/types/rows\";",
-    "type Field = { readonly name: string; readonly value: Value<Type> };",
-    "type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;",
-    "const prove = <T extends true>(): T => true as T;",
-    ...cases.flatMap((name) => [
-      `type ${name}Node = { readonly kind: "${name}"; readonly fields: readonly Field[] };`,
-      `const ${name} = defineOperation<Type, ${name}Node>("${name}", { children: node => node.fields.map(field => field.value), scopedBodies: () => [], references: () => [], map: (node, value) => ({ ...node, fields: node.fields.map(field => ({ ...field, value: value(field.value) })) }) });`,
-    ]),
-    `const descriptors = { ${cases.join(", ")} };`,
-    `prove<Equal<keyof typeof descriptors, ${cases.map((name) => JSON.stringify(name)).join(" | ")}>>();`,
-    "export const backend = defineJavaScriptBackend(defineDialect(descriptors), {",
-    ...cases.map((name) =>
-      `  ${name}: (node, context) => { prove<Equal<typeof node, ${name}Node>>(); return node.fields.map(field => context.expr(field.value, context.depth)).join(", "); },`
-    ),
-    "});",
-    "export const consumer = check(function* () {",
-    `  const labels = yield* sequence([${cases.map((name) => `pure("${name}" as const)`).join(", ")}]);`,
-    `  prove<Equal<typeof labels, [${cases.map((name) => JSON.stringify(name)).join(", ")} ]>>();`,
-    "  return labels;",
-    "});",
-    ...cases.map((name, index) =>
-      `type ${name}Source = { readonly kind: "${name}"; ${
-        index % 3 === 0
-          ? "readonly value: number"
-          : index % 3 === 1
-          ? "readonly value: string"
-          : "readonly amount: number; readonly label: string"
-      } };`
-    ),
-    `type Source = ${cases.map((name) => `${name}Source`).join(" | ")};`,
-    "type ResultType = \"number\" | \"text\" | \"record\";",
-    "type Term = staged.Expr<number> | staged.Expr<string> | staged.Expr<{ total: number; label: string }>;",
-    "const judgments = createJudgments<Source, ResultType, Term>({",
-    ...cases.map((name, index) =>
-      `  ${name}: { mode: "synth", *synth(node) { prove<Equal<typeof node, ${name}Source>>(); return ${
-        index % 3 === 0
-          ? "{ type: \"number\", term: staged.number(node.value) }"
-          : index % 3 === 1
-          ? "{ type: \"text\", term: staged.string(node.value) }"
-          : "{ type: \"record\", term: staged.object({ total: staged.number(node.amount), label: staged.string(node.label) }) }"
-      }; }, check: "fromSynth" },`
-    ),
-    "}, { modes: { enter: (expected, body) => body(expected), accept: (actual) => pure(actual.term) } });",
-    "export const elaborated = check(function* () {",
-    ...cases.map((name, index) =>
-      `  const ${name}Result = yield* judgments.synth({ kind: "${name}", ${
-        index % 3 === 0
-          ? `value: ${index}`
-          : index % 3 === 1
-          ? `value: "${name}"`
-          : `amount: ${index}, label: "${name}"`
-      } }); prove<Equal<typeof ${name}Result, Synthesized<ResultType, Term>>>();`
-    ),
-    `  return [${cases.map((name) => `${name}Result`).join(", ")}] as const;`,
-    "});",
-    ...cases.flatMap((name, index) => {
-      const hostType = ["number", "string", "boolean"][index % 3]!;
-      const witness = ["Number", "String", "Boolean"][index % 3]!;
-      const input = [
-        `staged.number(${index})`,
-        `staged.string("${name}")`,
-        `staged.boolean(${index % 2 === 0})`,
-      ][index % 3]!;
-      return [
-        `const ${name}Arrow = staged.arrow({ params: [staged.param("value", staged.${witness})], *body([value]) { prove<Equal<typeof value, staged.Ref<${hostType}>>>(); return staged.object({ value, tag: staged.string("${name}") }); } });`,
-        `export const ${name}Program = staged.build(function* () { const result = yield* staged.const("${name}", staged.call(${name}Arrow, ${input})); prove<Equal<typeof result, staged.Ref<{ value: ${hostType}; tag: "${name}" }>>>(); return result; });`,
-        `prove<Equal<typeof ${name}Program, staged.Program<{ value: ${hostType}; tag: "${name}" }>>>();`,
-      ];
-    }),
-  ].join("\n");
-}
-
 export function profile(): void {
   const args = process.argv.slice(2);
   const options = new Map<string, string>();
@@ -125,7 +47,6 @@ export function profile(): void {
   }
   const samples = Number(options.get("--samples") ?? 3);
   assert.ok(Number.isInteger(samples) && samples >= 1 && samples <= 20, "samples must be 1..20");
-  const project = isolatedProject();
   const flags = ["--extendedDiagnostics", "--noEmit", "--composite", "false", "--declaration", "false"];
   const report: {
     compilerVersion: string;
@@ -138,11 +59,7 @@ export function profile(): void {
     units: Record<string, string>;
     flags: string[];
     bounds: { types: number; instantiations: number; };
-    workloads: {
-      name: string;
-      consumerHash?: string;
-      measurements: { metrics: Metrics; elapsedSeconds: number; raw: string; }[];
-    }[];
+    workloads: Workload[];
   } = {
     compilerVersion: version,
     nodeVersion: process.version,
@@ -169,53 +86,41 @@ export function profile(): void {
     bounds: { types: 500_000, instantiations: 2_000_000 },
     workloads: [],
   };
-  try {
-    for (const size of [0, 10, 50, 200]) {
-      const source = size === 0 ? undefined : scalingConsumer(size);
-      if (source !== undefined) writeFileSync(join(project.directory, "consumer.ts"), source);
-      const workload: typeof report.workloads[number] = {
-        name: size === 0 ? "main" : `${size} descriptors + heterogeneous judgment rules + staged programs`,
-        measurements: [],
-        ...(source === undefined ? {} : { consumerHash: createHash("sha256").update(source).digest("hex") }),
-      };
-      for (let sample = 0; sample < samples; sample++) {
-        const start = performance.now();
-        const result = compile(size === 0 ? join(root, "tsconfig.json") : project.config, flags);
-        assert.equal(result.status, 0, `${workload.name} failed\n${result.output}`);
-        const metrics = parseMetrics(result.output);
-        assert.ok(metrics.types > 0 && metrics.instantiations > 0, "profile must measure checking work");
-        assert.ok(
-          metrics.types <= report.bounds.types && metrics.instantiations <= report.bounds.instantiations,
-          `${workload.name}: deterministic type cost exceeds bounds`,
-        );
-        workload.measurements.push({ metrics, elapsedSeconds: (performance.now() - start) / 1000, raw: result.output });
-      }
-      report.workloads.push(workload);
-      const median = (key: keyof Metrics): number => {
-        const values = workload.measurements.map((sample) => sample.metrics[key]).sort((a, b) => a - b);
-        return (values[Math.floor((values.length - 1) / 2)]! + values[Math.floor(values.length / 2)]!) / 2;
-      };
-      console.log(
-        `TS ${version} ${workload.name} (${samples} cold samples, medians): types=${median("types")} instantiations=${
-          median("instantiations")
-        } check=${median("checkSeconds").toFixed(3)}s total=${median("totalSeconds").toFixed(3)}s memory=${
-          median("memoryBytes")
-        } bytes`,
-      );
-    }
-    const output = options.get("--output");
-    if (output !== undefined) {
-      const file = resolve(output);
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
-      console.log(`Raw profile: ${file}`);
-    }
-    console.log(
-      `Type cost gate: <=${report.bounds.types} types and <=${report.bounds.instantiations} instantiations per workload. Timing/memory reported only; machine noise is not gated.`,
+  const workload: Workload = { name: "main", measurements: [] };
+  for (let sample = 0; sample < samples; sample++) {
+    const start = performance.now();
+    const result = compile(join(root, "tsconfig.json"), flags);
+    assert.equal(result.status, 0, `${workload.name} failed\n${result.output}`);
+    const metrics = parseMetrics(result.output);
+    assert.ok(metrics.types > 0 && metrics.instantiations > 0, "profile must measure checking work");
+    assert.ok(
+      metrics.types <= report.bounds.types && metrics.instantiations <= report.bounds.instantiations,
+      `${workload.name}: deterministic type cost exceeds bounds`,
     );
-  } finally {
-    project.dispose();
+    workload.measurements.push({ metrics, elapsedSeconds: (performance.now() - start) / 1000, raw: result.output });
   }
+  report.workloads.push(workload);
+  const median = (key: keyof Metrics): number => {
+    const values = workload.measurements.map((sample) => sample.metrics[key]).sort((a, b) => a - b);
+    return (values[Math.floor((values.length - 1) / 2)]! + values[Math.floor(values.length / 2)]!) / 2;
+  };
+  console.log(
+    `TS ${version} ${workload.name} (${samples} cold samples, medians): types=${median("types")} instantiations=${
+      median("instantiations")
+    } check=${median("checkSeconds").toFixed(3)}s total=${median("totalSeconds").toFixed(3)}s memory=${
+      median("memoryBytes")
+    } bytes`,
+  );
+  const output = options.get("--output");
+  if (output !== undefined) {
+    const file = resolve(output);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, `${JSON.stringify(report, null, 2)}\n`);
+    console.log(`Raw profile: ${file}`);
+  }
+  console.log(
+    `Type cost gate: <=${report.bounds.types} types and <=${report.bounds.instantiations} instantiations per workload. Timing/memory reported only; machine noise is not gated.`,
+  );
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) profile();

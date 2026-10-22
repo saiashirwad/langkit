@@ -1,0 +1,110 @@
+let timestamps = fn(model) =>
+  model |> extend {
+    createdAt : DateTime |> default now,
+    updatedAt : DateTime |> default now
+  }
+
+let authored = fn(model) =>
+  model |> extend {
+    authorId : Int |> references User.id as author
+  }
+
+let published = fn(q) => q |> where .status == PostStatus.Published
+
+let newestFirst = fn(q) => q |> orderBy [.createdAt desc, .id desc]
+
+let visible = fn(q) => q |> where not .hidden
+
+type Role = Member | Admin
+
+type PostStatus = Draft | Published
+
+model User = {
+  id : Int |> primaryKey |> autoIncrement,
+  email : String |> unique,
+  role : Role |> default Role.Member
+}
+  |> timestamps
+  |> many posts = Post.author
+
+model Post = {
+  id : Int |> primaryKey |> autoIncrement,
+  title : String,
+  status : PostStatus |> default PostStatus.Draft,
+  featured : Bool |> default false,
+  editorId : Int? |> references User.id as editor
+}
+  |> authored
+  |> timestamps
+  |> index [.status, .createdAt]
+  |> index [.authorId, .createdAt]
+  |> many comments = Comment.post
+
+model Comment = {
+  id : Int |> primaryKey |> autoIncrement,
+  postId : Int |> references Post.id as post,
+  body : String,
+  hidden : Bool |> default false
+}
+  |> authored
+  |> timestamps
+  |> index [.postId, .createdAt]
+  |> index [.authorId]
+
+query createUser(email: User.email, role: Role) =
+  User |> insert { email, role } |> returning { .id }
+
+query createPost(author: User.id, title: Post.title, featured: Bool, at: Post.createdAt) =
+  Post |> insert { title, featured, authorId: author, createdAt: at } |> returning { .id, .status }
+
+query addComment(post: Post.id, author: User.id, body: Comment.body, hidden: Bool, at: Comment.createdAt) =
+  Comment |> insert { postId: post, authorId: author, body, hidden, createdAt: at }
+
+query publish(post: Post.id, editor: User.id) =
+  Post
+    |> where .id == post and .status == PostStatus.Draft
+    |> update { status: PostStatus.Published, editorId: editor, updatedAt: now }
+
+query hideComments(author: User.id) =
+  Comment |> where .authorId == author |> update { hidden: true } |> returning { .id, .hidden }
+
+query purgeDrafts(author: User.id) =
+  Post |> where .authorId == author and .status == PostStatus.Draft |> delete
+
+query feed(n: Int, before: DateTime?) =
+  Post
+    |> published
+    |> where before == null or .createdAt < before
+    |> newestFirst
+    |> limit n
+    |> select {
+      .id,
+      .title,
+      .featured,
+      author: .author |> select { .id, .email },
+      editor: .editor |> select { .email },
+      comments: .comments |> visible |> newestFirst |> limit 2 |> select { .body, .hidden, by: .author.email },
+      commentCount: .comments |> visible |> count
+    }
+
+query userByEmail(email: User.email) =
+  User |> where .email == email |> first
+
+query postsBy(author: User.id, skip: Int) =
+  Post
+    |> where .authorId == author
+    |> newestFirst
+    |> offset skip
+    |> select { .id, .title, .status, .featured, editor: .editor |> select { .email } }
+
+query activeAuthors(role: Role) =
+  User
+    |> where .role == role and (.posts |> published |> exists)
+    |> orderBy [.id]
+    |> select { .id, .email, drafts: .posts |> where .status == PostStatus.Draft |> count }
+
+query latestStaffPick =
+  Post |> where .featured and .author.role == Role.Admin |> newestFirst |> first
+
+query draftCount(author: User.id) =
+  Post |> where .authorId == author and .status == PostStatus.Draft |> count

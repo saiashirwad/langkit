@@ -1,0 +1,481 @@
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { cpSync, readFileSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { test } from "node:test";
+import { compile, fragment, isolatedProject, root } from "../tools/type-contracts.ts";
+
+type Misuse = {
+  readonly claim: string;
+  readonly original: string;
+  readonly replacement: string;
+  readonly code: `TS${number}`;
+};
+
+type GuestError = {
+  readonly file: string;
+  readonly source: string;
+  readonly at: string;
+  readonly message: string;
+};
+
+type HostCase = {
+  readonly language: string;
+  readonly consumer: string;
+  readonly output: string;
+  readonly misuses: readonly Misuse[];
+  readonly guestErrors: readonly GuestError[];
+};
+
+const checkoutDomain = readFileSync(join(root, "examples/domain/checkout.domain"), "utf8");
+const shopDomain = readFileSync(join(root, "examples/domain/shop.domain"), "utf8");
+
+const cases: readonly HostCase[] = [
+  {
+    language: "toy",
+    consumer: "examples/typescript/toy.ts",
+    output: "42\n",
+    misuses: [{
+      claim: "the default export is a number",
+      original: "const answer: number = main;",
+      replacement: "const answer: string = main;",
+      code: "TS2322",
+    }],
+    guestErrors: [{
+      file: "examples/toy/main.toy",
+      source: "let x = 1 in x + true\n",
+      at: "true",
+      message: "Expected number, found boolean",
+    }],
+  },
+  {
+    language: "grammar",
+    consumer: "examples/typescript/expr.ts",
+    output: "8\n",
+    misuses: [
+      {
+        claim: "a node's fields have the types its grammar captures",
+        original: "return Number(expr.value);",
+        replacement: "return expr.value;",
+        code: "TS2322",
+      },
+      {
+        claim: "a prefix operator is one of the grammar's prefix operators",
+        original: "expr.operator === \"-\" ?",
+        replacement: "expr.operator === \"+\" ?",
+        code: "TS2367",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/grammar/expr.grammar",
+      source: "grammar Expr\nExpr = #loop Expr:Expr \"x\" | #end value:ident\n",
+      at: "Expr \"x\"",
+      message: "Left recursion: Expr -> Expr. Consume a token first, or use a repetition or a precedence block",
+    }],
+  },
+  {
+    language: "grammar (domain)",
+    consumer: "examples/typescript/domain-grammar.ts",
+    output:
+      "Shop order: Order, payment: Payment, warehouse: Fulfilment\norder.checkout = payment.authorize\norder.pay = payment.capture = warehouse.reserve\norder.refund = payment.refund\n",
+    misuses: [{
+      claim: "a sync clause's ports after the first are a non-empty tuple",
+      original: "[clause.first, ...clause.rest].map(show)",
+      replacement: "[clause.first, ...clause.rest[5]].map(show)",
+      code: "TS2488",
+    }],
+    guestErrors: [{
+      file: "examples/grammar/domain.grammar",
+      source: "grammar Domain\nFile = imports:Import*\nImport = path:ident\nUnused = name:ident\n",
+      at: "Unused",
+      message: "Unused rule: Unused is not reachable from File",
+    }],
+  },
+  {
+    language: "advanced",
+    consumer: "examples/typescript/advanced.ts",
+    output: "The answer is:\n49\n49 10 20 2 20 true 7\n",
+    misuses: [
+      {
+        claim: "data values cannot be forged structurally",
+        original: "fromList(10)(numbers)",
+        replacement: "(() => ({ tag: \"Tree.Leaf\", fields: [10] }))()",
+        code: "TS2741",
+      },
+      {
+        claim: "data type arguments are checked",
+        original: "mapList((n: number) => `#${n}`)",
+        replacement: "mapList((n: number) => n)",
+        code: "TS2322",
+      },
+      {
+        claim: "a data type from another guest module keeps its identity",
+        original: "fromList(10)(numbers)",
+        replacement: "fromList(10)(first)",
+        code: "TS2741",
+      },
+      {
+        claim: "a monomorphic function is not rank-2 polymorphic",
+        original: "both(<A>(x: A) => x)",
+        replacement: "both((x: number) => x)",
+        code: "TS2345",
+      },
+      {
+        claim: "an open row still requires its fields",
+        original: "{ value: always(7)(\"ignored\"), unit: \"kg\" }",
+        replacement: "{ unit: \"kg\" }",
+        code: "TS2345",
+      },
+    ],
+    guestErrors: [
+      {
+        file: "examples/advanced/main.advanced",
+        source: "import \"./stdlib.advanced\";\nlength(1) + 2\n",
+        at: "1",
+        message: "Cannot unify number with List(a)",
+      },
+      {
+        file: "examples/advanced/trees.advanced",
+        source: "let flagged = fn(record) => { flag = true | record } in\n{ flagged = flagged }\n",
+        at: "flagged = fn",
+        message: "TypeScript cannot represent flagged: a record row that must lack flag",
+      },
+      {
+        file: "examples/advanced/trees.advanced",
+        source: "import \"./stdlib.advanced\";\nlet empty = Nil in\n{ empty = empty }\n",
+        at: "empty = Nil",
+        message: "TypeScript cannot represent empty: a polymorphic value that is not a function",
+      },
+    ],
+  },
+  {
+    language: "hm",
+    consumer: "examples/typescript/hm.ts",
+    output: "42 true 5 hey!!\n",
+    misuses: [
+      {
+        claim: "a plain HM result keeps its type",
+        original: "const total: number = answer;",
+        replacement: "const total: string = answer;",
+        code: "TS2322",
+      },
+      {
+        claim: "a generic is inferred, not collapsed to unknown",
+        original: "twice((n: number) => n + 2)(1)",
+        replacement: "twice((n: number) => n + 2)(\"one\")",
+        code: "TS2345",
+      },
+      {
+        claim: "types flow through a staged generic",
+        original: "(s: string) => s.length)",
+        replacement: "(s: boolean) => 1)",
+        code: "TS2322",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/hm/main.hm",
+      source: "let x = 1 in x + true\n",
+      at: "true",
+      message: "Cannot unify boolean with number",
+    }],
+  },
+  {
+    language: "schema",
+    consumer: "examples/typescript/schema.ts",
+    output: "true 2 190\n2026-01-01 00:00:00 true\n"
+      + "{\"email\":\"sai@example.com\",\"role\":\"Admin\"} {\"title\":\"Hello\",\"authorId\":1}\n",
+    misuses: [
+      {
+        claim: "DateTime fields are strings",
+        original: "const timestamp: string = author.updatedAt;",
+        replacement: "const timestamp: number = author.updatedAt;",
+        code: "TS2322",
+      },
+      {
+        claim: "enums are closed unions",
+        original: "const role: Role = \"Admin\";",
+        replacement: "const role: Role = \"Owner\";",
+        code: "TS2322",
+      },
+      {
+        claim: "references require the referenced key's brand",
+        original: "({ title: \"Hello\", authorId: by.id })",
+        replacement: "({ title: \"Hello\", authorId: 1 })",
+        code: "TS2322",
+      },
+      {
+        claim: "primary keys of different models are distinct",
+        original: "entry.authorId === by.id",
+        replacement: "entry.id === by.id",
+        code: "TS2367",
+      },
+      {
+        claim: "insert types omit auto-increment keys",
+        original: "{ email: author.email, role }",
+        replacement: "{ id: author.id, email: author.email, role }",
+        code: "TS2353",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/schema/simple.schema",
+      source: "model User = { id : Int |> primaryKey, role : Missing }\n",
+      at: "Missing",
+      message: "Unknown field type: Missing",
+    }],
+  },
+  {
+    language: "domain",
+    consumer: "examples/typescript/checkout.ts",
+    output: [
+      "true true true",
+      "Shipped Courier 1 Cart Captured",
+      "{\"state\":\"Shipped\",\"items\":[{\"sku\":\"kbd-60\",\"quantity\":1,\"cents\":12900}],"
+      + "\"address\":{\"name\":\"Sai\",\"line1\":\"1 Loop Road\",\"city\":\"Bengaluru\",\"postcode\":\"560001\"},"
+      + "\"paymentId\":\"pi_1\",\"carrier\":\"Courier\",\"tracking\":\"TRK123\"} delivered 2026-10-24T12:00:00Z",
+      "cancelled: OutOfStock re_2 Refunded true",
+      "Pending true",
+      "snapshot.address: expected Address, found nothing",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "an event is callable only in the states that handle it",
+        original: "paid.ship({ carrier: \"Courier\", tracking: \"TRK123\" })",
+        replacement: "cart.ship({ carrier: \"Courier\", tracking: \"TRK123\" })",
+        code: "TS2339",
+      },
+      {
+        claim: "an event needs its whole payload",
+        original: "cart.checkout({ address })",
+        replacement: "cart.checkout({})",
+        code: "TS2741",
+      },
+      {
+        claim: "a branded id is not a plain string",
+        original: "challenge({ paymentId, challengeUrl",
+        replacement: "challenge({ paymentId: \"pi_1\", challengeUrl",
+        code: "TS2322",
+      },
+      {
+        claim: "Final holds only the final states",
+        original: "receipt(refunded)",
+        replacement: "receipt(paid)",
+        code: "TS2345",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/domain/checkout.domain",
+      source: checkoutDomain.replace("on ship -> Shipped", "on ship -> Shiped"),
+      at: "Shiped",
+      message: "Unknown state: Shiped",
+    }],
+  },
+  {
+    language: "domain systems",
+    consumer: "examples/typescript/shop.ts",
+    output: [
+      "Paid Shipped Dispatched",
+      "card ending 4242",
+      "true true true Cart",
+      "OutOfStock Refunded",
+      "1",
+      "true",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "a sync takes only parts in states that handle its event",
+        original: "Shop.refund({ order, payment })",
+        replacement: "Shop.refund({ order: cart, payment })",
+        code: "TS2739",
+      },
+      {
+        claim: "a never predicate needs every part its formula names",
+        original: "Shop.refundsNeverShip(row)",
+        replacement: "Shop.refundsNeverShip({ warehouse: row.warehouse })",
+        code: "TS2741",
+      },
+      {
+        claim: "a tagged union narrows on its tag",
+        original: "`transfer ${method.reference}`",
+        replacement: "`transfer ${method.last4}`",
+        code: "TS2339",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/domain/shop.domain",
+      source: shopDomain.replace("payment.capture", "payment.captre"),
+      at: "captre",
+      message: "Payment has no event captre",
+    }],
+  },
+  {
+    language: "schema queries",
+    consumer: "examples/typescript/blog.ts",
+    output: [
+      "published 1 Draft",
+      "Hello true sai@example.com kim@example.com [ 'kim@example.com: Nice post' ] 1",
+      "Notes Draft unedited",
+      "Hello Published edited by kim@example.com",
+      "Admin undefined Hello",
+      "[ 'sai@example.com has 1 draft' ]",
+      "changed my mind drafts: 1",
+      "[ { id: 1, hidden: true }, { id: 2, hidden: true } ]",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "a parameter typed by a key takes only that model's key",
+        original: "db.postsBy({ author: sai.id, skip: 0 })",
+        replacement: "db.postsBy({ author: hello.id, skip: 0 })",
+        code: "TS2322",
+      },
+      {
+        claim: "a row has only the fields its select names",
+        original: "entry.author.email",
+        replacement: "entry.author.role",
+        code: "TS2339",
+      },
+      {
+        claim: "every declared parameter is required",
+        original: "db.feed({ n: 10, before: null })",
+        replacement: "db.feed({ n: 10 })",
+        code: "TS2741",
+      },
+      {
+        claim: "first may find nothing",
+        original: "me?.role",
+        replacement: "me.role",
+        code: "TS18048",
+      },
+      {
+        claim: "a nullable relation may be null",
+        original: "entry.editor?.email",
+        replacement: "entry.editor.email",
+        code: "TS18047",
+      },
+      {
+        claim: "Bool fields are booleans",
+        original: "const featured: boolean = entry.featured;",
+        replacement: "const featured: number = entry.featured;",
+        code: "TS2322",
+      },
+    ],
+    guestErrors: [
+      {
+        file: "examples/schema/blog.schema",
+        source: "model User = { id : Int |> primaryKey, email : String }\n"
+          + "query byEmail(email: String) = User |> where .emial == email |> first\n",
+        at: "emial",
+        message: "Unknown field: User.emial",
+      },
+      {
+        file: "examples/schema/blog.schema",
+        source: "model User = { id : Int |> primaryKey }\nmodel Post = { id : Int |> primaryKey }\n"
+          + "query mixed(user: User.id) = Post |> where .id == user |> count\n",
+        at: ".id == user",
+        message: "Cannot compare PostId with UserId",
+      },
+      {
+        file: "examples/schema/blog.schema",
+        source: "model User = { id : Int |> primaryKey }\nquery transaction = User |> count\n",
+        at: "transaction",
+        message: "TypeScript cannot represent transaction, a Database member",
+      },
+    ],
+  },
+];
+
+const project = <A>(consumer: string, edits: Readonly<Record<string, string>>, use: (directory: string) => A): A => {
+  const isolated = isolatedProject([consumer]);
+  try {
+    cpSync(join(root, "examples"), join(isolated.directory, "examples"), { recursive: true });
+    for (const [file, source] of Object.entries(edits)) writeFileSync(join(isolated.directory, file), source);
+    return use(isolated.directory);
+  } finally {
+    isolated.dispose();
+  }
+};
+
+const typecheck = (directory: string) => {
+  const result = compile(join(directory, "tsconfig.json"));
+  const errors = [...result.output.matchAll(/^(.+)\((\d+),(\d+)\): error (\w+?)\d+: (.*)$/gm)].map((match) => ({
+    file: resolve(root, match[1]!),
+    line: Number(match[2]),
+    column: Number(match[3]),
+    source: match[4],
+    message: match[5],
+  }));
+  return { status: result.status, output: result.output, errors };
+};
+
+const run = (cwd: string, consumer: string) =>
+  spawnSync(process.execPath, ["--import", "./examples/register.ts", consumer], {
+    cwd,
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+
+const position = (source: string, index: number) => {
+  const before = source.slice(0, index).split("\n");
+  return { line: before.length, column: before.at(-1)!.length + 1 };
+};
+
+for (const host of cases) {
+  test(`${host.language}: tsc types the consumer through the content mapper`, () => {
+    project(host.consumer, {}, (directory) => {
+      const clean = typecheck(directory);
+      assert.equal(clean.status, 0, clean.output);
+    });
+  });
+
+  for (const misuse of host.misuses) {
+    test(`${host.language}: tsc rejects a consumer that breaks the claim that ${misuse.claim}`, () => {
+      const consumer = readFileSync(join(root, host.consumer), "utf8");
+      const seed = fragment(consumer, misuse.original);
+      const misused = consumer.slice(0, seed.index) + misuse.replacement
+        + consumer.slice(seed.index + seed.text.length);
+      project(host.consumer, { [host.consumer]: misused }, (directory) => {
+        const checked = typecheck(directory);
+        assert.notEqual(checked.status, 0, "misuse must fail");
+        assert.deepEqual(
+          checked.errors.map(({ file, line, source }) => ({ file, line, source })),
+          [{ file: join(directory, host.consumer), line: position(misused, seed.index).line, source: "TS" }],
+          checked.output,
+        );
+        assert.ok(checked.output.includes(`error ${misuse.code}:`), checked.output);
+      });
+    });
+  }
+
+  test(`${host.language}: the loader runs the consumer`, () => {
+    const result = run(root, host.consumer);
+    assert.equal(result.stderr, "");
+    assert.equal(result.status, 0);
+    assert.equal(result.stdout, host.output);
+  });
+
+  for (const { file, source, at, message } of host.guestErrors) {
+    test(`${host.language}: the guest error "${message}" surfaces at the guest position`, () => {
+      const expected = position(source, fragment(source, at).index);
+      project(host.consumer, { [file]: source }, (directory) => {
+        const checked = typecheck(directory);
+        assert.notEqual(checked.status, 0, "guest error must fail tsc");
+        assert.deepEqual(
+          checked.errors,
+          [{ file: join(directory, file), ...expected, source: "langkit", message }],
+          checked.output,
+        );
+        const executed = run(directory, host.consumer);
+        assert.notEqual(executed.status, 0, "guest error must fail the loader");
+        assert.match(executed.stderr, /SyntaxError/);
+        assert.ok(
+          executed.stderr.includes(
+            `${join(directory, file)}: line ${expected.line}, column ${expected.column}: ${message}`,
+          ),
+          executed.stderr,
+        );
+      });
+    });
+  }
+}

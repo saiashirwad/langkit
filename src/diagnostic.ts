@@ -8,11 +8,6 @@ export type RelatedDiagnostic = {
 };
 
 export type Diagnostic = {
-  readonly code?: string;
-  readonly invocation?: symbol;
-  readonly parentInvocation?: symbol;
-  readonly rule?: string;
-  readonly reasons?: readonly symbol[];
   readonly message: string;
   readonly context: readonly string[];
   readonly span?: Span;
@@ -21,16 +16,17 @@ export type Diagnostic = {
   readonly related?: readonly RelatedDiagnostic[];
 };
 
+export const diagnostic = (message: string, span?: Span): Diagnostic =>
+  span === undefined ? { message, context: [] } : { message, context: [], span };
+
+/** Where `error` reports, seen from the document `here`: its routed location, else its origin, else its own span. */
+export const site = (error: Diagnostic, here: string): SourceLocation | undefined =>
+  error.location ?? error.origin ?? (error.span && { uri: here, span: error.span });
+
 export const withDocument = (diagnostic: Diagnostic, uri: string): Diagnostic => {
   if (diagnostic.span === undefined) return diagnostic;
   const origin = diagnostic.origin ?? diagnostic.location ?? { uri, span: diagnostic.span };
   return { ...diagnostic, origin, location: diagnostic.location ?? origin };
-};
-
-export const withLocation = (diagnostic: Diagnostic, location: SourceLocation): Diagnostic => {
-  const origin = diagnostic.origin ?? diagnostic.location
-    ?? (diagnostic.span ? { uri: location.uri, span: diagnostic.span } : undefined);
-  return origin ? { ...diagnostic, origin, location } : { ...diagnostic, location };
 };
 
 export const render = (error: Diagnostic, source?: string): string => {
