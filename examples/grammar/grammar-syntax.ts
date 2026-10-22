@@ -137,10 +137,11 @@ const elem: Parser<Elem> = parser(function*(): Generator<Parser<unknown>, Elem, 
 });
 
 const alt: Parser<Alt> = parser(function*(): Generator<Parser<unknown>, Alt, never> {
-  const tag = yield* optional(symbol("#").zipRight(name));
+  const hash = yield* optional(at(symbol("#")));
+  const tag = hash ? yield* name : undefined;
   const elems = yield* many(elem);
   if (!elems.length && !tag) yield* fail("expected a sequence");
-  const first = tag?.span ?? elems[0]!.expr.span;
+  const first = hash?.span ?? elems[0]!.label?.span ?? elems[0]!.expr.span;
   const last = elems.at(-1)?.expr.span ?? tag!.span;
   return { tag, elems, span: joined(first, last) };
 });
