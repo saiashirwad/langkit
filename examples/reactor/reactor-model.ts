@@ -37,6 +37,9 @@ export type CellSlot = Slotted<"cell">;
 
 export type SignalSlot = Slotted<"signal">;
 
+/** A slot named where it is read without being a value, as in an `if` list or after `on`. */
+export type Named<S extends Slot> = { readonly slot: S; readonly span: Span; };
+
 /** `last Root` keeps the latest Root its input carried, absent until then. A value cell is rewritten by groups. */
 export type Init =
   | { readonly kind: "last"; readonly of: Present; readonly input: Input; }
@@ -49,7 +52,7 @@ export type Signal = {
   readonly kind: "signal";
   readonly slot: SignalSlot;
   readonly source: Input;
-  readonly present: readonly CellSlot[];
+  readonly present: readonly Named<CellSlot>[];
   readonly value: Expr;
 };
 
@@ -60,6 +63,8 @@ export type Source = Input | SignalSlot;
 /** `on clip c`: rows match the cell's value, tried in order; `binder` is the firing source's value. */
 export type Group = {
   readonly source: Source;
+  /** Where the source is named, which is where a cell reads its signal. */
+  readonly on: Span;
   readonly binder: Local | undefined;
   readonly rows: readonly Row[];
   readonly span: Span;

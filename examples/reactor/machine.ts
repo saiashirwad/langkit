@@ -1,6 +1,7 @@
 import { type Check, check, pure } from "langkit";
 import { type DataType, type Name, type Present, same, showType, showTypeDecl } from "../data/data-model.ts";
 import { article, attempt, type Binder, error, facts, resolveType, type Scope, typeNames } from "../data/data-types.ts";
+import { causality, type Cycle } from "./causality.ts";
 import { intersect, isEmpty, minus, upTo } from "./lengths.ts";
 import {
   type Cell,
@@ -9,7 +10,9 @@ import {
   type Input,
   type Local,
   type Machine,
+  type Named,
   type Node,
+  type Property,
   type Row,
   showInput,
   showLocal,
@@ -276,7 +279,7 @@ const group = (env: Env, owner: CellSlot, written: G.Group): Check<Group> =>
       }));
       if (checked) rows.push(checked);
     }
-    return { source, binder, rows, span: written.span };
+    return { source, on: written.source.span, binder, rows, span: written.span };
   });
 
 /**
@@ -292,7 +295,7 @@ const signal = (env: Env, item: G.ItemSignal, slot: SignalSlot): Check<Signal> =
         `${slot.name.name} fires on an input; ${item.source.name} is ${article(source.kind)}`,
       );
     }
-    const present: CellSlot[] = [];
+    const present: Named<CellSlot>[] = [];
     for (const name of item.present) {
       const found = yield* entity(env, name);
       if (found.kind !== "cell") {
@@ -301,10 +304,10 @@ const signal = (env: Env, item: G.ItemSignal, slot: SignalSlot): Check<Signal> =
       if (found.type.kind !== "optional") {
         return yield* error(name, `${name.name} is never absent; drop it from if`);
       }
-      if (present.includes(found)) return yield* error(name, `${name.name} is listed twice`);
-      present.push(found);
+      if (present.some(({ slot }) => slot === found)) return yield* error(name, `${name.name} is listed twice`);
+      present.push({ slot: found, span: name.span });
     }
-    const narrowed: Env = { ...env, present: new Set(present) };
+    const narrowed: Env = { ...env, present: new Set(present.map(({ slot }) => slot)) };
     const value = yield* against(narrowed, item.value, { type: slot.type, noun: slot.name.name, by: "this signal" });
     return { kind: "signal", slot, source, present, value };
   });
@@ -335,5 +338,33 @@ export const elaborateMachine = (
         : yield* attempt(signal(env, declared.item, declared.entity));
       if (node) nodes.push(node);
     }
-    return { id: binder.id, uri: binder.uri, name, inputs, nodes, properties: [] };
+    const written = declarations.filter(({ kind }) => kind !== "input").length;
+    const { order, cycles } = causality(nodes);
+    if (nodes.length === written) { for (const cycle of cycles) yield* attempt(error(cycle[0], showCycle(cycle))); }
+    const properties: Property[] = [];
+    for (const item of declaration.items) {
+      if (item.kind !== "property" || [...mentions(item)].some((name) => broken.has(name))) continue;
+      const checked = yield* attempt(property({ ...env, moment: "property" }, item, properties));
+      if (checked) properties.push(checked);
+    }
+    return { id: binder.id, uri: binder.uri, name, inputs, nodes: order, properties };
+  });
+
+const showCycle = ([first, ...rest]: Cycle): string =>
+  first.to === first.from.slot && !rest.length
+    ? `${first.to.name.name} reads itself in the same tick; match on its value in a row instead`
+    : `Causality cycle: ${first.from.slot.name.name} reads ${first.to.name.name}${
+      rest.map(({ to }) => `, which reads ${to.name.name}`).join("")
+    }`;
+
+/** `property halfNeverStrums = never (...)`: a claim about every state the machine can reach, over its cells. */
+const property = (env: Env, item: G.ItemProperty, earlier: readonly Property[]): Check<Property> =>
+  check(function*() {
+    const { name, claim } = item;
+    if (earlier.some((other) => other.name.name === name.name)) {
+      return yield* error(name, `Duplicate property: ${name.name}`);
+    }
+    const id = Symbol(name.name);
+    yield* facts.define({ id, name: name.name, type: `property ${name.name}` }, name.span, "constant");
+    return { id, name, claim: { kind: claim.kind, formula: yield* formula(env, claim.formula) } };
   });

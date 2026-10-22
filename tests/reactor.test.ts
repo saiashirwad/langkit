@@ -341,6 +341,61 @@ const cases: readonly Case[] = [
     at: "Loop",
     line: 21,
   },
+  {
+    rule: "a property pattern with an unknown field",
+    source: edit("{ feel = Half }", "{ mood = Half }", player),
+    message: "Clip has no field mood",
+    at: "mood",
+    line: 30,
+  },
+  {
+    rule: "a property reading a signal",
+    source: inside("property p = never (clip is { feel = Half })"),
+    message: "clip is a signal, which is not state; a property reads cells",
+    at: "clip",
+    line: 10,
+  },
+  {
+    rule: "a property testing a cell that may be absent",
+    source: inside("property p = never (root is I)"),
+    message: "root may be absent here, and is cannot test an absent value yet",
+    at: "root",
+    line: 10,
+  },
+  {
+    rule: "contains on a value that is not a list",
+    source: inside("property p = possible (mode contains Half)", inside("cell mode : Feel = Straight")),
+    message: "contains tests a list, but mode is Feel",
+    at: "mode",
+    line: 11,
+  },
+  {
+    rule: "a repeated property name",
+    source: inside(
+      "property p = possible (not (mode is Half))",
+      inside("property p = never (mode is Half)", inside("cell mode : Feel = Straight")),
+    ),
+    message: "Duplicate property: p",
+    at: "p",
+    line: 12,
+  },
+  {
+    rule: "a cell and a signal that read each other",
+    source: inside(
+      "signal ping : [Root; ..2] = on bar -> a",
+      inside("cell a : [Root; ..2] = []\n    on ping p\n      [..s] -> p"),
+    ),
+    message: "Causality cycle: a reads ping, which reads a",
+    at: "ping",
+    line: 11,
+  },
+  {
+    rule: "a cell reading itself in its rows",
+    source: inside("cell a : [Root; ..2] = []\n    on bar\n      [..s] -> a"),
+    message: "a reads itself in the same tick; match on its value in a row instead",
+    at: "a",
+    line: 12,
+  },
 ];
 
 for (const { rule, source, message, at, line } of cases) {
@@ -493,4 +548,20 @@ test("list-length narrowing agrees with running every list through the rows", ()
     }
   }
   assert.equal(exact, 200);
+});
+
+test("a machine's nodes come after every node they read, whatever order they are written in", () => {
+  const signal = "  signal clip : Clip = on press if root, shape, feel -> { root, shape, feel }\n";
+  const reordered = edit(signal, "", player).replace(
+    "  property halfNeverStrums",
+    `${signal}  property halfNeverStrums`,
+  );
+  for (const source of [player, reordered]) {
+    const order = moduleOf(source).machines[0]!.nodes.map(({ slot }) => slot.name.name);
+    assert.deepEqual(order.toSorted(), ["clip", "feel", "root", "shape", "steps"]);
+    for (const cell of ["root", "shape", "feel"]) {
+      assert.ok(order.indexOf(cell) < order.indexOf("clip"), order.join(" "));
+    }
+    assert.ok(order.indexOf("clip") < order.indexOf("steps"), order.join(" "));
+  }
 });
