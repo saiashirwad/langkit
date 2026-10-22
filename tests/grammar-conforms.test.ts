@@ -5,8 +5,8 @@ import { type Checked, type RuleId, ruleId, type Ty, wire } from "../examples/gr
 import { checkSource } from "../examples/grammar/grammar.ts";
 import { define } from "../examples/grammar/runtime.ts";
 
-const grammarOf = (name: string): Checked => {
-  const checked = checkSource(readFileSync(new URL(`../examples/grammar/${name}`, import.meta.url), "utf8"));
+const grammarOf = (path: string): Checked => {
+  const checked = checkSource(readFileSync(new URL(`../examples/${path}`, import.meta.url), "utf8"));
   assert.ok(checked.success);
   return checked.value;
 };
@@ -57,7 +57,7 @@ const corpus = (directory: string, extension: string): readonly string[] =>
   );
 
 test("every AST the runtime builds from the domain corpus has the shape the projection declares", () => {
-  const grammar = grammarOf("domain.grammar");
+  const grammar = grammarOf("grammar/domain.grammar");
   const parse = define(wire(grammar)).parse;
   let checked = 0;
   for (const source of corpus("domain", ".domain")) {
@@ -71,8 +71,23 @@ test("every AST the runtime builds from the domain corpus has the shape the proj
   assert.ok(checked > 100, `${checked} accepted inputs`);
 });
 
+test("every AST the runtime builds from the reactor corpus has the shape the projection declares", () => {
+  const grammar = grammarOf("reactor/reactor.grammar");
+  const parse = define(wire(grammar)).parse;
+  let checked = 0;
+  for (const source of corpus("reactor", ".reactor")) {
+    for (let length = 0; length <= source.length; length++) {
+      const result = parse(source.slice(0, length));
+      if (!result.success) continue;
+      assert.ok(conforms(grammar, { t: "rule", id: ruleId(0) }, result.value), `prefix ${length}`);
+      checked++;
+    }
+  }
+  assert.ok(checked > 50, `${checked} accepted inputs`);
+});
+
 test("every AST the runtime builds from the expression corpus has the shape the projection declares", () => {
-  const grammar = grammarOf("expr.grammar");
+  const grammar = grammarOf("grammar/expr.grammar");
   const parse = define(wire(grammar)).parse;
   const inputs = ["1", "a.b", "1 + 2 * 3", "-a!", "not a == b", "(1 + 2) * x.y.z", "a or b and c < d - 1"];
   for (const input of inputs) {
@@ -83,7 +98,7 @@ test("every AST the runtime builds from the expression corpus has the shape the 
 });
 
 test("a value that breaks the declared shape is caught", () => {
-  const grammar = grammarOf("expr.grammar");
+  const grammar = grammarOf("grammar/expr.grammar");
   const num = { kind: "Num", value: "1", span: { start: 0, end: 1 } };
   assert.ok(conforms(grammar, { t: "rule", id: ruleId(0) }, num));
   assert.ok(!conforms(grammar, { t: "rule", id: ruleId(0) }, { ...num, value: 1 }));

@@ -1,0 +1,33 @@
+type Root  = I | II | III | IV | V | VI | VII | VIII
+type Shape = Major | Minor | Sus2 | Sus4 | Dom7 | Maj7 | Min7 | Power
+type Feel  = Straight | Swing | Half
+
+type Clip = { root : Root, shape : Shape, feel : Feel }
+type Step = Loop(clip : Clip) | SlowStrum(clip : Clip)
+
+machine Player {
+  input press : Root | Shape | Feel
+  input bar
+
+  cell root  : Root?  = last Root
+  cell shape : Shape? = last Shape
+  cell feel  : Feel?  = last Feel
+
+  signal clip : Clip = on press if root, shape, feel -> { root, shape, feel }
+
+  cell steps : [Step; ..3] = []
+
+    on clip c
+      [..s, Loop(c)]       ->  [..s, SlowStrum(c)]   unless c.feel is Half
+      [..s, SlowStrum(c)]  ->  [..s, Loop(c)]
+      [a, b, _]            ->  [a, b, Loop(c)]
+      [..s]                ->  [..s, Loop(c)]
+
+    on bar
+      [_, x, ..s]          ->  [x, ..s]
+      [SlowStrum(c)]       ->  [Loop(c)]
+
+  property halfNeverStrums = never (steps contains SlowStrum({ feel = Half }))
+  property canMixInOrder   = possible (steps is [Loop, SlowStrum, Loop])
+  property noStrumWall     = never (steps is [SlowStrum, SlowStrum, SlowStrum])
+}

@@ -1,0 +1,92 @@
+grammar Reactor
+
+skip = /\s+/ | /\/\/[^\r\n]*/
+word = /[a-zA-Z_][a-zA-Z_0-9]*/
+
+token Digits = /[0-9]+/
+
+File = declarations:Declaration*
+
+Declaration =
+  | #type "type" ~ name:Name "=" body:TypeBody
+  | #machine "machine" ~ name:Name "{" items:Item* "}"
+
+TypeBody =
+  | #record "{" fields:Field sepEndBy "," "}"
+  | #union members:Member sepBy1 "|"
+
+Member = name:Name payload:Payload?
+
+Payload = "(" fields:Field sepEndBy "," ")"
+
+Field = name:Name ":" ~ type:DataType
+
+DataType = precedence {
+  postfix "?"
+  atom
+    | #named name:Name
+    | #list "[" element:DataType bound:(";" ~ Bound)? "]"
+}
+
+Bound = ".." max:Digits
+
+Item =
+  | #input "input" ~ name:Name carries:(":" ~ DataType sepBy1 "|")?
+  | #cell "cell" ~ name:Name ":" type:DataType "=" init:Init
+  | #signal "signal" ~ name:Name ":" type:DataType "=" "on" source:Name present:("if" ~ Name sepBy1 ",")? "->" value:Expr
+  | #property "property" ~ name:Name "=" claim:Claim
+
+Init =
+  | #last "last" ~ type:Name
+  | #value value:Expr groups:Group*
+
+Group = "on" ~ source:Name binder:(Name !("->" | "("))? rows:Row*
+
+Row = pattern:Pattern "->" ~ value:Expr guard:Guard?
+
+Guard = sense:("unless" | "if") ~ formula:Formula
+
+Pattern =
+  | #wild "_"
+  | #list "[" ~ items:PatternItem sepEndBy "," "]"
+  | #record "{" ~ fields:FieldPattern sepEndBy "," "}"
+  | #name name:Name args:Args?
+
+PatternItem =
+  | #spread ".." rest:Rest
+  | #one pattern:Pattern
+
+Rest =
+  | #wild "_"
+  | #bind name:Name
+
+Args = "(" ~ items:Pattern sepEndBy "," ")"
+
+FieldPattern = name:Name "=" ~ pattern:Pattern
+
+Expr =
+  | #list "[" items:ExprItem sepEndBy "," "]"
+  | #record "{" fields:FieldValue sepEndBy "," "}"
+  | #call callee:Name "(" ~ args:Expr sepEndBy "," ")"
+  | #path head:Name fields:("." Name)*
+
+ExprItem =
+  | #spread ".." value:Expr
+  | #one value:Expr
+
+FieldValue = name:Name value:("=" Expr)?
+
+Claim =
+  | #never "never" ~ formula:Formula
+  | #possible "possible" ~ formula:Formula
+
+Formula = precedence {
+  left "or"
+  left "and"
+  prefix "not"
+  atom
+    | #test subject:Expr test:("is" | "contains") ~ pattern:Pattern
+    | #group "(" inner:Formula ")"
+}
+
+Name = name:ident
