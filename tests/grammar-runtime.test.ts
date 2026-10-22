@@ -161,3 +161,15 @@ test("shared-prefix alternatives nested deeply parse in linear time", () => {
   assert.ok(result.success);
   assert.ok(performance.now() - started < 300, "without memoizing this takes seconds");
 });
+
+test("a symbol never matches inside a longer symbol of the same grammar", () => {
+  const parse = parser(`${header}Doc = items:Item+ "|>" "end"
+Item = Pipe
+Pipe = precedence {
+  left "|"
+  atom
+    | #leaf name:ident
+}
+`);
+  assert.ok(parse("a | b |> end").success);
+});

@@ -18,7 +18,16 @@ import {
 } from "langkit/parse";
 import { makeParser, type Reply, replyFailure, replySuccess, runParser, type SourceText } from "parserator/advanced";
 import { memoRules } from "./grammar-analysis.ts";
-import { type Expr, type Level, type Operator, type RuleId, ruleId, type Seq, type Wire } from "./grammar-model.ts";
+import {
+  type Expr,
+  type Level,
+  type Operator,
+  type RuleId,
+  ruleId,
+  type Seq,
+  walk,
+  type Wire,
+} from "./grammar-model.ts";
 
 /** A parsed value and where its last token ended, or -1 when it consumed nothing. Node spans are built from it. */
 type Cell = { readonly v: unknown; readonly e: number; };
@@ -53,7 +62,28 @@ export const define = (grammar: Wire): Parsers => {
         : reply;
     });
 
-  const literal = (text: string, kw: boolean): Parser<string> => kw ? lex.keyword(text) : lex.symbol(text);
+  const symbols = new Set<string>();
+  for (const rule of grammar.rules) {
+    walk(rule.body, (e) => e.t === "lit" && !e.kw && symbols.add(e.text));
+    for (const level of rule.pratt ?? []) for (const op of level.ops) if (!op.kw) symbols.add(op.text);
+  }
+
+  /** Maximal munch: a symbol yields to any longer symbol of the grammar that also matches at its position. */
+  const symbol = (text: string): Parser<string> => {
+    const longer = [...symbols].filter((other) => other.length > text.length && other.startsWith(text));
+    const plain = lex.symbol(text);
+    if (longer.length === 0) return plain;
+    return makeParser((source, offset) =>
+      longer.some((other) => source.text.startsWith(other, offset))
+        ? replyFailure(
+          { kind: "expected", span: { start: offset, end: offset }, expected: [JSON.stringify(text)] },
+          offset,
+        )
+        : runParser(plain, source, offset)
+    );
+  };
+
+  const literal = (text: string, kw: boolean): Parser<string> => kw ? lex.keyword(text) : symbol(text);
 
   const build = (e: Expr<object>): Parser<Cell> => {
     switch (e.t) {
