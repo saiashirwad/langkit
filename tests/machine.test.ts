@@ -1,7 +1,12 @@
+import { project } from "langkit/host";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { test } from "node:test";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { after, test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { audit, finishing, reachable, unhandled } from "../examples/machine/graph.ts";
+import { host } from "../examples/machine/machine-host.ts";
 import type { Machine } from "../examples/machine/machine-model.ts";
 import { checkSource } from "../examples/machine/machine.ts";
 
@@ -317,4 +322,248 @@ test("graph: finishing walks edges backwards from every final state", () => {
   assert.deepEqual(names, ["Cancelled", "Cart", "Checkout", "Delivered", "Paid", "Refunding"]);
   assert.deepEqual(described(severed), ["dead end: Shipped", "unreachable: Delivered", "unhandled: deliver"]);
   assert.deepEqual(unhandled(severed).map(({ name }) => name.name), ["deliver"]);
+});
+
+const hosted = (source: string) => {
+  const { declarations, diagnostics, javascript } = host.host(source, "file:///test.machine");
+  return { projection: project(declarations), diagnostics, javascript };
+};
+
+const gauge = [
+  "machine Gauge",
+  "event record(samples : [Float?], ok : Bool)",
+  "event reset",
+  "initial state Idle = { samples : [Float?], ok : Bool } |> on record -> Idle |> on reset -> Done",
+  "final state Done",
+  "",
+].join("\n");
+
+test("host: each state projects to an interface whose methods are the legal events, documented by their transition", () => {
+  const { projection, diagnostics } = hosted(checkout);
+  assert.deepEqual(diagnostics, []);
+  const { text } = projection;
+  for (
+    const expected of [
+      "export type Carrier = \"Post\" | \"Courier\";",
+      "  type Final = Delivered | Cancelled;",
+      "  interface Cart {\n    readonly state: \"Cart\";\n    readonly items: readonly LineItem[];\n",
+      "    /** Cart |> on checkout -> Checkout */\n    checkout(event: { readonly address: Address; }): Checkout;",
+      "    /** Paid |> on cancel -> Refunding */\n    cancel(event: { readonly reason: CancelReason; }): Refunding;",
+      "    readonly refundId: string | null;",
+      "  start(data: { readonly items: readonly LineItem[]; }): Order.Cart;",
+      "  parse(snapshot: unknown): Order;",
+      "export default Order;",
+    ]
+  ) assert.ok(text.includes(expected), `${expected}\n---\n${text}`);
+  assert.ok(!/interface Delivered \{[^}]*\(/.test(text), "a final state has no methods");
+});
+
+test("host: optionals, lists, payload-free events and a machine without data project faithfully", () => {
+  const { text } = hosted(gauge).projection;
+  assert.ok(text.includes("readonly samples: readonly (number | null)[];"), text);
+  assert.ok(text.includes("    reset(): Done;"), text);
+  assert.ok(text.includes("  type Final = Done;"), text);
+  const { text: bare } = hosted("machine Loop\nevent tick\ninitial state On |> on tick -> On\n").projection;
+  assert.ok(bare.includes("  type Final = never;"), bare);
+  assert.ok(bare.includes("  start(): Loop.On;"), bare);
+});
+
+test("host: names in the projection map back to the guest binders", () => {
+  const { projection } = hosted(checkout);
+  for (const [virtualStart, virtualLength, originalStart, originalLength] of projection.mappings) {
+    assert.equal(
+      projection.text.slice(virtualStart, virtualStart + virtualLength),
+      checkout.slice(originalStart, originalStart + originalLength),
+    );
+  }
+  const mapped = (text: string, guest: number) =>
+    projection.mappings.filter(([start, length]) => projection.text.slice(start, start + length) === text)
+      .map(([, , original]) => original)
+      .includes(guest);
+  assert.ok(mapped("ship", checkout.indexOf("on ship") + 3), "a method maps to its on-clause");
+  assert.ok(mapped("Paid", checkout.indexOf("state Paid") + 6), "an interface maps to its state");
+  assert.ok(mapped("items", checkout.indexOf("items : [LineItem], address")), "a spread field maps into its record");
+  assert.ok(mapped("reason", checkout.indexOf("reason : CancelReason)")), "a payload field maps to the event");
+});
+
+test("host: a checked file with errors is not hosted", () => {
+  const { diagnostics, javascript, projection } = hosted(edit("-> End", "-> Edn"));
+  assert.equal(javascript, undefined);
+  assert.equal(projection.text, "");
+  assert.deepEqual(diagnostics.map(({ message }) => message), ["Unknown state: Edn"]);
+});
+
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), "machine-runtime-")));
+after(() => rmSync(scratch, { recursive: true, force: true }));
+
+type Instance = { readonly state: string; readonly [field: string]: unknown; };
+type Runtime = {
+  readonly start: (data?: unknown) => Instance;
+  readonly parse: (snapshot: unknown) => Instance;
+};
+
+let modules = 0;
+const load = async (source: string): Promise<Runtime> => {
+  const file = pathToFileURL(join(scratch, `module-${modules++}.mjs`));
+  const { javascript, diagnostics } = host.host(source, file.href);
+  assert.deepEqual(diagnostics, []);
+  writeFileSync(file, javascript!());
+  return ((await import(file.href)) as { readonly default: Runtime; }).default;
+};
+
+const fire = (value: Instance, event: string, payload?: unknown): Instance => {
+  const method = Reflect.get(value, event);
+  if (typeof method !== "function") throw new TypeError(`${value.state} does not handle ${event}`);
+  return Reflect.apply(method, value, [payload]);
+};
+
+const address = { name: "Sai", line1: "1 Loop Road", city: "Bengaluru", postcode: "560001" };
+const keyboard = { sku: "kbd-60", quantity: 1, cents: 12900 };
+
+const shipped = async () => {
+  const Order = await load(checkout);
+  const cart = fire(Order.start({ items: [] }), "edit", { items: [keyboard] });
+  const paid = fire(fire(cart, "checkout", { address }), "pay", { paymentId: "pi_1", paidAt: "2026-10-22T09:00:00Z" });
+  return { Order, cart, paid, shipped: fire(paid, "ship", { carrier: "Courier", tracking: "TRK1" }) };
+};
+
+test("runtime: events move a value through the table, and each state keeps exactly its own data", async () => {
+  const { cart, paid, shipped: value } = await shipped();
+  assert.deepEqual(JSON.parse(JSON.stringify(cart)), { state: "Cart", items: [keyboard] });
+  assert.deepEqual(Object.keys(paid), ["state", "items", "address", "paymentId", "paidAt"]);
+  assert.equal(value.state, "Shipped");
+  assert.equal(value.carrier, "Courier");
+  assert.deepEqual(value.address, address);
+  assert.equal(fire(value, "deliver", { deliveredAt: "2026-10-24T12:00:00Z" }).state, "Delivered");
+});
+
+test("runtime: a payload replaces a carried field of the same name, and an unprovided optional is null", async () => {
+  const { Order } = await shipped();
+  const placed = fire(fire(Order.start({ items: [] }), "checkout", { address }), "edit", { items: [keyboard] });
+  assert.deepEqual(placed.items, [keyboard]);
+  assert.deepEqual(placed.address, address);
+  const cancelled = fire(placed, "cancel", { reason: "OutOfStock" });
+  assert.deepEqual(JSON.parse(JSON.stringify(cancelled)), { state: "Cancelled", reason: "OutOfStock", refundId: null });
+});
+
+test("runtime: values are deeply frozen and an old value stays valid after a transition", async () => {
+  const { cart, paid } = await shipped();
+  assert.ok(Object.isFrozen(paid));
+  assert.ok(Object.isFrozen(cart.items));
+  assert.ok(Object.isFrozen((cart.items as readonly object[])[0]));
+  assert.ok(Object.isFrozen(paid.address));
+  assert.throws(() => {
+    (paid as { state: string; }).state = "Cart";
+  }, TypeError);
+  const again = fire(fire(cart, "checkout", { address }), "pay", { paymentId: "pi_2", paidAt: "later" });
+  assert.equal(again.paymentId, "pi_2");
+  assert.equal(paid.paymentId, "pi_1");
+  assert.equal(cart.state, "Cart");
+});
+
+test("runtime: methods stay off the snapshot and off the awaitable surface", async () => {
+  const { paid } = await shipped();
+  assert.ok(!("then" in paid));
+  assert.equal(await paid, paid);
+  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(paid))), ["state", "items", "address", "paymentId", "paidAt"]);
+});
+
+test("runtime: parse round-trips every state's snapshot", async () => {
+  const { Order, cart, paid, shipped: value } = await shipped();
+  const delivered = fire(value, "deliver", { deliveredAt: "2026-10-24T12:00:00Z" });
+  const cancelled = fire(paid, "cancel", { reason: "ChangedMind" });
+  for (const original of [cart, paid, value, delivered, cancelled]) {
+    const restored = Order.parse(JSON.parse(JSON.stringify(original)));
+    assert.deepEqual(restored, original);
+    assert.ok(Object.isFrozen(restored));
+    assert.equal(JSON.stringify(restored), JSON.stringify(original));
+  }
+  assert.equal(
+    fire(Order.parse(JSON.parse(JSON.stringify(cancelled))), "refund", { refundId: "re_1" }).state,
+    "Cancelled",
+  );
+});
+
+const snapshot = (overrides: Readonly<Record<string, unknown>>, drop: readonly string[] = []) => {
+  const full: Record<string, unknown> = {
+    state: "Shipped",
+    items: [keyboard],
+    address,
+    paymentId: "pi_1",
+    carrier: "Courier",
+    tracking: "TRK1",
+    ...overrides,
+  };
+  for (const key of drop) delete full[key];
+  return full;
+};
+
+const rejections: readonly (readonly [string, unknown, string])[] = [
+  [
+    "a nested wrong type",
+    snapshot({ items: [{ ...keyboard, quantity: "3" }] }),
+    "snapshot.items[0].quantity: expected Int, found \"3\"",
+  ],
+  [
+    "a fractional Int",
+    snapshot({ items: [{ ...keyboard, quantity: 1.5 }] }),
+    "snapshot.items[0].quantity: expected Int, found 1.5",
+  ],
+  [
+    "an unknown state",
+    snapshot({ state: "Lost" }),
+    "snapshot.state: expected \"Cart\" | \"Checkout\" | \"Paid\" | \"Shipped\" | \"Refunding\" | \"Delivered\" | \"Cancelled\", found \"Lost\"",
+  ],
+  ["a missing record", snapshot({}, ["address"]), "snapshot.address: expected Address, found nothing"],
+  ["a missing required field", snapshot({}, ["tracking"]), "snapshot.tracking: expected String, found nothing"],
+  [
+    "an enum value outside the enum",
+    snapshot({ carrier: "Rocket" }),
+    "snapshot.carrier: expected \"Post\" | \"Courier\", found \"Rocket\"",
+  ],
+  ["an extra field", snapshot({ note: "hi" }), "snapshot: unexpected field note"],
+  ["a non-object", 3, "snapshot: expected an object, found 3"],
+  ["an array", [], "snapshot: expected an object, found an array"],
+];
+
+for (const [claim, input, message] of rejections) {
+  test(`runtime: parse rejects ${claim} and names the path`, async () => {
+    const Order = await load(checkout);
+    assert.throws(() => Order.parse(input), (error) => error instanceof TypeError && error.message === message);
+  });
+}
+
+test("runtime: an optional field may be missing from a snapshot", async () => {
+  const Order = await load(checkout);
+  const restored = Order.parse({ state: "Cancelled", reason: "OutOfStock" });
+  assert.equal(restored.refundId, null);
+});
+
+test("runtime: JS callers cannot forge a value the types would refuse", async () => {
+  const { Order, paid } = await shipped();
+  assert.throws(
+    () => fire(paid, "ship", { carrier: "Courier" }),
+    (error) =>
+      error instanceof TypeError && error.message === "Order.Paid.ship.tracking: expected String, found nothing",
+  );
+  assert.throws(
+    () => fire(paid, "ship", { carrier: "Courier", tracking: "T", extra: 1 }),
+    (error) => error instanceof TypeError && error.message === "Order.Paid.ship: unexpected field extra",
+  );
+  assert.throws(() => Order.start({}), /Order\.start\.items: expected \[LineItem\], found nothing/);
+  assert.equal(paid.pay, undefined);
+});
+
+test("runtime: Float, Bool, optional lists and payload-free events behave", async () => {
+  const Gauge = await load(gauge);
+  const idle = Gauge.start({ samples: [1.5, null], ok: true });
+  const next = fire(idle, "record", { samples: [2], ok: false });
+  assert.deepEqual(JSON.parse(JSON.stringify(next)), { state: "Idle", samples: [2], ok: false });
+  assert.equal(fire(next, "reset").state, "Done");
+  assert.throws(
+    () => fire(idle, "record", { samples: [Number.NaN], ok: true }),
+    /Gauge\.Idle\.record\.samples\[0\]: expected Float, found NaN/,
+  );
+  assert.throws(() => fire(idle, "record", { samples: [], ok: "yes" }), /ok: expected Bool, found "yes"/);
+  assert.throws(() => fire(idle, "reset", { stray: 1 }), /Gauge\.Idle\.reset: unexpected field stray/);
 });
