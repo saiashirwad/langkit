@@ -6,6 +6,7 @@ import {
   type EnumMember,
   type Field,
   type Name,
+  optionalOf,
   showType,
   type Tagged,
   type TypeDecl,
@@ -67,7 +68,7 @@ export type Env = {
   readonly constructors: Constructors;
   readonly entities: ReadonlyMap<string, Entity>;
   readonly locals: ReadonlyMap<string, Local>;
-  /** Optional cells an enclosing `if` proved present. */
+  /** Optional cells an enclosing `if` proved present, and the signal an enclosing `on` fired on. */
   readonly present: ReadonlySet<Slot>;
   readonly moment: Moment;
   /** Inside a row's value: the rest its pattern matched, which a bare `..` carries. Undefined outside a row. */
@@ -116,7 +117,11 @@ export const read = (env: Env, name: Name): Check<Read> =>
     if (env.moment === "property" && entity.kind === "signal") {
       return yield* error(name, `${name.name} is a signal, which is not state; a property reads cells`);
     }
-    const type = env.present.has(entity) ? inner(entity.type) : entity.type;
+    const type = entity.kind === "signal"
+      ? env.present.has(entity) ? entity.type : optionalOf(entity.type)
+      : env.present.has(entity)
+      ? inner(entity.type)
+      : entity.type;
     yield* facts.reference(entity, span);
     yield* facts.typed(`${name.name} : ${showType(type)}`, span);
     return { kind: "ref", ref: { kind: "slot", slot: entity }, type, span };
@@ -281,7 +286,10 @@ const carried = (env: Env, written: G.ExprItemSpread, target: Target): Check<Exp
 const misfit = (expr: Expr, target: Target): string | undefined => {
   const [from, to] = [expr.type, target.type];
   if (assignable(from, to)) return undefined;
-  if (optional(from) && assignable(inner(from), to)) return `${absent(expr)}; only a signal's if makes it present`;
+  if (optional(from) && assignable(inner(from), to)) {
+    const signal = expr.kind === "ref" && expr.ref.kind === "slot" && expr.ref.slot.kind === "signal";
+    return `${absent(expr)}; ${signal ? `read it inside on ${subject(expr)}` : "only a signal's if makes it present"}`;
+  }
   const [a, b] = [inner(from), inner(to)];
   if (a.kind === "list" && b.kind === "list" && assignable({ ...a, max: b.max }, b)) {
     const holds = a.max === Infinity ? "any number" : String(a.max);

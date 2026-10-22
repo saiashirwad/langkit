@@ -24,6 +24,10 @@ export type DataType =
 /** `String??` would project to `string | null | null`, so an optional never wraps an optional. */
 export type Present = Exclude<DataType, { readonly kind: "optional"; }>;
 
+/** `T?`; an optional stays as it is, since an optional never wraps an optional. */
+export const optionalOf = (type: DataType): DataType =>
+  type.kind === "optional" ? type : { kind: "optional", inner: type };
+
 /**
  * One binder: record fields, state data, and event payload all use it. `id` is its LSP identity, and `uri` the
  * file it is written in, which a spread can carry into another file's states.

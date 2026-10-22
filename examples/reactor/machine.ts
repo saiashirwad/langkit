@@ -233,7 +233,7 @@ const binderType = (source: Source, binder: Name): Check<DataType> => {
  * `on clip c` and its rows, tried in order, first match wins. Each row sees only the list lengths the
  * unguarded, irrefutable rows above it left, so after `[a, b, _]` a `[..s]` row binds `s : [Step; ..2]`.
  * A row whose pattern is wrong ends the group's checking, since the rows below depend on what it takes. Groups
- * never narrow each other: each fires in a different tick.
+ * never narrow each other: each fires in a different tick. A signal is present only in the rows of its own group.
  */
 const group = (env: Env, owner: CellSlot, written: G.Group): Check<Group> =>
   check<Group>(function*() {
@@ -249,7 +249,11 @@ const group = (env: Env, owner: CellSlot, written: G.Group): Check<Group> =>
       binder = { id: Symbol(name.name), name, type: yield* binderType(source, name) };
       yield* facts.define({ id: binder.id, name: name.name, type: showLocal(binder) }, name.span, "parameter");
     }
-    const scoped: Env = { ...env, locals: binder ? new Map([[binder.name.name, binder]]) : new Map() };
+    const scoped: Env = {
+      ...env,
+      locals: binder ? new Map([[binder.name.name, binder]]) : new Map(),
+      present: source.kind === "signal" ? new Set([...env.present, source]) : env.present,
+    };
     const { type } = owner;
     let remaining = type.kind === "list" ? upTo(type.max) : undefined;
     let exhausted = false;

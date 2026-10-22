@@ -414,6 +414,13 @@ const cases: readonly Case[] = [
     line: 11,
   },
   {
+    rule: "a signal read outside its own group",
+    source: inside("cell held : [Clip] = []\n    on bar\n      [..] -> [.., clip]"),
+    message: "clip may be absent here; read it inside on clip",
+    at: "clip",
+    line: 12,
+  },
+  {
     rule: "a cell reading itself in its rows",
     source: inside("cell a : [Root; ..2] = []\n    on bar\n      [..s] -> a"),
     message: "a reads itself in the same tick; match on its value in a row instead",
@@ -431,6 +438,11 @@ for (const { rule, source, message, at, line } of cases) {
 test("player.reactor checks clean", () => {
   const machine = moduleOf(player).machines[0]!;
   assert.deepEqual(machine.inputs.map(({ name }) => name.name), ["press", "bar"]);
+});
+
+test("a signal is present in the rows of its own group", () => {
+  const source = inside("cell held : [Clip] = []\n    on clip\n      [..] -> [.., clip]");
+  assert.deepEqual(diagnose(source), []);
 });
 
 test("a typo in a cell's type is one error, not one per read", () => {
