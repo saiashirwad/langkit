@@ -1,17 +1,27 @@
 # Changelog
 
-## Unreleased — transactional checking and mixed IR elaboration (breaking)
+## Unreleased (breaking)
 
-The compiler framework now composes diagnostic checks, run-local transactional state, and the pure generator IR through explicit factories. Language syntax and typing policies remain language-owned; the checker/generator architecture is inspired by typerator transactional state/recovery and ts-macros-style generator IR, without importing their TypeScript syntax or type ontology. Schema remains its separate domain IR and SQL backend.
+langkit now hosts small languages inside TypeScript. TypeScript 7.1 content mappers get types from your checker, and a node loader runs the emitted JavaScript.
 
-- The shared checker returns `Result<A>` as success/value or failure with a nonempty `errors: readonly [Diagnostic, ...Diagnostic[]]`. `recover()` accumulates independent void diagnostics but never converts a diagnosed run into success; code generation must not emit when `run` reports errors. `atomic()` restores mutable state on terminal failure or exception; `attempt(check)` also discards recovered diagnostics within its scope; `choice(...checks)` isolates alternatives; `sequence(tuple)` preserves ordered tuple results. Every run owns fresh state storage.
-- `state(init, checkpoint)` creates mutable checkpointable run-local state. `scoped(initial)` creates a readonly scoped environment; `get` reads either, while `within(key, update, body)` invokes only the updater callback to derive scoped bindings. `bind` extends readonly map environments.
-- `elaboration(configuredBuilder)` from `langkit/ir/check` adapts an already configured pure builder. Its `check(factory)`, `body(factory)`, and `scope(factory)` accept factories yielding `Check<unknown> | Declaration<T>` and returning their normal result. Declarations are collected only inside an enclosing body factory. Raw `declare` and `declareRecursive` remain pure generators yielding declarations and returning references. The adapter has no Check-argument overloads; configure features before adapting. Pure builder body/function/branch/block/scope methods remain Check-free and accept `Body | factory`. `program(body)` validates immediately. Selected operation identity and lexical references are preserved.
-- Inference allocation, instantiation, and generalization are composed inside the current run using `yield*` or Check combinators; inference does not nest `run`. Journaled `assign`, `add`, `put`, and `append` undo property/set/map/array writes without deep snapshots at each solver step. `pruneLink(value, variable, instance)` is read-only and does not compress links.
-- The IR remains extensible descriptor-driven data. `Value<T>` contains an opaque `OperationNode` and exact `operationId`; operation descriptors define ordered `children`, `scopedBodies`, `references`, immutable `map`, and optional structural validation. Structural validation is not language type checking.
-- The portable `Program<T>` carries its body, selected readonly operation registry, and core function identity. `code.program(body)`, `validate(program)`, and `code.validate(body)` preserve the structural contract. JavaScript emission is `emit(program, handlers?)` or `createJavaScriptEmitter(...handlerSets).emit(program)`; handlers match exact descriptor identity.
-- The same runnable program is built and executed for JavaScript and Python in the README example; it asserts matching answer `43`. `createPythonEmitter(...handlerSets).emit(program)` returns Python source assigning the final value to `result`; it neither executes nor prints it. The Python backend keeps native Python representations/printing while specifying JavaScript-like float arithmetic, division-by-zero, signed-zero, and strict-equality behavior for type-correct programs. Python 3.8+ is needed to execute emitted code.
-- Core IR contains primitive operations; records, variants/matches, printing, and folders are opt-in. `Schema` remains its domain-specific schema-to-SQL IR and is not routed through expression IR.
-- Analysis facts are run-local and roll back with abandoned alternatives. Failed collections retain valid child types but omit ancestor types containing same-document diagnostics.
+### Added
 
-See [README](README.md) for runnable examples and API details.
+- `langkit/host`: `HostLanguage`, projection pieces (`atom`, `verbatim`, `project`), `serveContentMapper` and `registerHostLanguages`.
+- The IR emits ES modules with imports and exports (`emitModule`).
+- `transaction((tx) => ...)` for journaled writes. A throw undoes the transaction's writes, and `tx.fail(message)` becomes a check failure.
+- `langkit/types/typescript` prints inferred types as TypeScript. `langkit/parse` adds `named` and `located`.
+- Hosted examples: Toy, HM, Schema (SQLite queries and a runtime), and Advanced (data types, higher-rank types, imports across files).
+
+### Changed
+
+- `declare` is a `Check`. The IR is one closed node union with one JavaScript emitter.
+- `fresh`, `freshRow`, `instantiate`, `instantiateForall`, `skolemize` and `generalize` are plain functions. `unify`, `exclude`, `subsume` and `expectFunction` stay `Check`s.
+- `row(fields, tail)` throws unless the tail lacks the row's labels.
+- parserator 0.4.0. Checking `examples/advanced/main.advanced` went from 7.4 ms to 2.8 ms.
+
+### Removed
+
+- `assign`, `add` and `push`. Use `transaction`.
+- `attempt`, `choice` and `sequence`.
+- The Python backend, operation dialects, staging, judgments, bindings, the elaboration wrapper, `langkit/types/hm`, `langkit/types/rows` and `pruneLink`.
+- `docs/` and the per-language READMEs. The README is the guide.
