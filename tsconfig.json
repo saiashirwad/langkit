@@ -12,7 +12,10 @@
     "noEmit": true
   },
   "contentMappers": [
-    { "package": "langkit-content-mapper", "extensions": [".toy", ".hm", ".schema", ".advanced", ".domain"] }
+    {
+      "package": "langkit-content-mapper",
+      "extensions": [".toy", ".hm", ".schema", ".advanced", ".domain", ".grammar"]
+    }
   ],
   "include": [
     "src",

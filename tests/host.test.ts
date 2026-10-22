@@ -49,6 +49,31 @@ const cases: readonly HostCase[] = [
     }],
   },
   {
+    language: "grammar",
+    consumer: "examples/typescript/expr.ts",
+    output: "8\n",
+    misuses: [
+      {
+        claim: "a node's fields have the types its grammar captures",
+        original: "return Number(expr.value);",
+        replacement: "return expr.value;",
+        code: "TS2322",
+      },
+      {
+        claim: "a prefix operator is one of the grammar's prefix operators",
+        original: "expr.operator === \"-\" ?",
+        replacement: "expr.operator === \"+\" ?",
+        code: "TS2367",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/grammar/expr.grammar",
+      source: "grammar Expr\nExpr = #loop Expr:Expr \"x\" | #end value:ident\n",
+      at: "Expr \"x\"",
+      message: "Left recursion: Expr -> Expr. Consume a token first, or use a repetition or a precedence block",
+    }],
+  },
+  {
     language: "advanced",
     consumer: "examples/typescript/advanced.ts",
     output: "The answer is:\n49\n49 10 20 2 20 true 7\n",
