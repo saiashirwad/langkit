@@ -46,7 +46,6 @@ const shadowReason = {
   "commits": "an earlier alternative commits with ~ after the same start",
 } as const;
 
-/** Resolve names, derive node types, then audit; independent errors are reported together. */
 export const elaborate = (file: S.File): Elaborated => {
   const lowered = lower(file);
   const derived = derive(lowered.grammar);

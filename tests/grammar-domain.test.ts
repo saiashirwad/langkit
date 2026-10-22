@@ -164,3 +164,11 @@ test("every accepted input has the same AST, spans included, through the adapter
 test("error offsets and messages differ only where documented", () => {
   assert.deepEqual(tally.unexplained, []);
 });
+
+test("deeply nested types parse, and nesting past the stack is a diagnostic, not a crash", () => {
+  const nested = (depth: number) => `type T = { a : ${"[".repeat(depth)}String${"]".repeat(depth)} }\n`;
+  assert.ok(generated(nested(100)).success);
+  const deep = generated(nested(50_000));
+  assert.ok(!deep.success);
+  assert.equal(deep.errors[0].message, "Nesting is too deep to parse");
+});

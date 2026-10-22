@@ -40,5 +40,4 @@ export const members = (grammar: Checked, id: RuleId, seen = new Set<RuleId>()):
   ];
 };
 
-/** The TypeScript a rule's name stands for: its interfaces and the leaves of what it passes through. */
 export const ruleType = (grammar: Checked, id: RuleId): string => [...new Set(members(grammar, id))].join(" | ");

@@ -58,7 +58,6 @@ export type Level<A> = { readonly assoc: Assoc; readonly ops: readonly Operator<
 
 /** `derived` marks the fields a precedence rule adds, which have no label in the grammar to point at. */
 export type Field<A> = A & { readonly label: string; readonly ty: Ty; readonly derived?: true; };
-/** One interface of the projection: the node `kind` it builds and its fields. */
 export type Variant<A> = A & {
   readonly iface: string;
   readonly kind: string;
@@ -71,9 +70,7 @@ export type Rule<A> = A & {
   readonly body: Extract<Expr<A>, { readonly t: "alt"; }>;
   readonly pratt?: readonly Level<A>[];
   readonly variants: readonly Variant<A>[];
-  /** Types of the alternatives that pass a value through instead of building a node. */
   readonly pass: readonly Ty[];
-  /** Whether the rule produces a value at all. */
   readonly bears: boolean;
 };
 

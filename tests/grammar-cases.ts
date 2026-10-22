@@ -284,6 +284,16 @@ export const cases: readonly Case[] = [
     errors: [["TypeScript cannot represent Result", "Result"]],
   },
   {
+    name: "word declared twice",
+    body: "word = /[a-z]+/\nA = ident",
+    errors: [["word is already declared", "word = /[a-z]+/"]],
+  },
+  {
+    name: "an operator with no text",
+    body: "E = precedence {\n left \"\"\n atom #n n:ident\n}",
+    errors: [["An operator cannot be empty", "\"\""]],
+  },
+  {
     name: "skip declared twice",
     body: "skip = /x/\nA = ident",
     errors: [["skip is already declared", "skip = /x/"]],
