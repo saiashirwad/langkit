@@ -29,6 +29,7 @@ type HostCase = {
 
 const checkoutDomain = readFileSync(join(root, "examples/domain/checkout.domain"), "utf8");
 const shopDomain = readFileSync(join(root, "examples/domain/shop.domain"), "utf8");
+const playerReactor = readFileSync(join(root, "examples/reactor/player.reactor"), "utf8");
 
 const cases: readonly HostCase[] = [
   {
@@ -308,6 +309,65 @@ const cases: readonly HostCase[] = [
       at: "captre",
       message: "Payment has no event captre",
     }],
+  },
+  {
+    language: "reactor",
+    consumer: "examples/typescript/player.ts",
+    output: [
+      "true true undefined",
+      "SlowStrum(I Major Straight) I Straight",
+      "Loop(I Major Straight) null",
+      "SlowStrum(I Major Straight) SlowStrum(II Major Straight) SlowStrum(III Major Straight) III",
+      "{\"root\":\"III\",\"shape\":\"Major\",\"feel\":\"Straight\",\"steps\":["
+      + "{\"tag\":\"SlowStrum\",\"clip\":{\"root\":\"I\",\"shape\":\"Major\",\"feel\":\"Straight\"}},"
+      + "{\"tag\":\"SlowStrum\",\"clip\":{\"root\":\"II\",\"shape\":\"Major\",\"feel\":\"Straight\"}},"
+      + "{\"tag\":\"SlowStrum\",\"clip\":{\"root\":\"III\",\"shape\":\"Major\",\"feel\":\"Straight\"}}],"
+      + "\"clip\":{\"root\":\"III\",\"shape\":\"Major\",\"feel\":\"Straight\"}}",
+      "true true",
+      "Root: expected \"I\" | \"II\" | \"III\" | \"IV\" | \"V\" | \"VI\" | \"VII\" | \"VIII\", found \"IX\"",
+      "snapshot.feel: expected \"Straight\" | \"Swing\" | \"Half\", found \"Loud\"",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "a press carries a member of Root, Shape or Feel",
+        original: ".press(\"Major\")",
+        replacement: ".press(\"Majr\")",
+        code: "TS2345",
+      },
+      {
+        claim: "an input that carries nothing takes nothing",
+        original: "strummed.bar()",
+        replacement: "strummed.bar(\"I\")",
+        code: "TS2554",
+      },
+      {
+        claim: "a signal is null in a tick it does not fire",
+        original: "strummed.clip?.feel",
+        replacement: "strummed.clip.feel",
+        code: "TS18047",
+      },
+      {
+        claim: "a list of three has no fourth element, whatever its length",
+        original: "newest(queued.steps)?.clip.root",
+        replacement: "queued.steps[3]",
+        code: "TS2339",
+      },
+    ],
+    guestErrors: [
+      {
+        file: "examples/reactor/player.reactor",
+        source: playerReactor.replace("[a, b, Loop(c)]", "[a, b, Loop(c), Loop(c)]"),
+        at: "[a, b, Loop(c), Loop(c)]",
+        message: "steps holds at most 3, but this row can make it hold 4",
+      },
+      {
+        file: "examples/reactor/player.reactor",
+        source: playerReactor.replace("[Loop(c)]", "[Loop(clip)]"),
+        at: "clip)]",
+        message: "clip may be absent here; read it inside on clip",
+      },
+    ],
   },
   {
     language: "schema queries",

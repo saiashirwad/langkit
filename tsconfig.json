@@ -14,7 +14,7 @@
   "contentMappers": [
     {
       "package": "langkit-content-mapper",
-      "extensions": [".toy", ".hm", ".schema", ".advanced", ".domain", ".grammar"]
+      "extensions": [".toy", ".hm", ".schema", ".advanced", ".domain", ".grammar", ".reactor"]
     }
   ],
   "include": [

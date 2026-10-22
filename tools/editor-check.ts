@@ -373,6 +373,33 @@ try {
       guest: "examples/domain/commerce.domain",
       binder: "last4 : String",
     },
+    {
+      consumer: "examples/typescript/player.ts",
+      anchor: "strummed.steps.map(show)",
+      offset: 9,
+      require: [
+        "(property) Player.steps: readonly [] | readonly [Step] | readonly [Step, Step] | readonly [Step, Step, Step]",
+        "cell steps : [Step; ..3]",
+      ],
+      guest: "examples/reactor/player.reactor",
+      binder: "steps : [Step; ..3]",
+    },
+    {
+      consumer: "examples/typescript/player.ts",
+      anchor: "strummed.clip?.feel",
+      offset: 9,
+      require: ["(property) Player.clip: Clip | null", "signal clip : Clip; null in a tick it does not fire"],
+      guest: "examples/reactor/player.reactor",
+      binder: "clip : Clip =",
+    },
+    {
+      consumer: "examples/typescript/player.ts",
+      anchor: "press(\"Major\")",
+      offset: 0,
+      require: ["(method) Player.press(value: Root | Shape | Feel): Player", "input press : Root | Shape | Feel"],
+      guest: "examples/reactor/player.reactor",
+      binder: "press : Root",
+    },
   ];
   for (const { consumer, anchor, offset, require, guest, binder, binderOffset = 0 } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");

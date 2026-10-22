@@ -11,7 +11,7 @@ langkit now hosts small languages inside TypeScript. TypeScript 7.1 content mapp
 - `transaction((tx) => ...)` for journaled writes. A throw undoes the transaction's writes, and `tx.fail(message)` becomes a check failure.
 - `langkit/types/typescript` prints inferred types as TypeScript. `langkit/parse` adds `named` and `located`.
 - Hosted examples: Toy, HM, Schema (SQLite queries and a runtime), Domain (types, state machines and systems, with a model checker), Advanced (data types, higher-rank types, imports across files), and Grammar (a parser generator whose `.grammar` files give TypeScript a parser and the AST types it returns).
-- Reactor, a checked example (not hosted yet) for state machines whose state is data: cells rewritten by first-match rows, signals, and list bounds checked against the rows above, with `..` to carry a list's rest through a row unnamed. `pnpm reactor` and `pnpm reactor:lsp`.
+- Reactor, a hosted example for state machines whose state is data: cells rewritten by first-match rows, signals, and list bounds checked against the rows above, with `..` to carry a list's rest through a row unnamed. TypeScript imports a machine as frozen values with one method per input, its bounded lists typed as tuples, and a JSON snapshot that `parse` reads back. `pnpm reactor` and `pnpm reactor:lsp`.
 
 ### Changed
 
