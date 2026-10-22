@@ -261,7 +261,7 @@ const cases: readonly Case[] = [
   },
   {
     rule: "a variant pattern with the wrong number of arguments",
-    source: edit("[..s, Loop(c)]       ->", "[..s, Loop(c, c)]    ->", player),
+    source: edit("[.., Loop(c)]        ->", "[.., Loop(c, c)]     ->", player),
     message: "Loop takes 1 argument, but this gives 2",
     at: "(c, c)",
     line: 21,
@@ -282,23 +282,44 @@ const cases: readonly Case[] = [
   },
   {
     rule: "a list pattern with two spreads",
-    source: edit("[_, x, ..s]          ->", "[..x, ..s]           ->", player),
+    source: edit("[_, x, ..]           ->", "[..x, ..s]           ->", player),
     message: "A list pattern spreads at most once",
     at: "..s",
     line: 27,
   },
   {
     rule: "a spread over a name already bound",
-    source: edit("[..s]                ->  [..s, Loop(c)]", "[..c]                ->  [..c, Loop(c)]", player),
+    source: edit("[..]                 ->  [.., Loop(c)]", "[..c]                ->  [..c, Loop(c)]", player),
     message: "c is already bound; a spread binds a fresh name",
     at: "c",
     line: 24,
   },
   {
+    rule: "a bare .. in a row whose pattern has no ..",
+    source: edit("[a, b, _]            ->  [a, b, Loop(c)]", "[a, b, _]            ->  [.., Loop(c)]", player),
+    message: "`..` carries the rest a row's pattern matched, but this pattern has none",
+    at: "..",
+    line: 23,
+  },
+  {
+    rule: "a bare .. in a signal value",
+    source: inside("signal all : [Root; ..2] = on bar -> [..]"),
+    message: "There is no row pattern for this `..` to carry the rest of",
+    at: "..",
+    line: 10,
+  },
+  {
+    rule: "a bare .. in a cell's initial value",
+    source: edit("cell steps : [Step; ..3] = []", "cell steps : [Step; ..3] = [..]", player),
+    message: "There is no row pattern for this `..` to carry the rest of",
+    at: "..",
+    line: 18,
+  },
+  {
     rule: "a row the rows above already cover",
     source: edit(
-      "[_, x, ..s]          ->  [x, ..s]",
-      "[_, x, ..s]          ->  [x, ..s]\n      [x, y, z]            ->  [x, y, z]",
+      "[_, x, ..]           ->  [x, ..]",
+      "[_, x, ..]           ->  [x, ..]\n      [x, y, z]            ->  [x, y, z]",
       player,
     ),
     message: "This row never fires; the rows above already take every value it matches",
@@ -436,19 +457,34 @@ test("a cell's list bound counts the rows above: without [a, b, _], [..s] can ov
   const broken = edit("      [a, b, _]            ->  [a, b, Loop(c)]\n", "", player);
   assert.deepEqual(diagnose(broken), [{
     message: "steps holds at most 3, but this row can make it hold 4",
-    at: "[..s, Loop(c)]",
+    at: "[.., Loop(c)]",
     line: 23,
   }]);
+});
+
+test("a named rest hovers and resolves like an anonymous one", () => {
+  const source = edit("[..]                 ->  [.., Loop(c)]", "[..s]                ->  [..s, Loop(c)]", player);
+  const analysis = analyze(source);
+  assert.deepEqual(analysis.diagnostics, []);
+  const rest = source.indexOf("[..s]  ") + 3;
+  assert.equal(typeAt(analysis, rest)?.type, "s : [Step; ..2]");
+  const use = source.indexOf("[..s, Loop(c)]") + 3;
+  assert.equal(typeAt(analysis, use)?.type, "s : [Step; ..2]");
+  assert.equal(definitionAt(analysis, use)?.span.start, rest);
 });
 
 test("hover shows a pattern's bindings, a rest narrowed by the rows above, and a binder at its uses", () => {
   const analysis = analyze(player);
   const at = (text: string, from = 0) => player.indexOf(text, from);
   const hover = (offset: number) => typeAt(analysis, offset)?.type;
-  const restRow = at("[..s]  ");
-  assert.equal(hover(restRow + 3), "s : [Step; ..2]");
-  assert.equal(hover(at("[..s, Loop(c)]") + 3), "s : [Step; ..2]");
-  assert.equal(hover(at("[_, x, ..s]") + 9), "s : [Step; ..1]");
+  const restRow = at("[..]  ");
+  assert.equal(hover(restRow + 1), ".. : [Step; ..2]");
+  assert.equal(hover(at("[.., Loop(c)]") + 1), ".. : [Step; ..2]");
+  assert.equal(hover(at("[_, x, ..]") + 8), ".. : [Step; ..1]");
+  assert.equal(hover(at("[.., Loop(c)]", restRow) + 1), ".. : [Step; ..2]");
+  const carried = at("[x, ..]") + 4;
+  assert.equal(hover(carried), ".. : [Step; ..1]");
+  assert.equal(definitionAt(analysis, carried)?.span.start, at("[_, x, ..]") + 7);
   assert.equal(hover(at("on clip c") + 8), "c : Clip");
   const use = at("Loop(c)") + 5;
   assert.equal(hover(use), "c : Clip");
@@ -495,8 +531,9 @@ const source = (max: number, rows: readonly Shape[]): string => {
     const names = (items: readonly Item[], prefix: string) =>
       items.map((item, i) => item === "x" ? `${prefix}${index}${i}` : item);
     const [h, t] = [names(head, "h"), names(tail, "t")];
-    const pattern = [...h, ...spread ? [`..s${index}`] : [], ...t];
-    const value = [...h, ...spread ? [`..s${index}`] : [], ...t, ...Array<string>(grow).fill("A")];
+    const rest = index % 2 ? `..s${index}` : "..";
+    const pattern = [...h, ...spread ? [rest] : [], ...t];
+    const value = [...h, ...spread ? [rest] : [], ...t, ...Array<string>(grow).fill("A")];
     return `      [${pattern.join(", ")}] -> [${value.join(", ")}]`;
   };
   return [
@@ -605,8 +642,8 @@ test("cli: pnpm reactor summarizes a clean file, and prints the overflow and fai
       failing.stderr,
       [
         "broken.reactor line 23, column 32: steps holds at most 3, but this row can make it hold 4",
-        "      [..s]                ->  [..s, Loop(c)]",
-        "                               ^^^^^^^^^^^^^^",
+        "      [..]                 ->  [.., Loop(c)]",
+        "                               ^^^^^^^^^^^^^",
         "",
       ].join("\n"),
     );

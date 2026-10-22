@@ -87,7 +87,7 @@ const shifted = (position: Position, characters: number): Position => ({
 test("lsp: the player has no diagnostics, and hover shows a rest narrowed by the rows above", async () => {
   await ready;
   assert.deepEqual(await open(uri, player), []);
-  assert.equal(await hover(uri, shifted(lineOf(player, "[..s]  "), 3)), "s : [Step; ..2]");
+  assert.equal(await hover(uri, shifted(lineOf(player, "[..]  "), 1)), ".. : [Step; ..2]");
   assert.equal(await hover(uri, lineOf(player, "steps :")), "cell steps : [Step; ..3]");
 });
 
@@ -98,6 +98,14 @@ test("lsp: a name in a pattern goes to the binder it compares with", async () =>
   assert.deepEqual((result as Location | null)?.range.start, shifted(lineOf(player, "on clip c"), 8));
 });
 
+test("lsp: a right-hand .. goes to the .. its pattern matched", async () => {
+  await ready;
+  const position = shifted(lineOf(player, "[x, ..]"), 4);
+  const result = await request("textDocument/definition", { textDocument: { uri }, position });
+  assert.deepEqual((result as Location | null)?.range.start, shifted(lineOf(player, "[_, x, ..]"), 7));
+  assert.equal(await hover(uri, position), ".. : [Step; ..1]");
+});
+
 test("lsp: deleting the [a, b, _] row publishes the overflow at the row that can overflow", async () => {
   await ready;
   const broken = player.replace("      [a, b, _]            ->  [a, b, Loop(c)]\n", "");
@@ -105,7 +113,7 @@ test("lsp: deleting the [a, b, _] row publishes the overflow at the row that can
   assert.deepEqual(diagnostics.map(({ message, range }) => [message, range.start]), [
     [
       "steps holds at most 3, but this row can make it hold 4",
-      lineOf(broken, "[..s, Loop(c)]", broken.indexOf("[..s]  ")),
+      lineOf(broken, "[.., Loop(c)]", broken.indexOf("[..]  ")),
     ],
   ]);
 });

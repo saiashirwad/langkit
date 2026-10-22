@@ -53,12 +53,8 @@ Pattern =
   | #name name:Name args:Args?
 
 PatternItem =
-  | #spread ".." rest:Rest
+  | #spread ".." rest:Name?
   | #one pattern:Pattern
-
-Rest =
-  | #wild "_"
-  | #bind name:Name
 
 Args = "(" ~ items:Pattern sepEndBy "," ")"
 
@@ -71,7 +67,7 @@ Expr =
   | #path head:Name fields:("." Name)*
 
 ExprItem =
-  | #spread ".." value:Expr
+  | #spread ".." value:Expr?
   | #one value:Expr
 
 FieldValue = name:Name value:("=" Expr)?

@@ -267,7 +267,11 @@ const group = (env: Env, owner: CellSlot, written: G.Group): Check<Group> =>
           if (remaining) remaining = minus(remaining, admitted);
           else exhausted = true;
         }
-        const inside: Env = { ...scoped, locals: new Map([...scoped.locals, ...bound]) };
+        const inside: Env = {
+          ...scoped,
+          locals: new Map([...scoped.locals, ...bound]),
+          row: { rest: pattern.kind === "spread" ? pattern.rest : undefined },
+        };
         const guard = row.guard
           ? { sense: row.guard.sense, formula: yield* formula(inside, row.guard.formula) }
           : undefined;
@@ -320,7 +324,15 @@ export const elaborateMachine = (
     const { name } = declaration;
     yield* facts.define({ id: binder.id, name: name.name, type: `machine ${name.name}` }, name.span, "namespace");
     const { entities, declarations, broken } = yield* declare(scope, constructors, declaration.items);
-    const env: Env = { scope, constructors, entities, locals: new Map(), present: new Set(), moment: "tick" };
+    const env: Env = {
+      scope,
+      constructors,
+      entities,
+      locals: new Map(),
+      present: new Set(),
+      moment: "tick",
+      row: undefined,
+    };
     const inputs: Input[] = [];
     const nodes: Node[] = [];
     const unknownCarriers = declaration.items.some((item) => item.kind === "input" && broken.has(item.name.name));

@@ -18,13 +18,13 @@ machine Player {
   cell steps : [Step; ..3] = []
 
     on clip c
-      [..s, Loop(c)]       ->  [..s, SlowStrum(c)]   unless c.feel is Half
-      [..s, SlowStrum(c)]  ->  [..s, Loop(c)]
+      [.., Loop(c)]        ->  [.., SlowStrum(c)]   unless c.feel is Half
+      [.., SlowStrum(c)]   ->  [.., Loop(c)]
       [a, b, _]            ->  [a, b, Loop(c)]
-      [..s]                ->  [..s, Loop(c)]
+      [..]                 ->  [.., Loop(c)]
 
     on bar
-      [_, x, ..s]          ->  [x, ..s]
+      [_, x, ..]           ->  [x, ..]
       [SlowStrum(c)]       ->  [Loop(c)]
 
   property halfNeverStrums = never (steps contains SlowStrum({ feel = Half }))

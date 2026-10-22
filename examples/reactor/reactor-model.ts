@@ -127,11 +127,11 @@ export type Pattern =
     | { readonly kind: "record"; readonly of: Record; readonly fields: readonly (readonly [Field, Pattern])[]; }
     /** `[a, b, _]`: exactly this many. */
     | { readonly kind: "tuple"; readonly items: readonly Pattern[]; }
-    /** `[..s, Loop(c)]`: at least head + tail. `rest` is undefined for `.._`. */
+    /** `[..s, Loop(c)]`: at least head + tail. An anonymous `..` still has a rest, named `..`. */
     | {
       readonly kind: "spread";
       readonly head: readonly Pattern[];
-      readonly rest: Local | undefined;
+      readonly rest: Local;
       readonly tail: readonly Pattern[];
     }
   );

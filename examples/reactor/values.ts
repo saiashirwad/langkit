@@ -14,7 +14,15 @@ import {
 } from "../data/data-model.ts";
 import { attempt, error, facts, type Scope } from "../data/data-types.ts";
 import { atLeast, exactly, intersect, type Lengths, longest, rest, upTo } from "./lengths.ts";
-import type { Expr, Formula, Input, Local, Pattern, Slot } from "./reactor-model.ts";
+import {
+  type Expr,
+  type Formula,
+  type Input,
+  type Local,
+  type Pattern,
+  showLocal,
+  type Slot,
+} from "./reactor-model.ts";
 import type * as G from "./reactor.grammar";
 
 export type Constructor =
@@ -62,6 +70,8 @@ export type Env = {
   /** Optional cells an enclosing `if` proved present. */
   readonly present: ReadonlySet<Slot>;
   readonly moment: Moment;
+  /** Inside a row's value: the rest its pattern matched, which a bare `..` carries. Undefined outside a row. */
+  readonly row: { readonly rest: Local | undefined; } | undefined;
 };
 
 /**
@@ -234,18 +244,34 @@ const list = (env: Env, written: G.ExprList, target: Target): Check<Expr> =>
     const items: { readonly spread: boolean; readonly value: Expr; }[] = [];
     let max = 0;
     for (const item of written.items) {
+      const into: Target = {
+        type: { kind: "list", element, max: Infinity },
+        noun: `a spread into ${target.noun}`,
+        by: target.by,
+      };
+      const one: Target = { type: element, noun: `an element of ${target.noun}`, by: target.by };
       const spread = item.kind === "spread";
-      const value = yield* against(
-        env,
-        item.value,
-        spread
-          ? { type: { kind: "list", element, max: Infinity }, noun: `a spread into ${target.noun}`, by: target.by }
-          : { type: element, noun: `an element of ${target.noun}`, by: target.by },
-      );
+      const value = yield* (item.kind === "spread"
+        ? item.value ? against(env, item.value, into) : carried(env, item, into)
+        : against(env, item.value, one));
       max += spread && value.type.kind === "list" ? value.type.max : 1;
       items.push({ spread, value });
     }
     return { kind: "list", items, type: { kind: "list", element, max }, span: written.span };
+  });
+
+/** A bare `..`: the rest the row's pattern matched, named or not. */
+const carried = (env: Env, written: G.ExprItemSpread, target: Target): Check<Expr> =>
+  check<Expr>(function*() {
+    if (!env.row) return yield* error(written, "There is no row pattern for this `..` to carry the rest of");
+    const { rest } = env.row;
+    if (!rest) {
+      return yield* error(written, "`..` carries the rest a row's pattern matched, but this pattern has none");
+    }
+    const { span } = written;
+    yield* facts.reference(rest, span);
+    yield* facts.typed(showLocal(rest), span);
+    return yield* fits({ kind: "ref", ref: { kind: "local", local: rest }, type: rest.type, span }, target);
   });
 
 /**
@@ -335,7 +361,7 @@ const pattern = (env: Env, bound: Map<string, Local>, written: G.Pattern, matchi
             ? { kind: "member", of: found.of, member: found.member, type, span }
             : { kind: "variant", of: found.of, variant: found.variant, args: undefined, type, span };
         }
-        return { kind: "bind", local: yield* fresh(bound, name, type), type, span };
+        return { kind: "bind", local: yield* bindFresh(bound, name, type), type, span };
       }
       case "record": {
         const declaration = declarationOf(env, type);
@@ -360,11 +386,17 @@ const pattern = (env: Env, bound: Map<string, Local>, written: G.Pattern, matchi
     }
   });
 
-const fresh = (bound: Map<string, Local>, name: Name, type: DataType): Check<Local> =>
+const fresh = (name: Name, type: DataType): Check<Local> =>
   check(function*() {
     const local: Local = { id: Symbol(name.name), name, type };
-    bound.set(name.name, local);
     yield* facts.define({ id: local.id, name: name.name, type: `${name.name} : ${showType(type)}` }, name.span);
+    return local;
+  });
+
+const bindFresh = (bound: Map<string, Local>, name: Name, type: DataType): Check<Local> =>
+  check(function*() {
+    const local = yield* fresh(name, type);
+    bound.set(name.name, local);
     return local;
   });
 
@@ -409,18 +441,20 @@ const items = (env: Env, bound: Map<string, Local>, written: G.PatternList, matc
     const at = written.items.indexOf(spread);
     const head = yield* each(written.items.slice(0, at));
     const tail = yield* each(written.items.slice(at + 1));
-    if (spread.rest.kind === "wild") return { kind: "spread", head, rest: undefined, tail, type, span };
-    const { name } = spread.rest;
-    if (bound.has(name.name) || env.locals.has(name.name) || env.entities.has(name.name)) {
+    const name = spread.rest;
+    if (name && (bound.has(name.name) || env.locals.has(name.name) || env.entities.has(name.name))) {
       return yield* error(name, `${name.name} is already bound; a spread binds a fresh name`);
     }
-    if (env.constructors.has(name.name)) {
+    if (name && env.constructors.has(name.name)) {
       return yield* error(name, `${describe(env.constructors.get(name.name)![0]!)}; a spread binds a fresh name`);
     }
     const fixed = head.length + tail.length;
     const seen = intersect(matching.lengths ?? upTo(type.max), atLeast(fixed));
     const max = longest(rest(seen, fixed)) ?? type.max;
-    const local = yield* fresh(bound, name, { kind: "list", element: type.element, max });
+    const restType: DataType = { kind: "list", element: type.element, max };
+    const local = name
+      ? yield* bindFresh(bound, name, restType)
+      : yield* fresh({ name: "..", span: spread.span }, restType);
     return { kind: "spread", head, rest: local, tail, type, span };
   });
 
