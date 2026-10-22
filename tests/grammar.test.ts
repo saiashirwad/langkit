@@ -365,7 +365,7 @@ export declare function parse(source: string): Result<Expr>;
 
 test("lists, optionals and literal unions project as the shapes a consumer can rely on", () => {
   assert.equal(
-    projected(`${header}File = lines:Line+ extra:(Name sepBy1 ",")? mode:("fast" | "slow")? groups:(Name+)*
+    projected(`${header}File = lines:Line+ "!" extra:(Name sepBy1 ",")? mode:("fast" | "slow")? groups:(Name+)*
 Line = #pair left:ident "=" right:ident | #plain text:ident
 Name = value:ident
 `),
