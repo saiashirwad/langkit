@@ -1,8 +1,12 @@
+import type { Diagnostic, SourceLocation } from "langkit";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { basename } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { componentId, type System } from "../examples/domain/domain-model.ts";
-import { checkSource } from "../examples/domain/domain.ts";
+import { checkSource, editorBudget, verify } from "../examples/domain/domain.ts";
 import { type Ending, explore, type Outcome, outcome, type StateSpace, type Step } from "../examples/domain/explore.ts";
 import { leadsTo } from "../examples/domain/liveness.ts";
 import {
@@ -315,4 +319,132 @@ test("checker: leads-to agrees with a brute-force search for fair lassos on rand
     verdicts[expected ? "fails" : "holds"]++;
   }
   assert.ok(verdicts.holds > 50 && verdicts.fails > 50, JSON.stringify(verdicts));
+});
+
+/** A diagnostic as a reader sees it: each location as its file name and the guest text at its span. */
+const sited = (diagnostic: Diagnostic, edited: string) => {
+  const text = ({ uri, span }: SourceLocation) => ({
+    file: basename(fileURLToPath(uri)),
+    text: (uri === file("shop.domain").href ? edited : readFileSync(new URL(uri), "utf8")).slice(span.start, span.end),
+  });
+  return {
+    message: diagnostic.message,
+    at: text(diagnostic.location!),
+    related: (diagnostic.related ?? []).map(({ location, message }) => ({ ...text(location), message })),
+  };
+};
+
+const verified = (source: string) => {
+  const checked = checkSource(source, { uri: file("shop.domain").href });
+  assert.ok(checked.success);
+  return verify(checked.value, Infinity).flatMap(({ diagnostics }) => diagnostics.map((value) => sited(value, source)));
+};
+
+test("trace: the failing property is one error whose related rows walk the run through three files", () => {
+  assert.deepEqual(verified(shop), [{
+    message: "refundsNeverShip fails in 5 steps: warehouse is Dispatched and payment is Refunded",
+    at: { file: "shop.domain", text: "refundsNeverShip" },
+    related: [
+      {
+        file: "shop.domain",
+        text: "{ order : Order, payment : Payment, warehouse : Fulfilment }",
+        message: "0. start: order Cart, payment Pending, warehouse Waiting",
+      },
+      {
+        file: "shop.domain",
+        text: "|> sync order.checkout = payment.authorize",
+        message: "1. sync checkout: order Cart -> Checkout, payment Pending -> Authorized",
+      },
+      {
+        file: "shop.domain",
+        text: "|> sync order.pay = payment.capture = warehouse.reserve",
+        message: "2. sync pay: order Checkout -> Paid, payment Authorized -> Captured, warehouse Waiting -> Reserved",
+      },
+      { file: "order.domain", text: "|> on cancel -> Refunding", message: "3. order Paid -> Refunding on cancel" },
+      {
+        file: "shop.domain",
+        text: "|> sync order.refund = payment.refund",
+        message: "4. sync refund: order Refunding -> Cancelled, payment Captured -> Refunded",
+      },
+      {
+        file: "fulfilment.domain",
+        text: "|> on dispatch -> Dispatched",
+        message: "5. warehouse Reserved -> Dispatched on dispatch",
+      },
+    ],
+  }]);
+});
+
+test("trace: a run that stops says what the unfair components could still do", () => {
+  const [settles] = verified(edit(shop, "  |> fair order\n", "")).filter(({ at }) => at.text === "settles");
+  assert.equal(
+    settles?.message,
+    "settles fails: order is Paid after 2 steps, and a fair run never reaches order is Delivered | Cancelled",
+  );
+  assert.deepEqual(settles?.related.at(-1), {
+    file: "shop.domain",
+    text: "Shop",
+    message:
+      "then nothing happens forever: order could ship or cancel, warehouse could dispatch or release, and none is fair",
+  });
+});
+
+test("trace: possible, dead syncs and the budget are errors at their own names", () => {
+  const source = edit(
+    edit(shop, "  |> fair order", "  |> sync order.deliver = payment.expire\n  |> fair order"),
+    "possible (order is Delivered)",
+    "possible (payment is Refunded and order is Delivered)",
+  );
+  const messages = verified(source).map(({ message, at }) => [message, at.text]);
+  assert.deepEqual(messages.slice(1, 2), [[
+    "canDeliver fails: no reachable state has payment is Refunded and order is Delivered (18 states explored)",
+    "canDeliver",
+  ]]);
+  assert.deepEqual(messages.at(-1), [
+    "Dead sync: no reachable state enables sync order.deliver = payment.expire",
+    "|> sync order.deliver = payment.expire",
+  ]);
+  const checked = checkSource(shop, { uri: file("shop.domain").href });
+  assert.ok(checked.success);
+  const tight = verify(checked.value, editorBudget / 1000);
+  assert.deepEqual(tight.flatMap(({ diagnostics }) => diagnostics.map((value) => sited(value, shop))), [{
+    message: "Shop is too large to check: more than 20 reachable states; pnpm domain checks it with a larger limit",
+    at: { file: "shop.domain", text: "Shop" },
+    related: [],
+  }]);
+});
+
+test("cli: pnpm domain prints the trace and fails on the shop, and passes the checkout", () => {
+  const cli = (name: string) =>
+    spawnSync(process.execPath, ["examples/domain/domain.ts", `examples/domain/${name}`], {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      encoding: "utf8",
+    });
+  const failing = cli("shop.domain");
+  assert.equal(failing.status, 1);
+  assert.equal(
+    failing.stderr,
+    [
+      "examples/domain/shop.domain line 11, column 15: refundsNeverShip fails in 5 steps: warehouse is Dispatched and payment is Refunded",
+      "  |> property refundsNeverShip = never (warehouse is Dispatched and payment is Refunded)",
+      "              ^^^^^^^^^^^^^^^^",
+      "  examples/domain/shop.domain:5:15        0. start: order Cart, payment Pending, warehouse Waiting",
+      "  examples/domain/shop.domain:6:3         1. sync checkout: order Cart -> Checkout, payment Pending -> Authorized",
+      "  examples/domain/shop.domain:7:3         2. sync pay: order Checkout -> Paid, payment Authorized -> Captured, warehouse Waiting -> Reserved",
+      "  examples/domain/order.domain:24:5       3. order Paid -> Refunding on cancel",
+      "  examples/domain/shop.domain:8:3         4. sync refund: order Refunding -> Cancelled, payment Captured -> Refunded",
+      "  examples/domain/fulfilment.domain:13:5  5. warehouse Reserved -> Dispatched on dispatch",
+      "",
+    ].join("\n"),
+  );
+  assert.equal(
+    failing.stdout,
+    "Shop: 23 states, 36 transitions; capturesOnlyPaid holds, refundsNeverShip fails, canDeliver holds, settles holds\n",
+  );
+  const passing = cli("checkout.domain");
+  assert.equal(passing.status, 0, passing.stderr);
+  assert.equal(
+    passing.stdout,
+    "Checkout: 25 states, 67 transitions; paidOrdersAreCaptured holds, refundsComplete holds, refundAfterDelivery holds\n",
+  );
 });

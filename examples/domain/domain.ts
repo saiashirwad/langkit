@@ -1,9 +1,9 @@
-import { type Check, check, type Diagnostic, fail, render, type Result } from "langkit";
+import { type Check, check, type Diagnostic, fail, type Result } from "langkit";
 import { type Analysis, type Definition, highlight, unanalyzed } from "langkit/analysis";
 import { loadModules, type ModuleGraph, type ModuleOptions, type ModuleSource } from "langkit/modules";
 import { readFileSync } from "node:fs";
-import { relative, resolve } from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   type Machine,
   type Module,
@@ -17,9 +17,12 @@ import {
   typeKey,
 } from "./domain-model.ts";
 import { type Declaration, type File, imports, type Name, parse, tokens } from "./domain-syntax.ts";
+import { type Outcome, outcome } from "./explore.ts";
 import { elaborateMachine, type MachineDeclaration } from "./machine.ts";
+import { key, lower } from "./product.ts";
 import { attempt, type Binder, error, facts, reserved, type Scope, type Type } from "./scope.ts";
 import { elaborateSystem, type SystemDeclaration } from "./system.ts";
+import { checkLimit, diagnose, fails, renderTrace, tooLarge } from "./trace.ts";
 import { definitionKind, elaborateTypes, type TypeDeclaration, typeNames } from "./types.ts";
 
 const language = { extension: "domain", imports } as const;
@@ -229,19 +232,71 @@ export const analyze = (source: string, options: ModuleOptions = {}): Analysis<T
   };
 };
 
-const summary = ({ name, states }: Machine): string =>
-  `${name.name}: ${states.length} states, ${states.reduce((count, { on }) => count + on.length, 0)} transitions`;
+/**
+ * The editor's exploration budget, in reachable states. On a synthetic worst case 21k states explore in 6ms and
+ * one `~>` takes 26ms; every other edit reuses the cached outcome.
+ */
+export const editorBudget = 20_000;
+
+/** Outcomes by budget and `key(product)`, most recent last; small, since only open files' systems land here. */
+const outcomes = new Map<string, Outcome>();
+const remembered = 32;
+
+export type Verified = {
+  readonly system: System;
+  readonly outcome: Outcome;
+  readonly diagnostics: readonly Diagnostic[];
+};
+
+/**
+ * The verify path: lower each system, reuse or compute its outcome, then diagnose against the current IR. Every
+ * finding is an error, as every other diagnostic is.
+ */
+export const verify = (module: Module, budget: number): readonly Verified[] =>
+  module.systems.map((system) => {
+    const product = lower(system);
+    const id = `${budget}:${key(product)}`;
+    const result = outcomes.get(id) ?? outcome(product, budget);
+    outcomes.delete(id);
+    outcomes.set(id, result);
+    if (outcomes.size > remembered) outcomes.delete(outcomes.keys().next().value!);
+    const diagnostics = result.kind === "too large"
+      ? [tooLarge(system, result.limit)]
+      : result.findings.map((finding) => diagnose(system, product, finding, result.states));
+    return { system, outcome: result, diagnostics };
+  });
+
+const transitions = (machine: Machine): number => machine.states.reduce((count, { on }) => count + on.length, 0);
+
+const summary = ({ system, outcome }: Verified): string =>
+  outcome.kind === "too large"
+    ? `${system.name.name}: more than ${outcome.limit} states, not checked`
+    : `${system.name.name}: ${outcome.states} states, ${outcome.transitions} transitions; ${
+      system.properties.map(({ name }, index) => `${name.name} ${fails(outcome.findings, index) ? "fails" : "holds"}`)
+        .join(", ")
+    }`;
 
 if (import.meta.main) {
   const file = process.argv[2]
     ? pathToFileURL(resolve(process.argv[2]))
-    : new URL("./checkout.domain", import.meta.url);
-  const source = readFileSync(file, "utf8");
-  const result = checkSource(source, { uri: file.href });
-  if (result.success) { for (const machine of result.value.machines) console.log(summary(machine)); }
-  else {
-    const path = relative(process.cwd(), fileURLToPath(file));
-    for (const error of result.errors) console.error(`${path} ${render(error, source)}`);
-    process.exitCode = 1;
+    : new URL("./shop.domain", import.meta.url);
+  const read = (uri: string): string | undefined => {
+    try {
+      return readFileSync(new URL(uri), "utf8");
+    } catch {
+      return undefined;
+    }
+  };
+  const result = checkSource(read(file.href) ?? "", { uri: file.href });
+  const errors = result.success ? [] : result.errors;
+  for (const error of errors) console.error(renderTrace(error, read, file.href));
+  const verified = result.success ? verify(result.value, checkLimit) : [];
+  for (const { diagnostics } of verified) {
+    for (const error of diagnostics) console.error(renderTrace(error, read, file.href));
   }
+  for (const machine of result.success && !verified.length ? result.value.machines : []) {
+    console.log(`${machine.name.name}: ${machine.states.length} states, ${transitions(machine)} transitions`);
+  }
+  for (const value of verified) console.log(summary(value));
+  if (errors.length || verified.some(({ diagnostics }) => diagnostics.length)) process.exitCode = 1;
 }
