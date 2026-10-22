@@ -1,16 +1,9 @@
 import { type HostLanguage, type Piece, specifier, unhosted, verbatim } from "langkit/host";
 import { type Binding, binding, call, data, type Json, type Module as Program, ref } from "langkit/ir";
 import { emitModule } from "langkit/javascript";
-import {
-  closure,
-  type DataType,
-  type Field,
-  fieldsOf,
-  scalars,
-  type TypeDecl,
-  type TypeKey,
-  typeKey,
-} from "../data/data-model.ts";
+import { fieldName, namedIn, type Printer, printer, tables, typeDecl } from "../data/data-host.ts";
+import { type DataType, type Field, fieldsOf, type TypeKey, typeKey } from "../data/data-model.ts";
+import type { Types } from "../data/decode.ts";
 import {
   type Component,
   type Formula,
@@ -28,111 +21,9 @@ import {
   transitionsOf,
 } from "./domain-model.ts";
 import { checkSource } from "./domain.ts";
-import type { CompiledFormula, CompiledMachine, CompiledSystem, Fields, Named, Shape, Types } from "./runtime.ts";
+import type { CompiledFormula, CompiledMachine, CompiledSystem } from "./runtime.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
-
-/** One file's projection: where it is, how it prints a type, and the local name of anything declared elsewhere. */
-type Printer = {
-  readonly uri: string;
-  readonly ts: (type: DataType) => string;
-  readonly local: (declared: Pick<Mentioned, "key" | "name">) => string;
-};
-
-/** `readonly LineItem[]`, `string | null`. A declared type prints as its local name in this projection. */
-const printer = (uri: string, locals: ReadonlyMap<TypeKey, string>): Printer => {
-  const local = ({ key, name }: Pick<Mentioned, "key" | "name">) => locals.get(key) ?? name;
-  const ts = (type: DataType): string => {
-    switch (type.kind) {
-      case "scalar":
-        return scalars[type.name].ts;
-      case "named":
-        return local(type);
-      case "list": {
-        const element = ts(type.element);
-        return `readonly ${
-          type.element.kind === "list" || type.element.kind === "optional" ? `(${element})` : element
-        }[]`;
-      }
-      case "optional":
-        return `${ts(type.inner)} | null`;
-    }
-  };
-  return { uri, ts, local };
-};
-
-/** A field spread in from another file has no span here, so its name projects as plain text. */
-const fieldName = ({ uri }: Printer, field: Field): Piece =>
-  field.uri === uri ? verbatim(field.name.name, field.name.span) : field.name.name;
-
-/** `$` cannot appear in a guest name, so the brand's symbol never collides with one. */
-const typeOnly = (printer: Printer, type: TypeDecl): readonly Piece[] => {
-  switch (type.kind) {
-    case "brand":
-      return [
-        `declare const ${type.name.name}$: unique symbol;\n`,
-        `/** brand ${type.name.name} = ${type.underlying} */\n`,
-        "export type ",
-        verbatim(type.name.name, type.name.span),
-        ` = ${scalars[type.underlying].ts} & { readonly [${type.name.name}$]: true; };\n`,
-      ];
-    case "enum":
-      return [
-        "export type ",
-        verbatim(type.name.name, type.name.span),
-        " = ",
-        ...type.members.flatMap((member, index): readonly Piece[] => [
-          index ? " | " : "",
-          "\"",
-          verbatim(member.name.name, member.name.span),
-          "\"",
-        ]),
-        ";\n",
-      ];
-    case "tagged":
-      return [
-        "export type ",
-        verbatim(type.name.name, type.name.span),
-        ` = ${type.variants.map((variant) => `${type.name.name}.${variant.name.name}`).join(" | ")};\n`,
-        `export declare namespace ${type.name.name} {\n`,
-        ...type.variants.flatMap(({ name, fields }): readonly Piece[] => [
-          "  interface ",
-          verbatim(name.name, name.span),
-          " {\n    readonly tag: \"",
-          verbatim(name.name, name.span),
-          "\";\n",
-          ...fields.flatMap(({ name, type }): readonly Piece[] => [
-            "    readonly ",
-            verbatim(name.name, name.span),
-            `: ${printer.ts(type)};\n`,
-          ]),
-          "  }\n",
-        ]),
-        "}\n",
-      ];
-    case "record":
-      return [
-        "export interface ",
-        verbatim(type.name.name, type.name.span),
-        " {\n",
-        ...type.fields.flatMap(({ name, type }): readonly Piece[] => [
-          "  readonly ",
-          verbatim(name.name, name.span),
-          `: ${printer.ts(type)};\n`,
-        ]),
-        "}\n",
-      ];
-  }
-};
-
-/** Every named type is also a value of the same name, the boundary parser for that type. */
-const typeDecl = (printer: Printer, type: TypeDecl): readonly Piece[] => [
-  ...typeOnly(printer, type),
-  `export declare const ${type.name.name}: {\n`,
-  `  /** Parses a ${type.name.name} from JSON. Throws a TypeError naming the first bad path. */\n`,
-  `  parse(input: unknown): ${type.name.name};\n`,
-  "};\n",
-];
 
 /** `{ readonly paymentId: string; readonly paidAt: string; }`, each name verbatim at its declaration. */
 const object = (printer: Printer, fields: readonly Field[]): readonly Piece[] => [
@@ -296,19 +187,6 @@ const printed = (module: Module): readonly DataType[] => [
   ...module.systems.flatMap(({ syncs }) => syncs.flatMap(({ payload }) => payload.map(({ type }) => type))),
 ];
 
-const namedIn = (type: DataType): readonly Extract<DataType, { readonly kind: "named"; }>[] => {
-  switch (type.kind) {
-    case "scalar":
-      return [];
-    case "named":
-      return [type];
-    case "list":
-      return namedIn(type.element);
-    case "optional":
-      return namedIn(type.inner);
-  }
-};
-
 /**
  * Types from other files print under a local name, imported with `import type` so TypeScript sees one `Address`,
  * never per-file copies. A name the file already uses, as a declaration or a state or variant inside a namespace,
@@ -374,50 +252,10 @@ export const compiled = (module: Module): {
     ...module.types.map((type): DataType => ({ kind: "named", key: type.key, name: type.name.name })),
     ...decoded(module),
   ];
-  const reached = closure(module.universe, roots);
-  const local = new Map<string, string>();
-  const taken = new Set<string>();
-  for (const { key, name } of reached) {
-    let candidate = name.name;
-    for (let n = 2; taken.has(candidate); n++) candidate = `${name.name}#${n}`;
-    taken.add(candidate);
-    local.set(key, candidate);
-  }
-  const shape = (type: DataType): Shape => {
-    switch (type.kind) {
-      case "scalar":
-        return { kind: type.name };
-      case "named":
-        return { kind: "named", key: local.get(type.key)! };
-      case "list":
-        return { kind: "list", element: shape(type.element) };
-      case "optional":
-        return { kind: "optional", inner: shape(type.inner) };
-    }
-  };
-  const fields = (list: readonly Field[]): Fields => list.map(({ name, type }) => [name.name, shape(type)]);
-  const named = (type: TypeDecl): Named => {
-    switch (type.kind) {
-      case "brand":
-        return { kind: "brand", name: type.name.name, scalar: type.underlying };
-      case "enum":
-        return { kind: "enum", name: type.name.name, members: type.members.map(({ name }) => name.name) };
-      case "tagged":
-        return {
-          kind: "tagged",
-          name: type.name.name,
-          variants: type.variants.map((variant) => [variant.name.name, fields(variant.fields)]),
-        };
-      case "record":
-        return { kind: "record", name: type.name.name, fields: fields(type.fields) };
-    }
-  };
+  const { types, local, fields } = tables(module.universe, roots);
   return {
-    own: module.types.map(({ key }) => local.get(key)!),
-    types: Object.fromEntries(reached.map((type) => [
-      local.get(type.key)!,
-      named(type),
-    ])),
+    own: module.types.map(({ key }) => local(key)),
+    types,
     machines: module.machines.map(({ name, initial, events, states }) => ({
       name: name.name,
       initial: states[initial]!.name.name,
