@@ -20,6 +20,7 @@ import { elaborateTypes, type TypeDeclaration, typeNames } from "./types.ts";
 
 const usedTypes = (declaration: Declaration): readonly Name[] => {
   switch (declaration.kind) {
+    case "brand":
     case "enum":
       return [];
     case "record":

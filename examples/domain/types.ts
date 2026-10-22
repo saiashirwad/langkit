@@ -12,7 +12,10 @@ import {
 import type { Declaration, Entry, Field as Written, Name, TypeExpr } from "./domain-syntax.ts";
 import { attempt, type Binder, error, facts, reserved, type Scope } from "./scope.ts";
 
-export type TypeDeclaration = Extract<Declaration, { readonly kind: "enum" | "record"; }>;
+export type TypeDeclaration = Extract<Declaration, { readonly kind: "brand" | "enum" | "record"; }>;
+
+/** What each declaration becomes in TypeScript, for semantic tokens. */
+const definitionKind = { brand: "type", enum: "enum", record: "interface" } as const;
 
 const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
   switch (kind) {
@@ -20,6 +23,8 @@ const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
       return "a type";
     case "machine":
       return "a machine";
+    case "brand":
+      return "a brand";
     case "enum":
       return "an enum";
     case "record":
@@ -105,7 +110,10 @@ export const collect = (
     return fields;
   });
 
-/** Enums and records of one file. Records resolve after every name in the file is bound. */
+/**
+ * Brands, enums and records of one file. Records resolve after every name in the file is bound. A brand wraps a
+ * scalar: over a record it would add nothing a record does not already have.
+ */
 export const elaborateTypes = (
   scope: Scope,
   declarations: readonly (readonly [TypeDeclaration, Binder])[],
@@ -115,6 +123,15 @@ export const elaborateTypes = (
     for (const [declaration, { id, key, uri, name }] of declarations) {
       let type: TypeDecl;
       switch (declaration.kind) {
+        case "brand": {
+          const { underlying } = declaration;
+          if (!isScalar(underlying.name)) {
+            yield* attempt(error(underlying, `A brand wraps String, Int, Float or Bool, not ${underlying.name}`));
+            continue;
+          }
+          type = { kind: "brand", id, key, uri, name, underlying: underlying.name };
+          break;
+        }
         case "enum": {
           const members: Name[] = [];
           for (const member of declaration.members) {
@@ -141,7 +158,7 @@ export const elaborateTypes = (
       yield* facts.define(
         { id, name: name.name, type: showTypeDecl(type) },
         name.span,
-        type.kind === "enum" ? "enum" : "interface",
+        definitionKind[type.kind],
       );
       types.push(type);
     }

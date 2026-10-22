@@ -1,10 +1,14 @@
 // An order, from cart to doorstep. The machine is the protocol; TypeScript decides when each event fires.
 
+brand Sku = String
+
+brand PaymentId = String
+
 type Carrier = Post | Courier
 
 type CancelReason = ChangedMind | OutOfStock | PaymentDeclined
 
-type LineItem = { sku : String, quantity : Int, cents : Int }
+type LineItem = { sku : Sku, quantity : Int, cents : Int }
 
 type Address = { name : String, line1 : String, city : String, postcode : String }
 
@@ -13,7 +17,7 @@ type Placed = { items : [LineItem], address : Address }
 machine Order {
   event edit(items : [LineItem])
   event checkout(address : Address)
-  event pay(paymentId : String, paidAt : String)
+  event pay(paymentId : PaymentId, paidAt : String)
   event decline(reason : CancelReason)
   event ship(carrier : Carrier, tracking : String)
   event deliver(deliveredAt : String)
@@ -31,14 +35,14 @@ machine Order {
     |> on decline -> Cancelled
     |> on cancel -> Cancelled
 
-  state Paid = { ...Placed, paymentId : String, paidAt : String }
+  state Paid = { ...Placed, paymentId : PaymentId, paidAt : String }
     |> on ship -> Shipped
     |> on cancel -> Refunding
 
-  state Shipped = { ...Placed, paymentId : String, carrier : Carrier, tracking : String }
+  state Shipped = { ...Placed, paymentId : PaymentId, carrier : Carrier, tracking : String }
     |> on deliver -> Delivered
 
-  state Refunding = { paymentId : String, reason : CancelReason }
+  state Refunding = { paymentId : PaymentId, reason : CancelReason }
     |> on refund -> Cancelled
 
   final state Delivered = { ...Placed, deliveredAt : String }

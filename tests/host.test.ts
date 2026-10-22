@@ -206,6 +206,12 @@ const cases: readonly HostCase[] = [
         code: "TS2741",
       },
       {
+        claim: "a branded id is not a plain string",
+        original: "paymentId: PaymentId.parse(\"pi_1\")",
+        replacement: "paymentId: \"pi_1\"",
+        code: "TS2322",
+      },
+      {
         claim: "Final holds only the final states",
         original: "receipt(refunded)",
         replacement: "receipt(paid)",

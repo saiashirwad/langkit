@@ -53,13 +53,15 @@ export type MachineItem =
 
 /** One `.domain` file: any mix of types and machines. Every top-level name is exported. */
 export type Declaration =
+  /** `brand OrderId = String`; `underlying` must name a scalar, which the checker decides. */
+  | { readonly kind: "brand"; readonly name: Name; readonly underlying: Name; }
   | { readonly kind: "enum"; readonly name: Name; readonly members: readonly Name[]; }
   | { readonly kind: "record"; readonly name: Name; readonly fields: readonly Field[]; }
   | { readonly kind: "machine"; readonly name: Name; readonly items: readonly MachineItem[]; };
 
 const words = /[a-zA-Z_][a-zA-Z_0-9]*/;
 
-export const keywords = ["type", "machine", "event", "state", "initial", "final", "on"] as const;
+export const keywords = ["type", "brand", "machine", "event", "state", "initial", "final", "on"] as const;
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
@@ -145,6 +147,13 @@ const item: Parser<MachineItem> = choice(
 );
 
 const declaration: Parser<Declaration> = choice(
+  parser(function*() {
+    yield* keyword("brand");
+    yield* commit();
+    const id = yield* name;
+    yield* symbol("=");
+    return { kind: "brand" as const, name: id, underlying: yield* name };
+  }),
   parser(function*() {
     yield* keyword("type");
     yield* commit();

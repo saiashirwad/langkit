@@ -9,6 +9,7 @@
 //    on one frozen prototype per state, so they never serialize. `parse(JSON.parse(JSON.stringify(v)))` deep-equals v.
 // 4. The table is the whole program: a transition reads `fill` and copies. No guards, no effects.
 // 5. Each module's tables close over every type they decode, own or imported, so a module imports only this file.
+// 6. A named type's `parse` decodes against its table entry; a brand decodes as its scalar.
 
 export type Scalar = "String" | "Int" | "Float" | "Bool";
 
@@ -24,6 +25,7 @@ export type Fields = readonly (readonly [name: string, shape: Shape])[];
 export type Named =
   & { readonly name: string; }
   & (
+    | { readonly kind: "brand"; readonly scalar: Scalar; }
     | { readonly kind: "enum"; readonly members: readonly string[]; }
     | { readonly kind: "record"; readonly fields: Fields; }
   );
@@ -105,6 +107,8 @@ const decode = (types: Types, shape: Shape, input: unknown, path: string): unkno
     case "named": {
       const named = types[shape.key]!;
       switch (named.kind) {
+        case "brand":
+          return decode(types, { kind: named.scalar }, input, path);
         case "enum":
           return typeof input === "string" && named.members.includes(input) ? input : reject(types, shape, input, path);
         case "record":
@@ -135,6 +139,11 @@ const decodeFields = (types: Types, fields: Fields, input: unknown, path: string
     ]),
   ));
 };
+
+/** `LineItem.parse(json)`, for request bodies: `LineItem.quantity: expected Int, found "3"`. */
+export const named = (types: Types) => (key: string): { readonly parse: (input: unknown) => unknown; } => ({
+  parse: (input) => decode(types, { kind: "named", key }, input, types[key]!.name),
+});
 
 /**
  * Builds one frozen prototype per state up front. Each edge becomes a method that decodes its payload, then

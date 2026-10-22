@@ -26,11 +26,17 @@ export type Field = { readonly id: symbol; readonly name: Name; readonly type: D
 
 type Declared = { readonly id: symbol; readonly key: TypeKey; readonly uri: string; readonly name: Name; };
 
+/**
+ * `brand OrderId = String`. Nominal over a scalar: a String does not fill an OrderId field, and an OrderId does
+ * not fill a PaymentId one. At run time it is the scalar.
+ */
+export type Brand = Declared & { readonly kind: "brand"; readonly underlying: Scalar; };
+
 export type Enum = Declared & { readonly kind: "enum"; readonly members: readonly Name[]; };
 
 export type Record = Declared & { readonly kind: "record"; readonly fields: readonly Field[]; };
 
-export type TypeDecl = Enum | Record;
+export type TypeDecl = Brand | Enum | Record;
 
 /** Every type a module can mention, its own and every import's, transitively. */
 export type Universe = ReadonlyMap<TypeKey, TypeDecl>;
@@ -123,6 +129,8 @@ const showFields = (fields: readonly Field[]): string =>
 
 export const showTypeDecl = (type: TypeDecl): string => {
   switch (type.kind) {
+    case "brand":
+      return `brand ${type.name.name} = ${type.underlying}`;
     case "enum":
       return `type ${type.name.name} = ${type.members.map((member) => member.name).join(" | ")}`;
     case "record":

@@ -1,5 +1,5 @@
 import { type HostLanguage, type Piece, specifier, unhosted, verbatim } from "langkit/host";
-import { binding, call, data, type Module as Program, ref } from "langkit/ir";
+import { type Binding, binding, call, data, type Json, type Module as Program, ref } from "langkit/ir";
 import { emitModule } from "langkit/javascript";
 import {
   type DataType,
@@ -12,7 +12,7 @@ import {
   type TypeDecl,
 } from "./domain-model.ts";
 import { checkSource } from "./domain.ts";
-import type { CompiledMachine, Fields, Shape, Types } from "./runtime.ts";
+import type { CompiledMachine, Fields, Named, Shape, Types } from "./runtime.ts";
 import { closure } from "./types.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
@@ -35,8 +35,17 @@ const ts = (type: DataType): string => {
   }
 };
 
-const typeDecl = (type: TypeDecl): readonly Piece[] => {
+/** `$` cannot appear in a guest name, so the brand's symbol never collides with one. */
+const typeOnly = (type: TypeDecl): readonly Piece[] => {
   switch (type.kind) {
+    case "brand":
+      return [
+        `declare const ${type.name.name}$: unique symbol;\n`,
+        `/** brand ${type.name.name} = ${type.underlying} */\n`,
+        "export type ",
+        verbatim(type.name.name, type.name.span),
+        ` = ${scalars[type.underlying].ts} & { readonly [${type.name.name}$]: true; };\n`,
+      ];
     case "enum":
       return [
         "export type ",
@@ -64,6 +73,15 @@ const typeDecl = (type: TypeDecl): readonly Piece[] => {
       ];
   }
 };
+
+/** Every named type is also a value of the same name, the boundary parser for that type. */
+const typeDecl = (type: TypeDecl): readonly Piece[] => [
+  ...typeOnly(type),
+  `export declare const ${type.name.name}: {\n`,
+  `  /** Parses a ${type.name.name} from JSON. Throws a TypeError naming the first bad path. */\n`,
+  `  parse(input: unknown): ${type.name.name};\n`,
+  "};\n",
+];
 
 /** `{ readonly paymentId: string; readonly paidAt: string; }`, each name verbatim at its declaration. */
 const object = (fields: readonly Field[]): readonly Piece[] => [
@@ -138,6 +156,8 @@ export const declarations = (module: Module): readonly Piece[] => [
  */
 export const compiled = (module: Module): {
   readonly types: Types;
+  /** The local key of each of the module's own types, in written order. */
+  readonly own: readonly string[];
   readonly machines: readonly CompiledMachine[];
 } => {
   const roots = [
@@ -168,12 +188,21 @@ export const compiled = (module: Module): {
     }
   };
   const fields = (list: readonly Field[]): Fields => list.map(({ name, type }) => [name.name, shape(type)]);
+  const named = (type: TypeDecl): Named => {
+    switch (type.kind) {
+      case "brand":
+        return { kind: "brand", name: type.name.name, scalar: type.underlying };
+      case "enum":
+        return { kind: "enum", name: type.name.name, members: type.members.map((member) => member.name) };
+      case "record":
+        return { kind: "record", name: type.name.name, fields: fields(type.fields) };
+    }
+  };
   return {
+    own: module.types.map(({ key }) => local.get(key)!),
     types: Object.fromEntries(reached.map((type) => [
       local.get(type.key)!,
-      type.kind === "enum"
-        ? { kind: "enum", name: type.name.name, members: type.members.map((member) => member.name) }
-        : { kind: "record", name: type.name.name, fields: fields(type.fields) },
+      named(type),
     ])),
     machines: module.machines.map(({ name, initial, events, states }) => ({
       name: name.name,
@@ -192,26 +221,32 @@ export const compiled = (module: Module): {
   };
 };
 
-/** `import { machine } from "./runtime.ts"; const types = {...}; const Order = machine(types)({...});` */
+/**
+ * `import { machine, named } from "./runtime.ts"; const types = {...};` then one export per declaration:
+ * `const LineItem = named(types)("LineItem"); const Order = machine(types)({...});`.
+ */
 export const program = (uri: string, module: Module): Program<undefined> => {
   const local = (name: string) => binding(name, undefined);
-  const definer = local("machine");
+  const runtimeNamed = local("named");
+  const runtimeMachine = local("machine");
   const types = local("types");
   const tables = compiled(module);
-  const machines = tables.machines.map((table) => [table.name, local(table.name), table] as const);
+  const over = (definer: Binding<undefined>, table: Json) =>
+    call(undefined, call(undefined, ref(definer), ref(types)), data(undefined, table));
+  const exported = [
+    ...module.types.map(({ name }, index) => [name.name, over(runtimeNamed, tables.own[index]!)] as const),
+    ...tables.machines.map((table) => [table.name, over(runtimeMachine, table)] as const),
+  ].map(([name, value]) => ({ name, binding: local(name), value }));
   return {
-    imports: [{ from: specifier(uri, runtime), names: [["machine", definer]] }],
+    imports: [{ from: specifier(uri, runtime), names: [["named", runtimeNamed], ["machine", runtimeMachine]] }],
     body: {
       declarations: [
         { binding: types, value: data(undefined, tables.types) },
-        ...machines.map(([, exported, table]) => ({
-          binding: exported,
-          value: call(undefined, call(undefined, ref(definer), ref(types)), data(undefined, table)),
-        })),
+        ...exported.map(({ binding, value }) => ({ binding, value })),
       ],
       result: data(undefined, null),
     },
-    exports: machines.map(([name, exported]) => [name, exported] as const),
+    exports: exported.map(({ name, binding }) => [name, binding] as const),
   };
 };
 

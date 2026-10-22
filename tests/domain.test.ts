@@ -81,6 +81,35 @@ const cases: readonly Case[] = [
     line: 8,
   },
   {
+    rule: "a brand over a record",
+    source: base + "type Box = { size : Int }\nbrand Crate = Box\n",
+    message: "A brand wraps String, Int, Float or Bool, not Box",
+    at: "Box",
+    line: 9,
+  },
+  {
+    rule: "a scalar where a brand is expected",
+    source: edit(
+      "state Middle",
+      "state Middle = { note : Note }",
+      edit("event go", "event go(note : String)", base + "brand Note = String\n"),
+    ),
+    message: "Middle.note is Note, but go gives String",
+    at: "Middle",
+    line: 4,
+  },
+  {
+    rule: "one brand where another is expected",
+    source: edit(
+      "state Middle",
+      "state Middle = { note : Note }",
+      edit("event go", "event go(note : Memo)", base + "brand Note = String\nbrand Memo = String\n"),
+    ),
+    message: "Middle.note is Note, but go gives Memo",
+    at: "Middle",
+    line: 4,
+  },
+  {
     rule: "unknown record",
     source: edit("state Middle", "state Middle = { ...Placd }"),
     message: "Unknown record: Placd",
@@ -376,6 +405,21 @@ test("host: optionals, lists, payload-free events and a machine without data pro
   assert.ok(bare.includes("  start(): Loop.On;"), bare);
 });
 
+test("host: a brand is nominal over its scalar, and every named type is also its parser", () => {
+  const { text } = hosted(checkout).projection;
+  for (
+    const expected of [
+      "declare const PaymentId$: unique symbol;\n/** brand PaymentId = String */\n"
+      + "export type PaymentId = string & { readonly [PaymentId$]: true; };\n",
+      "export declare const PaymentId: {\n",
+      "  parse(input: unknown): PaymentId;\n",
+      "  parse(input: unknown): Carrier;\n",
+      "  parse(input: unknown): LineItem;\n",
+      "    readonly paymentId: PaymentId;\n",
+    ]
+  ) assert.ok(text.includes(expected), `${expected}\n---\n${text}`);
+});
+
 test("host: names in the projection map back to the guest binders", () => {
   const { projection } = hosted(checkout);
   for (const [virtualStart, virtualLength, originalStart, originalLength] of projection.mappings) {
@@ -541,6 +585,22 @@ for (const [claim, input, message] of rejections) {
   });
 }
 
+test("runtime: a named type parses a request body and names the bad path", async () => {
+  const LineItem = await load(checkout, "LineItem");
+  const PaymentId = await load(checkout, "PaymentId");
+  assert.deepEqual(LineItem.parse(keyboard), keyboard);
+  assert.ok(Object.isFrozen(LineItem.parse(keyboard)));
+  assert.equal(PaymentId.parse("pi_1"), "pi_1");
+  assert.throws(
+    () => LineItem.parse({ ...keyboard, quantity: "3" }),
+    (error) => error instanceof TypeError && error.message === "LineItem.quantity: expected Int, found \"3\"",
+  );
+  assert.throws(
+    () => PaymentId.parse(3),
+    (error) => error instanceof TypeError && error.message === "PaymentId: expected String, found 3",
+  );
+});
+
 test("runtime: an optional field may be missing from a snapshot", async () => {
   const Order = await load(checkout);
   const restored = Order.parse({ state: "Cancelled", reason: "OutOfStock" });
@@ -615,10 +675,11 @@ test("lsp: hover shows the data flow on a clause and the definition on a name", 
   assert.equal(hover(at("on cancel -> Cancelled") + 3), "Cart -> Cancelled: cancel gives reason; refundId starts null");
   assert.equal(
     hover(at("-> Paid") + 3),
-    "state Paid = { items : [LineItem], address : Address, paymentId : String, paidAt : String }",
+    "state Paid = { items : [LineItem], address : Address, paymentId : PaymentId, paidAt : String }",
   );
-  assert.equal(hover(at("event pay") + 6), "event pay(paymentId : String, paidAt : String)");
-  assert.equal(hover(at("[LineItem]") + 1), "type LineItem = { sku : String, quantity : Int, cents : Int }");
+  assert.equal(hover(at("event pay") + 6), "event pay(paymentId : PaymentId, paidAt : String)");
+  assert.equal(hover(at("[LineItem]") + 1), "type LineItem = { sku : Sku, quantity : Int, cents : Int }");
+  assert.equal(hover(at("paymentId : PaymentId,") + 12), "brand PaymentId = String");
   assert.equal(hover(at("carrier : Carrier") + 10), "type Carrier = Post | Courier");
   assert.equal(
     hover(at("final state Delivered") + 12),

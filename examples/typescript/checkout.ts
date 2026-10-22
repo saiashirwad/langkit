@@ -1,10 +1,10 @@
-import { Order } from "../domain/checkout.domain";
+import { LineItem, Order, PaymentId } from "../domain/checkout.domain";
 
 const address = { name: "Sai", line1: "1 Loop Road", city: "Bengaluru", postcode: "560001" };
-const keyboard = { sku: "kbd-60", quantity: 1, cents: 12900 };
+const keyboard = LineItem.parse({ sku: "kbd-60", quantity: 1, cents: 12900 });
 
 const cart = Order.start({ items: [] }).edit({ items: [keyboard] });
-const paid = cart.checkout({ address }).pay({ paymentId: "pi_1", paidAt: "2026-10-22T09:00:00Z" });
+const paid = cart.checkout({ address }).pay({ paymentId: PaymentId.parse("pi_1"), paidAt: "2026-10-22T09:00:00Z" });
 
 const refuses = (misuse: () => unknown): boolean => {
   try {
@@ -17,7 +17,7 @@ const refuses = (misuse: () => unknown): boolean => {
 
 const payTwice = () => {
   // @ts-expect-error A paid order cannot be paid again.
-  return paid.pay({ paymentId: "pi_2", paidAt: "2026-10-22T09:01:00Z" });
+  return paid.pay({ paymentId: PaymentId.parse("pi_2"), paidAt: "2026-10-22T09:01:00Z" });
 };
 
 const shipUntracked = () => {
@@ -36,7 +36,7 @@ const advance = (order: Order): Order => {
     case "Cart":
       return order.checkout({ address });
     case "Checkout":
-      return order.pay({ paymentId: "pi_3", paidAt: "2026-10-22T10:00:00Z" });
+      return order.pay({ paymentId: PaymentId.parse("pi_3"), paidAt: "2026-10-22T10:00:00Z" });
     case "Paid":
       return order.ship({ carrier: "Post", tracking: "TRK456" });
     case "Shipped":
