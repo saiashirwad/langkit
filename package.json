@@ -42,7 +42,7 @@
     "grammar:bench": "node --expose-gc tools/grammar-bench.ts"
   },
   "dependencies": {
-    "parserator": "link:../parserator",
+    "parserator": "0.4.1",
     "vscode-languageserver": "^10.1.2",
     "vscode-languageserver-textdocument": "^1.0.15"
   },
