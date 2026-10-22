@@ -66,7 +66,7 @@ Formula = precedence {
   left "or"
   left "and"
   atom
-    | #is component:Name "is" ~ negated:"not"? states:Name sepBy1 (!"|>" "|")
+    | #is component:Name "is" ~ negated:"not"? states:Name sepBy1 "|"
     | #group "(" inner:Formula ")"
 }
 
