@@ -10,7 +10,7 @@ langkit now hosts small languages inside TypeScript. TypeScript 7.1 content mapp
 - The IR emits ES modules with imports and exports (`emitModule`).
 - `transaction((tx) => ...)` for journaled writes. A throw undoes the transaction's writes, and `tx.fail(message)` becomes a check failure.
 - `langkit/types/typescript` prints inferred types as TypeScript. `langkit/parse` adds `named` and `located`.
-- Hosted examples: Toy, HM, Schema (SQLite queries and a runtime), Domain (typestate values from state machines), and Advanced (data types, higher-rank types, imports across files).
+- Hosted examples: Toy, HM, Schema (SQLite queries and a runtime), Domain (types, state machines and systems, with a model checker), and Advanced (data types, higher-rank types, imports across files).
 
 ### Changed
 
