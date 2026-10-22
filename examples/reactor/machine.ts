@@ -1,20 +1,36 @@
-import { type Check, check } from "langkit";
+import { type Check, check, pure } from "langkit";
 import { type DataType, type Name, type Present, same, showType, showTypeDecl } from "../data/data-model.ts";
 import { article, attempt, type Binder, error, facts, resolveType, type Scope, typeNames } from "../data/data-types.ts";
+import { intersect, isEmpty, minus, upTo } from "./lengths.ts";
 import {
   type Cell,
   type CellSlot,
+  type Group,
   type Input,
+  type Local,
   type Machine,
   type Node,
+  type Row,
   showInput,
+  showLocal,
   showSlot,
   type Signal,
   type SignalSlot,
+  type Source,
 } from "./reactor-model.ts";
 import { lowerType } from "./reactor-syntax.ts";
 import type * as G from "./reactor.grammar";
-import { against, type Constructors, describe, type Entity, type Env } from "./values.ts";
+import {
+  admits,
+  against,
+  type Constructors,
+  describe,
+  type Entity,
+  type Env,
+  formula,
+  irrefutable,
+  match,
+} from "./values.ts";
 
 export type MachineDeclaration = G.DeclarationMachine;
 
@@ -190,9 +206,77 @@ const cell = (env: Env, item: G.ItemCell, slot: CellSlot): Check<Cell> =>
       }
       return { kind: "cell", slot, init: { kind: "last", of, input: carrier } };
     }
+    const groups: Group[] = [];
+    for (const written of init.groups) {
+      const checked = yield* attempt(group(env, slot, written));
+      if (checked) groups.push(checked);
+    }
     const target = { type: slot.type, noun: slot.name.name, by: "this value" };
     const value = yield* against({ ...env, moment: "initial" }, init.value, target);
-    return { kind: "cell", slot, init: { kind: "value", value, groups: [] } };
+    return { kind: "cell", slot, init: { kind: "value", value, groups } };
+  });
+
+/** The value a group's binder takes: the signal's, or the one type its input carries. */
+const binderType = (source: Source, binder: Name): Check<DataType> => {
+  if (source.kind === "signal") return pure(source.type);
+  const [carried, ...others] = source.carries;
+  if (!carried) return error(binder, `${source.name.name} carries nothing to bind`);
+  if (others.length) {
+    const union = source.carries.map(showType).join(" | ");
+    return error(binder, `${source.name.name} carries ${union}; read it through a last cell`);
+  }
+  return pure(carried);
+};
+
+/**
+ * `on clip c` and its rows, tried in order, first match wins. Each row sees only the list lengths the
+ * unguarded, irrefutable rows above it left, so after `[a, b, _]` a `[..s]` row binds `s : [Step; ..2]`.
+ * A row whose pattern is wrong ends the group's checking, since the rows below depend on what it takes. Groups
+ * never narrow each other: each fires in a different tick.
+ */
+const group = (env: Env, owner: CellSlot, written: G.Group): Check<Group> =>
+  check<Group>(function*() {
+    const source = yield* entity(env, written.source);
+    if (source.kind === "cell") {
+      return yield* error(written.source, `${source.name.name} is a cell; on takes an input or a signal`);
+    }
+    let binder: Local | undefined;
+    if (written.binder) {
+      const name = written.binder;
+      const known = env.constructors.get(name.name);
+      if (known?.length) return yield* error(name, `${describe(known[0]!)}; a binding cannot take its name`);
+      binder = { id: Symbol(name.name), name, type: yield* binderType(source, name) };
+      yield* facts.define({ id: binder.id, name: name.name, type: showLocal(binder) }, name.span, "parameter");
+    }
+    const scoped: Env = { ...env, locals: binder ? new Map([[binder.name.name, binder]]) : new Map() };
+    const { type } = owner;
+    let remaining = type.kind === "list" ? upTo(type.max) : undefined;
+    let exhausted = false;
+    const rows: Row[] = [];
+    for (const row of written.rows) {
+      const matched = yield* attempt(match(scoped, row.pattern, type, remaining));
+      if (!matched) break;
+      const checked = yield* attempt(check<Row>(function*() {
+        const { pattern, bound } = matched;
+        const admitted = admits(pattern);
+        if (exhausted || (remaining && isEmpty(intersect(remaining, admitted)))) {
+          return yield* error(row.pattern, "This row never fires; the rows above already take every value it matches");
+        }
+        if (!row.guard && irrefutable(pattern)) {
+          if (remaining) remaining = minus(remaining, admitted);
+          else exhausted = true;
+        }
+        const inside: Env = { ...scoped, locals: new Map([...scoped.locals, ...bound]) };
+        const guard = row.guard
+          ? { sense: row.guard.sense, formula: yield* formula(inside, row.guard.formula) }
+          : undefined;
+        const target = { type, noun: owner.name.name, by: "this row" };
+        const value = yield* against(inside, row.value, target);
+        return { pattern, guard, value, span: row.span };
+      }));
+      if (checked) rows.push(checked);
+    }
+    return { source, binder, rows, span: written.span };
   });
 
 /**

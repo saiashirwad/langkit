@@ -13,7 +13,8 @@ import {
   type Variant,
 } from "../data/data-model.ts";
 import { attempt, error, facts, type Scope } from "../data/data-types.ts";
-import type { Expr, Input, Local, Slot } from "./reactor-model.ts";
+import { atLeast, exactly, intersect, type Lengths, longest, rest, upTo } from "./lengths.ts";
+import type { Expr, Formula, Input, Local, Pattern, Slot } from "./reactor-model.ts";
 import type * as G from "./reactor.grammar";
 
 export type Constructor =
@@ -72,13 +73,15 @@ export type Target = { readonly type: DataType; readonly noun: string; readonly 
 export const declarationOf = (env: Env, type: DataType): TypeDecl | undefined =>
   type.kind === "named" ? env.scope.universe.get(type.key) : undefined;
 
-const present = (type: DataType): DataType => type.kind === "optional" ? type.inner : type;
+const inner = (type: DataType): DataType => type.kind === "optional" ? type.inner : type;
 
 const optional = (type: DataType): boolean => type.kind === "optional";
 
 /** A local, then a machine entity. A constructor is not a value name; `against` resolves it by type. */
-export const read = (env: Env, name: Name): Check<Expr> =>
-  check<Expr>(function*() {
+type Read = Extract<Expr, { readonly kind: "ref"; }>;
+
+export const read = (env: Env, name: Name): Check<Read> =>
+  check<Read>(function*() {
     const { span } = name;
     const local = env.locals.get(name.name);
     if (local) {
@@ -103,7 +106,7 @@ export const read = (env: Env, name: Name): Check<Expr> =>
     if (env.moment === "property" && entity.kind === "signal") {
       return yield* error(name, `${name.name} is a signal, which is not state; a property reads cells`);
     }
-    const type = env.present.has(entity) ? present(entity.type) : entity.type;
+    const type = env.present.has(entity) ? inner(entity.type) : entity.type;
     yield* facts.reference(entity, span);
     yield* facts.typed(`${name.name} : ${showType(type)}`, span);
     return { kind: "ref", ref: { kind: "slot", slot: entity }, type, span };
@@ -130,7 +133,7 @@ const field = (env: Env, record: Expr, name: Name): Check<Expr> =>
 
 const path = (env: Env, written: G.ExprPath): Check<Expr> =>
   check(function*() {
-    let value = yield* read(env, written.head);
+    let value: Expr = yield* read(env, written.head);
     for (const name of written.fields) value = yield* field(env, value, name);
     return value;
   });
@@ -146,7 +149,7 @@ const absent = (expr: Expr): string => `${subject(expr)} may be absent here`;
 const construct = (env: Env, name: Name, type: DataType): Check<Constructor> =>
   check(function*() {
     const known = env.constructors.get(name.name) ?? [];
-    const declaration = declarationOf(env, present(type));
+    const declaration = declarationOf(env, inner(type));
     const found = known.find(({ of }) => of === declaration) ?? known[0];
     if (!found) return yield* error(name, `Unknown constructor: ${name.name}`);
     if (found.of !== declaration) return yield* error(name, `${describe(found)}, not ${showType(type)}`);
@@ -193,7 +196,7 @@ const bare = (env: Env, name: Name, target: Target, span: G.ExprPath["span"]): C
 
 const record = (env: Env, written: G.ExprRecord, target: Target): Check<Expr> =>
   check<Expr>(function*() {
-    const declaration = declarationOf(env, present(target.type));
+    const declaration = declarationOf(env, inner(target.type));
     if (declaration?.kind !== "record") {
       return yield* error(written, `${target.noun} is ${showType(target.type)}, but this is a record`);
     }
@@ -223,7 +226,7 @@ const record = (env: Env, written: G.ExprRecord, target: Target): Check<Expr> =>
 
 const list = (env: Env, written: G.ExprList, target: Target): Check<Expr> =>
   check<Expr>(function*() {
-    const type = present(target.type);
+    const type = inner(target.type);
     if (type.kind !== "list") {
       return yield* error(written, `${target.noun} is ${showType(target.type)}, but this is a list`);
     }
@@ -252,8 +255,8 @@ const list = (env: Env, written: G.ExprList, target: Target): Check<Expr> =>
 const misfit = (expr: Expr, target: Target): string | undefined => {
   const [from, to] = [expr.type, target.type];
   if (assignable(from, to)) return undefined;
-  if (optional(from) && assignable(present(from), to)) return `${absent(expr)}; only a signal's if makes it present`;
-  const [a, b] = [present(from), present(to)];
+  if (optional(from) && assignable(inner(from), to)) return `${absent(expr)}; only a signal's if makes it present`;
+  const [a, b] = [inner(from), inner(to)];
   if (a.kind === "list" && b.kind === "list" && assignable({ ...a, max: b.max }, b)) {
     const holds = a.max === Infinity ? "any number" : String(a.max);
     return `${target.noun} holds at most ${b.max}, but ${target.by} can make it hold ${holds}`;
@@ -291,3 +294,213 @@ export const against = (env: Env, written: G.Expr, target: Target): Check<Expr> 
 /** The type of a tested subject comes from what it names, so only a name or a field path can be one. */
 export const infer = (env: Env, written: G.Expr): Check<Expr> =>
   written.kind === "path" ? path(env, written) : error(written, "Test a cell, a binding or one of their fields");
+
+/** Only `_` or a name matches a value that may be absent: there is no pattern for absence yet. */
+const present = (written: G.Pattern, type: DataType): Check<void> =>
+  optional(type)
+    ? error(written, `This matches a ${showType(type)}, which may be absent; only _ or a name can`)
+    : check(function*() {});
+
+const comparable = (name: Name, from: DataType, type: DataType): Check<void> =>
+  assignable(from, type) || assignable(type, from)
+    ? check(function*() {})
+    : error(name, `${name.name} is ${showType(from)}, so it never equals a ${showType(type)}`);
+
+/** What a pattern matched against: the value's type, and for a list, the lengths it can still have. */
+type Matching = { readonly type: DataType; readonly lengths: Lengths | undefined; };
+
+/**
+ * Checks one pattern, binding fresh names into `bound` left to right, so a name bound earlier in the same
+ * pattern is an equality test, as is any local, cell or signal already in scope.
+ */
+const pattern = (env: Env, bound: Map<string, Local>, written: G.Pattern, matching: Matching): Check<Pattern> =>
+  check<Pattern>(function*() {
+    const { type } = matching;
+    const { span } = written;
+    if (written.kind === "wild") return { kind: "wild", type, span };
+    if (written.kind !== "name" || written.args) yield* present(written, type);
+    switch (written.kind) {
+      case "name": {
+        const { name, args } = written;
+        if (args) return yield* variant(env, bound, written, args, type);
+        if (bound.has(name.name) || env.locals.has(name.name) || env.entities.has(name.name)) {
+          const value = yield* read({ ...env, locals: new Map([...env.locals, ...bound]) }, name);
+          yield* comparable(name, value.type, type);
+          return { kind: "equal", ref: value.ref, type, span };
+        }
+        if (env.constructors.has(name.name)) {
+          yield* present(written, type);
+          const found = yield* construct(env, name, type);
+          return found.kind === "member"
+            ? { kind: "member", of: found.of, member: found.member, type, span }
+            : { kind: "variant", of: found.of, variant: found.variant, args: undefined, type, span };
+        }
+        return { kind: "bind", local: yield* fresh(bound, name, type), type, span };
+      }
+      case "record": {
+        const declaration = declarationOf(env, type);
+        if (declaration?.kind !== "record") {
+          return yield* error(written, `A record pattern matches a record, not ${showType(type)}`);
+        }
+        const fields: (readonly [Field, Pattern])[] = [];
+        for (const { name, pattern: nested } of written.fields) {
+          const found = declaration.fields.find((f) => f.name.name === name.name);
+          if (!found) return yield* error(name, `${declaration.name.name} has no field ${name.name}`);
+          if (fields.some(([f]) => f === found)) {
+            return yield* error(name, `Duplicate field: ${declaration.name.name}.${name.name}`);
+          }
+          yield* facts.reference(found, name.span);
+          yield* facts.typed(`${name.name} : ${showType(found.type)}`, name.span);
+          fields.push([found, yield* pattern(env, bound, nested, { type: found.type, lengths: undefined })]);
+        }
+        return { kind: "record", of: declaration, fields, type, span };
+      }
+      case "list":
+        return yield* items(env, bound, written, matching);
+    }
+  });
+
+const fresh = (bound: Map<string, Local>, name: Name, type: DataType): Check<Local> =>
+  check(function*() {
+    const local: Local = { id: Symbol(name.name), name, type };
+    bound.set(name.name, local);
+    yield* facts.define({ id: local.id, name: name.name, type: `${name.name} : ${showType(type)}` }, name.span);
+    return local;
+  });
+
+const variant = (
+  env: Env,
+  bound: Map<string, Local>,
+  written: G.PatternName,
+  args: G.Args,
+  type: DataType,
+): Check<Pattern> =>
+  check<Pattern>(function*() {
+    const found = yield* construct(env, written.name, type);
+    if (found.kind === "member") return yield* error(written.name, `${describe(found)}; it takes no arguments`);
+    const { fields } = found.variant;
+    if (fields.length !== args.items.length) return yield* error(args, arity(found.variant, args.items.length));
+    const matched: Pattern[] = [];
+    for (const [index, arg] of args.items.entries()) {
+      matched.push(yield* pattern(env, bound, arg, { type: fields[index]!.type, lengths: undefined }));
+    }
+    return { kind: "variant", of: found.of, variant: found.variant, args: matched, type, span: written.span };
+  });
+
+/** `[a, b, _]` matches exactly three; `[..s, Loop(c)]` at least one, binding `s` to what is left. */
+const items = (env: Env, bound: Map<string, Local>, written: G.PatternList, matching: Matching): Check<Pattern> =>
+  check<Pattern>(function*() {
+    const { type } = matching;
+    const { span } = written;
+    if (type.kind !== "list") return yield* error(written, `A list pattern matches a list, not ${showType(type)}`);
+    const spreads = written.items.filter((item) => item.kind === "spread");
+    if (spreads.length > 1) return yield* error(spreads[1]!, "A list pattern spreads at most once");
+    const element = { type: type.element, lengths: undefined };
+    const each = (list: readonly G.PatternItem[]) =>
+      check(function*() {
+        const matched: Pattern[] = [];
+        for (const item of list) {
+          if (item.kind === "one") matched.push(yield* pattern(env, bound, item.pattern, element));
+        }
+        return matched;
+      });
+    const [spread] = spreads;
+    if (!spread) return { kind: "tuple", items: yield* each(written.items), type, span };
+    const at = written.items.indexOf(spread);
+    const head = yield* each(written.items.slice(0, at));
+    const tail = yield* each(written.items.slice(at + 1));
+    if (spread.rest.kind === "wild") return { kind: "spread", head, rest: undefined, tail, type, span };
+    const { name } = spread.rest;
+    if (bound.has(name.name) || env.locals.has(name.name) || env.entities.has(name.name)) {
+      return yield* error(name, `${name.name} is already bound; a spread binds a fresh name`);
+    }
+    if (env.constructors.has(name.name)) {
+      return yield* error(name, `${describe(env.constructors.get(name.name)![0]!)}; a spread binds a fresh name`);
+    }
+    const fixed = head.length + tail.length;
+    const seen = intersect(matching.lengths ?? upTo(type.max), atLeast(fixed));
+    const max = longest(rest(seen, fixed)) ?? type.max;
+    const local = yield* fresh(bound, name, { kind: "list", element: type.element, max });
+    return { kind: "spread", head, rest: local, tail, type, span };
+  });
+
+export type Matched = { readonly pattern: Pattern; readonly bound: ReadonlyMap<string, Local>; };
+
+/**
+ * Checks a pattern against the value it matches. `lengths` is what the rows above left of a list value, which
+ * narrows a spread's rest: under `[a, b, _]`, `[..s]` binds `s : [Step; ..2]`.
+ */
+export const match = (env: Env, written: G.Pattern, type: DataType, lengths?: Lengths): Check<Matched> =>
+  check(function*() {
+    const bound = new Map<string, Local>();
+    return { pattern: yield* pattern(env, bound, written, { type, lengths }), bound };
+  });
+
+/** Matches every value of its type that has a length it admits. Row narrowing rests on this. */
+export const irrefutable = (pattern: Pattern): boolean => {
+  switch (pattern.kind) {
+    case "wild":
+    case "bind":
+      return true;
+    case "equal":
+      return false;
+    case "member":
+      return pattern.of.members.length === 1;
+    case "variant":
+      return pattern.of.variants.length === 1 && (pattern.args ?? []).every(irrefutable);
+    case "record":
+      return pattern.fields.every(([, nested]) => irrefutable(nested));
+    case "tuple":
+      return pattern.items.every(irrefutable);
+    case "spread":
+      return [...pattern.head, ...pattern.tail].every(irrefutable);
+  }
+};
+
+/** The list lengths a pattern can match. */
+export const admits = (pattern: Pattern): Lengths => {
+  switch (pattern.kind) {
+    case "tuple":
+      return exactly(pattern.items.length);
+    case "spread":
+      return atLeast(pattern.head.length + pattern.tail.length);
+    default:
+      return atLeast(0);
+  }
+};
+
+/**
+ * `steps contains SlowStrum({ feel = Half })`, `c.feel is Half`. Names a test's pattern binds are scoped to that
+ * one test, so nothing leaks into a row's value.
+ */
+export const formula = (env: Env, written: G.Formula): Check<Formula> =>
+  check<Formula>(function*() {
+    const { span } = written;
+    switch (written.kind) {
+      case "group":
+        return yield* formula(env, written.inner);
+      case "prefix":
+        return { kind: "not", operand: yield* formula(env, written.operand), span };
+      case "binary": {
+        const left = yield* formula(env, written.left);
+        const right = yield* formula(env, written.right);
+        return { kind: written.operator, left, right, span };
+      }
+      case "test": {
+        const tested = yield* infer(env, written.subject);
+        const { test } = written;
+        if (optional(tested.type)) {
+          return yield* error(tested, `${absent(tested)}, and ${test} cannot test an absent value yet`);
+        }
+        if (test === "is") {
+          const { pattern } = yield* match(env, written.pattern, tested.type);
+          return { kind: test, subject: tested, pattern, span };
+        }
+        if (tested.type.kind !== "list") {
+          return yield* error(tested, `contains tests a list, but ${subject(tested)} is ${showType(tested.type)}`);
+        }
+        const { pattern } = yield* match(env, written.pattern, tested.type.element);
+        return { kind: test, subject: tested, pattern, span };
+      }
+    }
+  });

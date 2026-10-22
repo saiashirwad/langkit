@@ -249,6 +249,98 @@ const cases: readonly Case[] = [
     at: "A",
     line: 1,
   },
+  {
+    rule: "a list pattern on a value that is not a list",
+    source: inside("cell mode : Feel = Straight\n    on bar\n      [x] -> Half"),
+    message: "A list pattern matches a list, not Feel",
+    at: "[x]",
+    line: 12,
+  },
+  {
+    rule: "a variant pattern with the wrong number of arguments",
+    source: edit("[..s, Loop(c)]       ->", "[..s, Loop(c, c)]    ->", player),
+    message: "Loop takes 1 argument, but this gives 2",
+    at: "(c, c)",
+    line: 21,
+  },
+  {
+    rule: "a pattern constructor of another type",
+    source: edit("[SlowStrum(c)]       ->", "[Half]               ->", player),
+    message: "Half is a member of Feel, not Step",
+    at: "Half",
+    line: 28,
+  },
+  {
+    rule: "a bound name compared with a value of another type",
+    source: edit("[a, b, _]            ->  [a, b, Loop(c)]", "[a, b, c]            ->  [a, b, Loop(c)]", player),
+    message: "c is Clip, so it never equals a Step",
+    at: "c",
+    line: 23,
+  },
+  {
+    rule: "a list pattern with two spreads",
+    source: edit("[_, x, ..s]          ->", "[..x, ..s]           ->", player),
+    message: "A list pattern spreads at most once",
+    at: "..s",
+    line: 27,
+  },
+  {
+    rule: "a spread over a name already bound",
+    source: edit("[..s]                ->  [..s, Loop(c)]", "[..c]                ->  [..c, Loop(c)]", player),
+    message: "c is already bound; a spread binds a fresh name",
+    at: "c",
+    line: 24,
+  },
+  {
+    rule: "a row the rows above already cover",
+    source: edit(
+      "[_, x, ..s]          ->  [x, ..s]",
+      "[_, x, ..s]          ->  [x, ..s]\n      [x, y, z]            ->  [x, y, z]",
+      player,
+    ),
+    message: "This row never fires; the rows above already take every value it matches",
+    at: "[x, y, z]",
+    line: 28,
+  },
+  {
+    rule: "an on group naming a cell",
+    source: edit("on bar", "on feel", player),
+    message: "feel is a cell; on takes an input or a signal",
+    at: "feel",
+    line: 26,
+  },
+  {
+    rule: "a binder on an input that carries nothing",
+    source: edit("on bar", "on bar b", player),
+    message: "bar carries nothing to bind",
+    at: "b",
+    line: 26,
+  },
+  {
+    rule: "a binder on an input that carries a union",
+    source: edit("on bar", "on press p", player),
+    message: "press carries Root | Shape | Feel; read it through a last cell",
+    at: "p",
+    line: 26,
+  },
+  {
+    rule: "an unbounded spread into a bounded cell",
+    source: edit(
+      "  property halfNeverStrums",
+      "  signal all : [Step] = on bar -> []\n  cell copy : [Step; ..3] = []\n    on all xs\n      [..s] -> [..xs]\n  property halfNeverStrums",
+      player,
+    ),
+    message: "copy holds at most 3, but this row can make it hold any number",
+    at: "[..xs]",
+    line: 33,
+  },
+  {
+    rule: "a guard testing against a constructor of another type",
+    source: edit("unless c.feel is Half", "unless c.feel is Loop", player),
+    message: "Loop is a variant of Step, not Feel",
+    at: "Loop",
+    line: 21,
+  },
 ];
 
 for (const { rule, source, message, at, line } of cases) {
@@ -280,4 +372,125 @@ test("hover shows inputs, signals, types and a cell narrowed inside its if", () 
   assert.equal(hover("Step; ..3"), "type Step = Loop(clip : Clip) | SlowStrum(clip : Clip)");
   const read = player.indexOf("root", arrow);
   assert.equal(definitionAt(analysis, read)?.span.start, player.indexOf("root  :"));
+});
+
+test("a cell's list bound counts the rows above: without [a, b, _], [..s] can overflow", () => {
+  const broken = edit("      [a, b, _]            ->  [a, b, Loop(c)]\n", "", player);
+  assert.deepEqual(diagnose(broken), [{
+    message: "steps holds at most 3, but this row can make it hold 4",
+    at: "[..s, Loop(c)]",
+    line: 23,
+  }]);
+});
+
+test("hover shows a pattern's bindings, a rest narrowed by the rows above, and a binder at its uses", () => {
+  const analysis = analyze(player);
+  const at = (text: string, from = 0) => player.indexOf(text, from);
+  const hover = (offset: number) => typeAt(analysis, offset)?.type;
+  const restRow = at("[..s]  ");
+  assert.equal(hover(restRow + 3), "s : [Step; ..2]");
+  assert.equal(hover(at("[..s, Loop(c)]") + 3), "s : [Step; ..2]");
+  assert.equal(hover(at("[_, x, ..s]") + 9), "s : [Step; ..1]");
+  assert.equal(hover(at("on clip c") + 8), "c : Clip");
+  const use = at("Loop(c)") + 5;
+  assert.equal(hover(use), "c : Clip");
+  assert.equal(definitionAt(analysis, use)?.span.start, at("on clip c") + 8);
+  assert.equal(hover(at("Half", at("unless"))), "Feel");
+  assert.equal(hover(at("feel is", at("unless"))), "feel : Feel");
+});
+
+const random = (seed: number) => () => {
+  seed = (seed + 0x6d2b79f5) | 0;
+  let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+  t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+};
+
+type Item = "x" | "A" | "B";
+type Shape = {
+  readonly head: readonly Item[];
+  readonly spread: boolean;
+  readonly tail: readonly Item[];
+  readonly grow: number;
+};
+
+const firstMatch = (rows: readonly Shape[], list: readonly Item[]): number => {
+  const fits = (items: readonly Item[], values: readonly Item[]) =>
+    items.every((item, i) => item === "x" || item === values[i]);
+  return rows.findIndex(({ head, spread, tail }) =>
+    spread
+      ? list.length >= head.length + tail.length && fits(head, list)
+        && fits(tail, list.slice(list.length - tail.length))
+      : list.length === head.length && fits(head, list)
+  );
+};
+
+/** Every list over A and B up to `max` long. */
+const lists = (max: number): readonly (readonly Item[])[] => {
+  const all: Item[][] = [[]];
+  for (const list of all) if (list.length < max) all.push([...list, "A"], [...list, "B"]);
+  return all;
+};
+
+const source = (max: number, rows: readonly Shape[]): string => {
+  const row = ({ head, spread, tail, grow }: Shape, index: number) => {
+    const names = (items: readonly Item[], prefix: string) =>
+      items.map((item, i) => item === "x" ? `${prefix}${index}${i}` : item);
+    const [h, t] = [names(head, "h"), names(tail, "t")];
+    const pattern = [...h, ...spread ? [`..s${index}`] : [], ...t];
+    const value = [...h, ...spread ? [`..s${index}`] : [], ...t, ...Array<string>(grow).fill("A")];
+    return `      [${pattern.join(", ")}] -> [${value.join(", ")}]`;
+  };
+  return [
+    "type E = A | B",
+    "machine M {",
+    "  input bar",
+    `  cell xs : [E; ..${max}] = []`,
+    "    on bar",
+    ...rows.map(row),
+    "}",
+    "",
+  ]
+    .join("\n");
+};
+
+test("list-length narrowing agrees with running every list through the rows", () => {
+  const next = random(7);
+  const pick = <A>(options: readonly A[]): A => options[Math.floor(next() * options.length)]!;
+  let exact = 0;
+  for (let trial = 0; trial < 400; trial++) {
+    const max = pick([1, 2, 3]);
+    const refutable = trial % 2 === 1;
+    const items = (count: number) =>
+      Array.from({ length: count }, () => refutable ? pick<Item>(["x", "x", "A", "B"]) : "x");
+    const rows = Array.from({ length: pick([1, 2, 3, 4]) }, (): Shape => {
+      const spread = next() < 0.5;
+      return { head: items(pick([0, 1, 2])), spread, tail: spread ? items(pick([0, 1])) : [], grow: pick([0, 1]) };
+    });
+    const firing = rows.map(() => [] as number[]);
+    for (const list of lists(max)) {
+      const row = firstMatch(rows, list);
+      if (row >= 0) firing[row]!.push(list.length);
+    }
+    const claimed = diagnose(source(max, rows)).map(({ message, line }) =>
+      `${line - 6}: ${message.startsWith("This row never fires") ? "never" : "overflow"}`
+    );
+    const truth = rows.flatMap((row, index) => {
+      const lengths = firing[index]!;
+      if (!lengths.length) return [`${index}: never`];
+      return Math.max(...lengths) + row.grow > max ? [`${index}: overflow`] : [];
+    });
+    if (refutable) {
+      for (const finding of truth.filter((finding) => finding.endsWith("overflow"))) {
+        assert.ok(claimed.includes(finding), `${source(max, rows)}\nmissed ${finding}`);
+      }
+      for (const finding of claimed.filter((finding) => finding.endsWith("never"))) {
+        assert.ok(truth.includes(finding), `${source(max, rows)}\nwrongly claimed ${finding}`);
+      }
+    } else {
+      assert.deepEqual(claimed, truth, source(max, rows));
+      exact++;
+    }
+  }
+  assert.equal(exact, 200);
 });
