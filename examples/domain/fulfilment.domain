@@ -1,0 +1,19 @@
+import { Carrier } from "./commerce.domain"
+
+// The warehouse runs its own pick schedule: once stock is reserved, staff dispatch it when they get to it.
+machine Fulfilment {
+  sync event reserve
+  event dispatch(carrier : Carrier, tracking : String)
+  event release
+
+  initial state Waiting
+    |> on reserve -> Reserved
+
+  state Reserved
+    |> on dispatch -> Dispatched
+    |> on release -> Released
+
+  final state Dispatched = { carrier : Carrier, tracking : String }
+
+  final state Released
+}

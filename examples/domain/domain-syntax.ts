@@ -42,7 +42,8 @@ export type On = { readonly event: Name; readonly target: Name; readonly span: S
 export type Role = "initial" | "final" | "step";
 
 export type MachineItem =
-  | { readonly kind: "event"; readonly name: Name; readonly payload: readonly Field[]; }
+  /** `sync event pay`: only a system's sync can fire it, so its machine's values get no method for it. */
+  | { readonly kind: "event"; readonly sync: boolean; readonly name: Name; readonly payload: readonly Field[]; }
   | {
     readonly kind: "state";
     readonly name: Name;
@@ -52,6 +53,29 @@ export type MachineItem =
     readonly entries: readonly Entry[];
     readonly on: readonly On[];
   };
+
+/** `order.pay`: a component and one of its machine's events. */
+export type Port = { readonly component: Name; readonly event: Name; readonly span: Span; };
+
+/** `order is Paid | Shipped`, `payment is not Captured`, joined by `and` / `or`; `and` binds tighter. */
+export type FormulaExpr =
+  & { readonly span: Span; }
+  & (
+    | { readonly kind: "is"; readonly component: Name; readonly negated: boolean; readonly states: readonly Name[]; }
+    | { readonly kind: "and" | "or"; readonly left: FormulaExpr; readonly right: FormulaExpr; }
+  );
+
+export type ClaimExpr =
+  | { readonly kind: "never" | "possible"; readonly formula: FormulaExpr; }
+  | { readonly kind: "leadsTo"; readonly from: FormulaExpr; readonly to: FormulaExpr; };
+
+/** Clauses after `system Shop = { ... }`, in the `|>` style a state's `on` clauses use. `span` covers the clause. */
+export type SystemClause =
+  | { readonly kind: "sync"; readonly ports: readonly [Port, Port, ...Port[]]; readonly span: Span; }
+  | { readonly kind: "fair"; readonly component: Name; readonly span: Span; }
+  | { readonly kind: "property"; readonly name: Name; readonly claim: ClaimExpr; readonly span: Span; };
+
+export type Part = { readonly name: Name; readonly machine: Name; };
 
 /** A union member; `fields` is undefined when it is written bare. */
 export type Member = { readonly name: Name; readonly fields: readonly Field[] | undefined; };
@@ -66,7 +90,15 @@ export type Declaration =
   /** `Post | Courier`, or with payloads, `Card { last4 : String } | Transfer { reference : String }`. */
   | { readonly kind: "union"; readonly name: Name; readonly members: readonly Member[]; }
   | { readonly kind: "record"; readonly name: Name; readonly fields: readonly Field[]; }
-  | { readonly kind: "machine"; readonly name: Name; readonly items: readonly MachineItem[]; };
+  | { readonly kind: "machine"; readonly name: Name; readonly items: readonly MachineItem[]; }
+  | {
+    readonly kind: "system";
+    readonly name: Name;
+    /** The `{ order : Order, ... }` record; a trace's start row points here. */
+    readonly parts: Span;
+    readonly components: readonly Part[];
+    readonly clauses: readonly SystemClause[];
+  };
 
 const words = /[a-zA-Z_][a-zA-Z_0-9]*/;
 
@@ -81,6 +113,16 @@ export const keywords = [
   "initial",
   "final",
   "on",
+  "sync",
+  "system",
+  "fair",
+  "property",
+  "never",
+  "possible",
+  "is",
+  "not",
+  "and",
+  "or",
 ] as const;
 
 const lex = createLexemes({
@@ -146,11 +188,12 @@ const clause: Parser<On> = parser(function*() {
 
 const item: Parser<MachineItem> = choice(
   parser(function*() {
+    const sync = yield* optional(keyword("sync"));
     yield* keyword("event");
     yield* commit();
     const id = yield* name;
     const payload = yield* optional(between(symbol("("), symbol(")"), sepEndBy(field, symbol(","))));
-    return { kind: "event" as const, name: id, payload: payload ?? [] };
+    return { kind: "event" as const, sync: sync !== undefined, name: id, payload: payload ?? [] };
   }),
   parser(function*() {
     const marker = yield* optional(choice(at(keyword("initial")), at(keyword("final"))));
@@ -170,6 +213,98 @@ const item: Parser<MachineItem> = choice(
     };
   }),
 );
+
+const port: Parser<Port> = parser(function*() {
+  const component = yield* name;
+  yield* symbol(".");
+  const event = yield* name;
+  return { component, event, span: { start: component.span.start, end: event.span.end } };
+});
+
+/** `|` between state names, but not the `|>` that starts the next clause. */
+const bar = lex.token(regex(/\|(?!>)/));
+
+const atom: Parser<FormulaExpr> = choice(
+  parser(function*(): Generator<Parser<unknown>, FormulaExpr, never> {
+    const open = yield* at(symbol("("));
+    const inner = yield* formula;
+    const close = yield* at(symbol(")"));
+    return { ...inner, span: { start: open.span.start, end: close.span.end } };
+  }),
+  parser(function*(): Generator<Parser<unknown>, FormulaExpr, never> {
+    const component = yield* name;
+    yield* keyword("is");
+    yield* commit();
+    const negated = (yield* optional(keyword("not"))) !== undefined;
+    const states = yield* sepBy1(name, bar);
+    return {
+      kind: "is",
+      component,
+      negated,
+      states,
+      span: { start: component.span.start, end: states.at(-1)!.span.end },
+    };
+  }),
+);
+
+const joined = (operand: Parser<FormulaExpr>, operator: "and" | "or"): Parser<FormulaExpr> =>
+  parser(function*(): Generator<Parser<unknown>, FormulaExpr, never> {
+    let left = yield* operand;
+    while (yield* optional(keyword(operator))) {
+      const right = yield* operand;
+      left = { kind: operator, left, right, span: { start: left.span.start, end: right.span.end } };
+    }
+    return left;
+  });
+
+const formula: Parser<FormulaExpr> = parser(function*(): Generator<Parser<unknown>, FormulaExpr, never> {
+  return yield* joined(joined(atom, "and"), "or");
+});
+
+const claim: Parser<ClaimExpr> = choice(
+  keyword("never").zipRight(formula).map((formula): ClaimExpr => ({ kind: "never", formula })),
+  keyword("possible").zipRight(formula).map((formula): ClaimExpr => ({ kind: "possible", formula })),
+  parser(function*(): Generator<Parser<unknown>, ClaimExpr, never> {
+    const from = yield* formula;
+    yield* symbol("~>");
+    return { kind: "leadsTo", from, to: yield* formula };
+  }),
+);
+
+const systemClause: Parser<SystemClause> = parser(function*(): Generator<Parser<unknown>, SystemClause, never> {
+  const pipe = yield* at(symbol("|>"));
+  yield* commit();
+  const from = (end: number) => ({ start: pipe.span.start, end });
+  return yield* choice(
+    parser(function*(): Generator<Parser<unknown>, SystemClause, never> {
+      yield* keyword("sync");
+      const first = yield* port;
+      yield* symbol("=");
+      const [second, ...rest] = yield* sepBy1(port, symbol("="));
+      const ports = [first, second!, ...rest] as const;
+      return { kind: "sync", ports, span: from(ports.at(-1)!.span.end) };
+    }),
+    parser(function*(): Generator<Parser<unknown>, SystemClause, never> {
+      yield* keyword("fair");
+      const component = yield* name;
+      return { kind: "fair", component, span: from(component.span.end) };
+    }),
+    parser(function*(): Generator<Parser<unknown>, SystemClause, never> {
+      yield* keyword("property");
+      const id = yield* name;
+      yield* symbol("=");
+      const claimed = yield* claim;
+      const last = claimed.kind === "leadsTo" ? claimed.to : claimed.formula;
+      return { kind: "property", name: id, claim: claimed, span: from(last.span.end) };
+    }),
+  );
+});
+
+const part: Parser<Part> = parser(function*() {
+  const id = yield* name;
+  yield* symbol(":");
+  return { name: id, machine: yield* name };
+});
 
 const declaration: Parser<Declaration> = choice(
   parser(function*() {
@@ -195,6 +330,22 @@ const declaration: Parser<Declaration> = choice(
     const id = yield* name;
     const items = yield* between(symbol("{"), symbol("}"), many(item));
     return { kind: "machine" as const, name: id, items };
+  }),
+  parser(function*() {
+    yield* keyword("system");
+    yield* commit();
+    const id = yield* name;
+    yield* symbol("=");
+    const open = yield* at(symbol("{"));
+    const components = yield* sepEndBy(part, symbol(","));
+    const close = yield* at(symbol("}"));
+    return {
+      kind: "system" as const,
+      name: id,
+      parts: { start: open.span.start, end: close.span.end },
+      components,
+      clauses: yield* many(systemClause),
+    };
   }),
 );
 
@@ -234,5 +385,5 @@ export const tokens: readonly TokenRule[] = [
     pattern: words,
     kind: (text) => ((keywords as readonly string[]).includes(text) ? "keyword" : "variable"),
   },
-  { pattern: /\|>|->|\.\.\.|[\[\]?:=|]/, kind: "operator" },
+  { pattern: /\|>|->|~>|\.\.\.|[\[\]?:=|]/, kind: "operator" },
 ];

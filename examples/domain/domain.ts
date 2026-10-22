@@ -11,6 +11,7 @@ import {
   showEvent,
   showState,
   showTypeDecl,
+  type System,
   type TypeDecl,
   type TypeKey,
   typeKey,
@@ -18,6 +19,7 @@ import {
 import { type Declaration, type File, imports, type Name, parse, tokens } from "./domain-syntax.ts";
 import { elaborateMachine, type MachineDeclaration } from "./machine.ts";
 import { attempt, type Binder, error, facts, reserved, type Scope, type Type } from "./scope.ts";
+import { elaborateSystem, type SystemDeclaration } from "./system.ts";
 import { definitionKind, elaborateTypes, type TypeDeclaration, typeNames } from "./types.ts";
 
 const language = { extension: "domain", imports } as const;
@@ -25,6 +27,7 @@ const language = { extension: "domain", imports } as const;
 const usedTypes = (declaration: Declaration): readonly Name[] => {
   switch (declaration.kind) {
     case "brand":
+    case "system":
       return [];
     case "union":
       return declaration.members.flatMap(({ fields }) => (fields ?? []).flatMap(({ type }) => typeNames(type)));
@@ -43,6 +46,7 @@ const usedTypes = (declaration: Declaration): readonly Name[] => {
 type Linked = {
   readonly exports: Map<string, ReadonlyMap<string, Binder>>;
   readonly universe: Map<TypeKey, TypeDecl>;
+  readonly machines: Map<TypeKey, Machine>;
 };
 
 /**
@@ -56,6 +60,7 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
     const own = new Map<string, Binder>();
     const types: (readonly [TypeDeclaration, Binder])[] = [];
     const machines: (readonly [MachineDeclaration, Binder])[] = [];
+    const systems: (readonly [SystemDeclaration, Binder])[] = [];
     const claim = (name: Name): Check<void> =>
       check(function*() {
         if (reserved.type.has(name.name)) {
@@ -72,6 +77,9 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
         yield* attempt(check(function*() {
           const binder = exported.get(name.name);
           if (!binder) return yield* error(name, `Unknown export: ${directive.path} has no ${name.name}`);
+          if (binder.kind === "system") {
+            return yield* error(name, `${name.name} is a system; systems do not compose yet`);
+          }
           yield* claim(name);
           yield* facts.reference(binder, name.span);
           top.set(name.name, binder);
@@ -83,7 +91,7 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
       yield* attempt(check(function*() {
         yield* claim(name);
         const binder: Binder = {
-          kind: declaration.kind === "machine" ? "machine" : "type",
+          kind: declaration.kind === "machine" || declaration.kind === "system" ? declaration.kind : "type",
           id: Symbol(name.name),
           key: typeKey(uri, name.name),
           uri,
@@ -91,11 +99,19 @@ const bind = (linked: Linked, source: ModuleSource, file: File) =>
         };
         top.set(name.name, binder);
         own.set(name.name, binder);
-        if (declaration.kind === "machine") machines.push([declaration, binder]);
-        else types.push([declaration, binder]);
+        switch (declaration.kind) {
+          case "machine":
+            machines.push([declaration, binder]);
+            return;
+          case "system":
+            systems.push([declaration, binder]);
+            return;
+          default:
+            types.push([declaration, binder]);
+        }
       }));
     }
-    return { top, own, types, machines };
+    return { top, own, types, machines, systems };
   });
 
 const elaborate = (linked: Linked, source: ModuleSource, file: File): Check<Module> =>
@@ -103,14 +119,22 @@ const elaborate = (linked: Linked, source: ModuleSource, file: File): Check<Modu
     const { uri } = source;
     const bound = yield* bind(linked, source, file);
     const { top } = bound;
-    const types = yield* elaborateTypes({ uri, top, universe: linked.universe }, bound.types);
+    const scope: Scope = { uri, top, universe: linked.universe, machines: linked.machines };
+    const types = yield* elaborateTypes(scope, bound.types);
     for (const type of types) linked.universe.set(type.key, type);
-    const scope: Scope = { uri, top, universe: linked.universe };
 
     const machines: Machine[] = [];
     for (const [declaration, binder] of bound.machines) {
       const machine = yield* attempt(elaborateMachine(scope, declaration, binder));
-      if (machine) machines.push(machine);
+      if (machine) {
+        machines.push(machine);
+        linked.machines.set(binder.key, machine);
+      }
+    }
+    const systems: System[] = [];
+    for (const [declaration, binder] of bound.systems) {
+      const system = yield* attempt(elaborateSystem(scope, declaration, binder));
+      if (system) systems.push(system);
     }
 
     for (const use of [...file.imports.flatMap(({ names }) => names), ...file.declarations.flatMap(usedTypes)]) {
@@ -119,7 +143,7 @@ const elaborate = (linked: Linked, source: ModuleSource, file: File): Check<Modu
       if (type) yield* facts.typed(showTypeDecl(type), use.span);
     }
     linked.exports.set(uri, bound.own);
-    return { uri, types, machines, universe: linked.universe };
+    return { uri, types, machines, systems, universe: linked.universe };
   });
 
 /** What another file can jump to: every name a module declares, with its URI. */
@@ -161,7 +185,7 @@ type Linking = { readonly root: Module; readonly foreign: readonly Definition<Ty
  */
 const link = (graph: ModuleGraph): Check<Linking> =>
   check(function*() {
-    const linked: Linked = { exports: new Map(), universe: new Map() };
+    const linked: Linked = { exports: new Map(), universe: new Map(), machines: new Map() };
     const foreign: Definition<Type>[] = [];
     for (const source of graph.modules) {
       const parsed = parse(source.original);

@@ -493,14 +493,20 @@ type Runtime = {
   readonly parse: (snapshot: unknown) => Instance;
 };
 
+type Parts = Readonly<Record<string, Instance>>;
+type Sync = (parts: Parts, payload?: unknown) => Parts;
+type Exports = Readonly<Record<string, Runtime & Readonly<Record<string, Sync>>>>;
+
 let modules = 0;
-const load = async (source: string, name = "Order"): Promise<Runtime> => {
+const exportsOf = async (source: string): Promise<Exports> => {
   const file = pathToFileURL(join(scratch, `module-${modules++}.mjs`));
   const { javascript, diagnostics } = host.host(source, file.href);
   assert.deepEqual(diagnostics, []);
   writeFileSync(file, javascript!());
-  return ((await import(file.href)) as Readonly<Record<string, Runtime>>)[name]!;
+  return (await import(file.href)) as Exports;
 };
+
+const load = async (source: string, name = "Order"): Promise<Runtime> => (await exportsOf(source))[name]!;
 
 const fire = (value: Instance, event: string, payload?: unknown): Instance => {
   const method = Reflect.get(value, event);
@@ -511,11 +517,16 @@ const fire = (value: Instance, event: string, payload?: unknown): Instance => {
 const address = { name: "Sai", line1: "1 Loop Road", city: "Bengaluru", postcode: "560001" };
 const keyboard = { sku: "kbd-60", quantity: 1, cents: 12900 };
 
+/** `pay` is a sync event, so an order is paid only through the Checkout system, with an authorized payment. */
 const shipped = async () => {
-  const Order = await load(checkout);
-  const cart = fire(Order.start({ items: [] }), "edit", { items: [keyboard] });
-  const paid = fire(fire(cart, "checkout", { address }), "pay", { paymentId: "pi_1", paidAt: "2026-10-22T09:00:00Z" });
-  return { Order, cart, paid, shipped: fire(paid, "ship", { carrier: "Courier", tracking: "TRK1" }) };
+  const { Order, Payment, Checkout } = await exportsOf(checkout);
+  const pay = (order: Instance, paymentId: string, paidAt: string) => {
+    const payment = fire(Payment!.start({ cents: 12900 }), "authorize", { paymentId });
+    return Checkout!.pay!({ order, payment }, { paymentId, paidAt });
+  };
+  const cart = fire(Order!.start({ items: [] }), "edit", { items: [keyboard] });
+  const paid = pay(fire(cart, "checkout", { address }), "pi_1", "2026-10-22T09:00:00Z").order!;
+  return { Order: Order!, cart, pay, paid, shipped: fire(paid, "ship", { carrier: "Courier", tracking: "TRK1" }) };
 };
 
 test("runtime: events move a value through the table, and each state keeps exactly its own data", async () => {
@@ -538,7 +549,7 @@ test("runtime: a payload replaces a carried field of the same name, and an unpro
 });
 
 test("runtime: values are deeply frozen and an old value stays valid after a transition", async () => {
-  const { cart, paid } = await shipped();
+  const { cart, pay, paid } = await shipped();
   assert.ok(Object.isFrozen(paid));
   assert.ok(Object.isFrozen(cart.items));
   assert.ok(Object.isFrozen((cart.items as readonly object[])[0]));
@@ -546,7 +557,7 @@ test("runtime: values are deeply frozen and an old value stays valid after a tra
   assert.throws(() => {
     (paid as { state: string; }).state = "Cart";
   }, TypeError);
-  const again = fire(fire(cart, "checkout", { address }), "pay", { paymentId: "pi_2", paidAt: "later" });
+  const again = pay(fire(cart, "checkout", { address }), "pi_2", "later").order!;
   assert.equal(again.paymentId, "pi_2");
   assert.equal(paid.paymentId, "pi_1");
   assert.equal(cart.state, "Cart");
@@ -569,10 +580,7 @@ test("runtime: parse round-trips every state's snapshot", async () => {
     assert.ok(Object.isFrozen(restored));
     assert.equal(JSON.stringify(restored), JSON.stringify(original));
   }
-  assert.equal(
-    fire(Order.parse(JSON.parse(JSON.stringify(cancelled))), "refund", { refundId: "re_1" }).state,
-    "Cancelled",
-  );
+  assert.equal(Order.parse(JSON.parse(JSON.stringify(cancelled))).state, "Refunding");
 });
 
 const snapshot = (overrides: Readonly<Record<string, unknown>>, drop: readonly string[] = []) => {
@@ -729,7 +737,7 @@ test("lsp: hover shows the data flow on a clause and the definition on a name", 
     hover(at("-> Paid") + 3),
     "state Paid = { items : [LineItem], address : Address, paymentId : PaymentId, paidAt : String }",
   );
-  assert.equal(hover(at("event pay") + 6), "event pay(paymentId : PaymentId, paidAt : String)");
+  assert.equal(hover(at("event pay") + 6), "sync event pay(paymentId : PaymentId, paidAt : String)");
   assert.equal(hover(at("[LineItem]") + 1), "type LineItem = { sku : Sku, quantity : Int, cents : Int }");
   assert.equal(hover(at("paymentId : PaymentId,") + 12), "brand PaymentId = String");
   assert.equal(hover(at("carrier : Carrier") + 10), "type Carrier = Post | Courier");
@@ -850,5 +858,243 @@ test("runtime: a module's tables close over imported types, so it runs importing
   assert.throws(
     () => fire(cart, "edit", { items: [{ sku: "kbd-60", quantity: 1, price: 1.5 }] }),
     /Order\.Cart\.edit\.items\[0\]\.price: expected Int, found 1\.5/,
+  );
+});
+
+const pair = [
+  "machine A {",
+  "sync event go(n : Int)",
+  "event stop",
+  "initial state Idle |> on go -> Busy",
+  "state Busy = { n : Int } |> on stop -> Done",
+  "final state Done",
+  "}",
+  "machine B {",
+  "event go(n : Int)",
+  "event stop",
+  "initial state Idle |> on go -> Busy",
+  "state Busy = { n : Int } |> on stop -> Done",
+  "final state Done",
+  "}",
+  "system S = { a : A, b : B }",
+  "  |> sync a.go = b.go",
+  "  |> fair a",
+  "  |> property ok = never (a is Busy and b is Idle)",
+  "",
+].join("\n");
+
+const systemCases: readonly Case[] = [
+  {
+    rule: "an unknown machine",
+    source: edit("b : B }", "b : C }", pair),
+    message: "Unknown machine: C",
+    at: "C",
+    line: 15,
+  },
+  {
+    rule: "a type as a component",
+    source: edit("b : B }", "b : B, t : T }", pair + "type T = X | Y\n"),
+    message: "T is a type, not a machine",
+    at: "T",
+    line: 15,
+  },
+  {
+    rule: "a duplicate component",
+    source: edit("b : B }", "b : B, b : B }", pair),
+    message: "Duplicate component: b",
+    at: "b",
+    line: 15,
+  },
+  {
+    rule: "an unknown component",
+    source: edit("= b.go", "= c.go", pair),
+    message: "Unknown component: c",
+    at: "c",
+    line: 16,
+  },
+  {
+    rule: "an unknown event",
+    source: edit("= b.go", "= b.og", pair),
+    message: "B has no event og",
+    at: "og",
+    line: 16,
+  },
+  {
+    rule: "one component twice in a sync",
+    source: edit("= b.go", "= b.go = b.stop", pair),
+    message: "A sync joins distinct components; b is here twice",
+    at: "b.stop",
+    line: 16,
+  },
+  {
+    rule: "an event in two syncs",
+    source: edit("  |> fair a", "  |> sync a.stop = b.go\n  |> fair a", pair),
+    message: "b.go is already synced",
+    at: "b.go",
+    line: 17,
+  },
+  {
+    rule: "ports that disagree on a payload name",
+    source: edit(
+      "event go(n : Int)\nevent stop\ninitial state Idle |> on go -> Busy\nstate Busy = { n : Int }",
+      "event go(n : String)\nevent stop\ninitial state Idle |> on go -> Busy\nstate Busy = { n : String }",
+      pair,
+    ),
+    message: "a.go takes n : String, but b.go takes n : Int",
+    at: "b.go",
+    line: 16,
+  },
+  {
+    rule: "a property named like a sync",
+    source: edit("property ok", "property go", pair),
+    message: "Duplicate member: S.go",
+    at: "go",
+    line: 18,
+  },
+  {
+    rule: "a member TypeScript cannot carry",
+    source: edit("property ok", "property then", pair),
+    message: "TypeScript cannot represent then, a system member",
+    at: "then",
+    line: 18,
+  },
+  {
+    rule: "a component fair twice",
+    source: edit("  |> fair a", "  |> fair a\n  |> fair a", pair),
+    message: "a is already fair",
+    at: "a",
+    line: 18,
+  },
+  {
+    rule: "an unknown state in a formula",
+    source: edit("a is Busy", "a is Bsy", pair),
+    message: "A has no state Bsy",
+    at: "Bsy",
+    line: 18,
+  },
+  {
+    rule: "a state named twice in a formula",
+    source: edit("a is Busy", "a is Busy | Busy", pair),
+    message: "Duplicate state: Busy",
+    at: "Busy",
+    line: 18,
+  },
+  {
+    rule: "a sync event no sync fires",
+    source: edit("  |> sync a.go = b.go\n", "", pair),
+    message: "a.go is a sync event, but no sync fires it",
+    at: "a",
+    line: 15,
+  },
+];
+
+for (const { rule, source, message, at, line } of systemCases) {
+  test(`system: ${rule} reports "${message}" at the guest text`, () => {
+    assert.deepEqual(diagnose(source), [{ message, at, line }]);
+  });
+}
+
+test("system: the shop and checkout examples are structurally clean", () => {
+  assert.deepEqual(diagnose(pair), []);
+  assert.deepEqual(diagnose(checkout), []);
+  const shop = checkSource(readFileSync(shopFile("shop.domain"), "utf8"), { uri: shopFile("shop.domain").href });
+  assert.ok(shop.success, shop.success ? "" : shop.errors.map(({ message }) => message).join("\n"));
+});
+
+test("modules: a system cannot be imported", () => {
+  const source = "import { Shop } from \"./shop.domain\"\n";
+  const result = checkSource(source, { uri: shopFile("audit.domain").href });
+  assert.ok(!result.success);
+  assert.deepEqual(result.errors.map(({ message }) => message), ["Shop is a system; systems do not compose yet"]);
+});
+
+test("host: a sync is a method over just its ports' parts, and a sync event has no method on the machine", () => {
+  const shop = readFileSync(shopFile("shop.domain"), "utf8");
+  const { text } = project(host.host(shop, shopFile("shop.domain").href).declarations);
+  for (
+    const expected of [
+      "import type { Order } from \"./order.domain\";\n",
+      "  interface Parts {\n    readonly order: Order;\n    readonly payment: Payment;\n    readonly warehouse: Fulfilment;\n  }\n",
+      "  /** sync order.checkout = payment.authorize */\n"
+      + "  checkout<$order extends Order.Cart, $payment extends Payment.Pending>(\n"
+      + "    parts: { readonly order: $order; readonly payment: $payment; },\n"
+      + "    event: { readonly address: Address; readonly paymentId: PaymentId; readonly method: PayMethod; },\n"
+      + "  ): { readonly order: $order extends Order.Cart ? Order.Checkout : never; "
+      + "readonly payment: $payment extends Payment.Pending ? Payment.Authorized : never; };\n",
+      "  refundsNeverShip(parts: { readonly payment: Payment; readonly warehouse: Fulfilment; }): boolean;\n",
+    ]
+  ) assert.ok(text.includes(expected), `${expected}\n---\n${text}`);
+  assert.ok(!text.includes("canDeliver") && !text.includes("settles"), "possible and ~> project nothing");
+  const order =
+    project(host.host(readFileSync(shopFile("order.domain"), "utf8"), shopFile("order.domain").href).declarations).text;
+  assert.ok(!/\bpay\(/.test(order) && !/\brefund\(/.test(order), order);
+  assert.ok(order.includes("    cancel(event: { readonly reason: CancelReason; }): Refunding;"), order);
+});
+
+test("host: a sync whose event several states handle accepts any of them and returns the matching target", () => {
+  const { text } = hosted(checkout).projection;
+  assert.ok(
+    text.includes(
+      "  refund<$order extends Order.Refunding, $payment extends Payment.Captured | Payment.PartlyRefunded>(\n",
+    ),
+    text,
+  );
+  assert.ok(
+    text.includes(
+      "readonly payment: $payment extends Payment.Captured ? Payment.Refunded : "
+        + "$payment extends Payment.PartlyRefunded ? Payment.Refunded : never; };\n",
+    ),
+    text,
+  );
+});
+
+test("runtime: a sync fires every port together and returns frozen parts", async () => {
+  const { Order, Payment, Checkout } = await exportsOf(checkout);
+  const order = fire(Order!.start({ items: [keyboard] }), "checkout", { address });
+  const payment = fire(Payment!.start({ cents: 12900 }), "authorize", { paymentId: "pi_1" });
+  const paid = Checkout!.pay!({ order, payment }, { paymentId: "pi_1", paidAt: "now" });
+  assert.ok(Object.isFrozen(paid));
+  assert.deepEqual(Object.keys(paid), ["order", "payment"]);
+  assert.equal(paid.order!.state, "Paid");
+  assert.deepEqual(JSON.parse(JSON.stringify(paid.payment)), {
+    state: "Captured",
+    cents: 12900,
+    paymentId: "pi_1",
+    paidAt: "now",
+  });
+  assert.equal(Reflect.get(order, "pay"), undefined);
+  assert.equal(Reflect.get(payment, "capture"), undefined);
+  assert.equal(typeof Reflect.get(payment, "expire"), "function");
+});
+
+test("runtime: a sync refuses before any part moves, and a never predicate reads only states", async () => {
+  const { Order, Payment, Checkout } = await exportsOf(checkout);
+  const cart = Order!.start({ items: [keyboard] });
+  const payment = fire(Payment!.start({ cents: 12900 }), "authorize", { paymentId: "pi_1" });
+  const refuses = (parts: Parts, payload: unknown, message: string) =>
+    assert.throws(
+      () => Checkout!.pay!(parts, payload),
+      (error) => error instanceof TypeError && error.message === message,
+    );
+  refuses(
+    { order: cart, payment },
+    { paymentId: "pi_1", paidAt: "now" },
+    "Checkout.pay: order is Cart, which does not handle pay",
+  );
+  const order = fire(cart, "checkout", { address });
+  refuses({ order, payment }, { paymentId: "pi_1", paidAt: "now", tip: 1 }, "Checkout.pay: unexpected field tip");
+  refuses(
+    { order, payment: { state: "Authorized" } as Instance },
+    { paymentId: "pi_1", paidAt: "now" },
+    "Checkout.pay: payment is not a machine value, found an object",
+  );
+  refuses({ order, payment }, { paymentId: "pi_1" }, "Order.Checkout.pay.paidAt: expected String, found nothing");
+  assert.equal(payment.state, "Authorized");
+  const paid = Checkout!.pay!({ order, payment }, { paymentId: "pi_1", paidAt: "now" });
+  const predicate = Checkout!.paidOrdersAreCaptured as unknown as (parts: Parts) => boolean;
+  assert.equal(predicate(paid), true);
+  assert.equal(
+    predicate({ order: paid.order!, payment: Payment!.parse({ state: "Expired", cents: 1, paymentId: "pi_1" }) }),
+    false,
   );
 });

@@ -28,6 +28,7 @@ type HostCase = {
 };
 
 const checkoutDomain = readFileSync(join(root, "examples/domain/checkout.domain"), "utf8");
+const shopDomain = readFileSync(join(root, "examples/domain/shop.domain"), "utf8");
 
 const cases: readonly HostCase[] = [
   {
@@ -183,12 +184,13 @@ const cases: readonly HostCase[] = [
     language: "domain",
     consumer: "examples/typescript/checkout.ts",
     output: [
-      "true true",
-      "Shipped Courier 1 Cart",
+      "true true true",
+      "Shipped Courier 1 Cart Captured",
       "{\"state\":\"Shipped\",\"items\":[{\"sku\":\"kbd-60\",\"quantity\":1,\"cents\":12900}],"
       + "\"address\":{\"name\":\"Sai\",\"line1\":\"1 Loop Road\",\"city\":\"Bengaluru\",\"postcode\":\"560001\"},"
       + "\"paymentId\":\"pi_1\",\"carrier\":\"Courier\",\"tracking\":\"TRK123\"} delivered 2026-10-24T12:00:00Z",
-      "cancelled: OutOfStock re_2 true",
+      "cancelled: OutOfStock re_2 Refunded true",
+      "Pending true",
       "snapshot.address: expected Address, found nothing",
       "",
     ].join("\n"),
@@ -207,8 +209,8 @@ const cases: readonly HostCase[] = [
       },
       {
         claim: "a branded id is not a plain string",
-        original: "paymentId: PaymentId.parse(\"pi_1\")",
-        replacement: "paymentId: \"pi_1\"",
+        original: "challenge({ paymentId, challengeUrl",
+        replacement: "challenge({ paymentId: \"pi_1\", challengeUrl",
         code: "TS2322",
       },
       {
@@ -223,6 +225,45 @@ const cases: readonly HostCase[] = [
       source: checkoutDomain.replace("on ship -> Shipped", "on ship -> Shiped"),
       at: "Shiped",
       message: "Unknown state: Shiped",
+    }],
+  },
+  {
+    language: "domain systems",
+    consumer: "examples/typescript/shop.ts",
+    output: [
+      "Paid Shipped Dispatched",
+      "card ending 4242",
+      "true true true Cart",
+      "OutOfStock Refunded",
+      "1",
+      "true",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "a sync takes only parts in states that handle its event",
+        original: "Shop.refund({ order, payment })",
+        replacement: "Shop.refund({ order: cart, payment })",
+        code: "TS2739",
+      },
+      {
+        claim: "a never predicate needs every part its formula names",
+        original: "Shop.refundsNeverShip(row)",
+        replacement: "Shop.refundsNeverShip({ warehouse: row.warehouse })",
+        code: "TS2741",
+      },
+      {
+        claim: "a tagged union narrows on its tag",
+        original: "`transfer ${method.reference}`",
+        replacement: "`transfer ${method.last4}`",
+        code: "TS2339",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/domain/shop.domain",
+      source: shopDomain.replace("payment.capture", "payment.captre"),
+      at: "captre",
+      message: "Payment has no event captre",
     }],
   },
   {

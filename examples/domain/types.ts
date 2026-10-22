@@ -20,12 +20,14 @@ export type TypeDeclaration = Extract<Declaration, { readonly kind: "brand" | "u
 /** What each declaration becomes in TypeScript, for semantic tokens. */
 export const definitionKind = { brand: "type", enum: "enum", tagged: "enum", record: "interface" } as const;
 
-const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
+export const article = (kind: Binder["kind"] | TypeDecl["kind"]): string => {
   switch (kind) {
     case "type":
       return "a type";
     case "machine":
       return "a machine";
+    case "system":
+      return "a system";
     case "brand":
       return "a brand";
     case "enum":
@@ -139,7 +141,7 @@ const tagged = (scope: Scope, declared: Omit<Tagged, "kind" | "variants">, membe
       if (reserved.type.has(name.name)) {
         yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
       }
-      if (scope.top.has(name.name)) yield* attempt(error(name, `Duplicate declaration: ${name.name}`));
+      if (scope.top.get(name.name)?.kind === "type") yield* attempt(error(name, `Duplicate declaration: ${name.name}`));
       const fields = yield* collect(scope, name, asEntries(member.fields ?? []), "property");
       for (const field of fields.filter((field) => field.name.name === "tag")) {
         yield* attempt(error(field.name, "TypeScript cannot represent tag, a variant field name"));

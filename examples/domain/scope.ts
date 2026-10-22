@@ -1,6 +1,6 @@
 import { type Check, fail, pure, type Span } from "langkit";
 import { create } from "langkit/analysis";
-import type { TypeKey, Universe } from "./domain-model.ts";
+import type { Machine, TypeKey, Universe } from "./domain-model.ts";
 import type { Name } from "./domain-syntax.ts";
 
 /** Hover text. Guest syntax, as in v1. */
@@ -13,7 +13,7 @@ export const facts = create<Type>();
 
 /** A top-level name, bound before anything it names is elaborated, so declaration order never matters. */
 export type Binder = {
-  readonly kind: "type" | "machine";
+  readonly kind: "type" | "machine" | "system";
   readonly id: symbol;
   readonly key: TypeKey;
   readonly uri: string;
@@ -21,11 +21,16 @@ export type Binder = {
 };
 
 /**
- * What a file's declarations can name: its own top-level declarations, in one namespace, and every type
- * elaborated so far. A state name may not repeat a top-level name, because inside the projected
- * `namespace Order` it would shadow it.
+ * What a file's declarations can name: its own top-level declarations, in one namespace, and every type and
+ * machine elaborated so far. A state name may not repeat a type's name, because inside the projected
+ * `namespace Order` it would shadow the type.
  */
-export type Scope = { readonly uri: string; readonly top: ReadonlyMap<string, Binder>; readonly universe: Universe; };
+export type Scope = {
+  readonly uri: string;
+  readonly top: ReadonlyMap<string, Binder>;
+  readonly universe: Universe;
+  readonly machines: ReadonlyMap<TypeKey, Machine>;
+};
 
 export const error = (at: { readonly span: Span; }, message: string): Check<never> => fail(message).at(at.span);
 

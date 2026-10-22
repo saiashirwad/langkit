@@ -1,3 +1,4 @@
+import type { Span } from "langkit";
 import type { Name, On } from "./domain-syntax.ts";
 
 export type Scalar = "String" | "Int" | "Float" | "Bool";
@@ -49,7 +50,13 @@ export type TypeDecl = Brand | Enum | Tagged | Record;
 /** Every type a module can mention, its own and every import's, transitively. */
 export type Universe = ReadonlyMap<TypeKey, TypeDecl>;
 
-export type Event = { readonly id: symbol; readonly name: Name; readonly payload: readonly Field[]; };
+/** `syncOnly` for a `sync event`: its machine's values have no method for it, so only a system fires it. */
+export type Event = {
+  readonly id: symbol;
+  readonly name: Name;
+  readonly syncOnly: boolean;
+  readonly payload: readonly Field[];
+};
 
 declare const stateBrand: unique symbol;
 /** An index into `Machine.states`. Branded so a loop counter cannot stand in for a state. */
@@ -102,13 +109,92 @@ export type Machine = {
   readonly initial: StateId;
 };
 
+declare const componentBrand: unique symbol;
+/** An index into `System.components`; also the digit position in a product state's encoding. */
+export type ComponentId = number & { readonly [componentBrand]: true; };
+
+export const componentId = (index: number): ComponentId => index as ComponentId;
+
+export type Component = {
+  readonly id: ComponentId;
+  readonly symbol: symbol;
+  readonly name: Name;
+  readonly machine: Machine;
+};
+
+/** `order.pay` resolved; `span` is in the system's file. */
+export type Port = { readonly component: Component; readonly event: Event; readonly span: Span; };
+
+/**
+ * `sync order.pay = payment.capture = warehouse.reserve`: all fire together, only when all can. Each event is in
+ * at most one sync, so a system's actions partition its components' events.
+ */
+export type Sync = {
+  readonly id: symbol;
+  /** The clause, where a trace step through this sync points. */
+  readonly span: Span;
+  /** The first port's event: the method on the projected system value. Unique among syncs and properties. */
+  readonly name: Name;
+  readonly ports: readonly [Port, Port, ...Port[]];
+  /**
+   * Every port's payload merged by name, first appearance first. A name two ports share has one type, so one
+   * value feeds both; each port takes its own fields back out at run time.
+   */
+  readonly payload: readonly Field[];
+};
+
+/** Control states only, never data: that is what keeps the search finite and exact. */
+export type Formula =
+  & { readonly span: Span; }
+  & (
+    | {
+      readonly kind: "is";
+      readonly component: Component;
+      readonly negated: boolean;
+      /** Distinct, in written order. */
+      readonly states: readonly [StateId, ...StateId[]];
+    }
+    | { readonly kind: "and" | "or"; readonly left: Formula; readonly right: Formula; }
+  );
+
+/**
+ * `never P` is safety, `possible P` says some reachable state has P (so a `never` cannot pass vacuously), and
+ * `P ~> Q` says every fair run that reaches P later reaches Q.
+ */
+export type Claim =
+  | { readonly kind: "never" | "possible"; readonly formula: Formula; }
+  | { readonly kind: "leadsTo"; readonly from: Formula; readonly to: Formula; };
+
+export type Property = { readonly id: symbol; readonly name: Name; readonly span: Span; readonly claim: Claim; };
+
+/**
+ * A closed world of components. Events no sync names are the environment's: they fire on their own, interleaved.
+ * `fair` lists the components assumed to act eventually whenever they continuously can (weak fairness); every
+ * other component may stop forever.
+ */
+export type System = {
+  readonly id: symbol;
+  readonly uri: string;
+  readonly name: Name;
+  readonly parts: Span;
+  readonly components: readonly Component[];
+  readonly syncs: readonly Sync[];
+  readonly fair: readonly Component[];
+  readonly properties: readonly Property[];
+};
+
 /** One checked `.domain` file: its own declarations in written order, and every type they can reach. */
 export type Module = {
   readonly uri: string;
   readonly types: readonly TypeDecl[];
   readonly machines: readonly Machine[];
+  readonly systems: readonly System[];
   readonly universe: Universe;
 };
+
+/** Every edge `event` labels, one per state that handles it. */
+export const transitionsOf = (machine: Machine, event: Event): readonly Transition[] =>
+  machine.states.flatMap(({ on }) => on.filter((transition) => transition.event === event));
 
 export const scalars: Readonly<{ [K in Scalar]: { readonly ts: string; }; }> = {
   String: { ts: "string" },
@@ -152,8 +238,8 @@ export const showTypeDecl = (type: TypeDecl): string => {
 };
 
 /** `event pay(paymentId : String, paidAt : String)`. */
-export const showEvent = ({ name, payload }: Event): string =>
-  `event ${name.name}${payload.length ? `(${showFields(payload)})` : ""}`;
+export const showEvent = ({ name, syncOnly, payload }: Event): string =>
+  `${syncOnly ? "sync " : ""}event ${name.name}${payload.length ? `(${showFields(payload)})` : ""}`;
 
 /** `state Paid = { items : [LineItem], address : Address, paymentId : String }`, spreads expanded. */
 export const showState = ({ name, final, data }: Pick<State, "name" | "final" | "data">): string =>
@@ -190,3 +276,35 @@ export const same = (a: DataType, b: DataType): boolean => {
 /** Target field accepts a value of source type: equal, or `T` into `T?`. Lists are invariant. */
 export const assignable = (from: DataType, to: DataType): boolean =>
   same(from, to) || (to.kind === "optional" && same(from, to.inner));
+
+/** `warehouse is Dispatched and payment is Refunded`. */
+export const showFormula = (formula: Formula): string => {
+  switch (formula.kind) {
+    case "is": {
+      const { component, negated, states } = formula;
+      const names = states.map((id) => component.machine.states[id]!.name.name).join(" | ");
+      return `${component.name.name} is ${negated ? "not " : ""}${names}`;
+    }
+    case "and":
+    case "or": {
+      const side = (operand: Formula) =>
+        formula.kind === "and" && operand.kind === "or" ? `(${showFormula(operand)})` : showFormula(operand);
+      return `${side(formula.left)} ${formula.kind} ${side(formula.right)}`;
+    }
+  }
+};
+
+/** `never (warehouse is Dispatched and payment is Refunded)`, `order is Paid ~> order is Delivered | Cancelled`. */
+export const showClaim = (claim: Claim): string => {
+  switch (claim.kind) {
+    case "never":
+    case "possible":
+      return `${claim.kind} (${showFormula(claim.formula)})`;
+    case "leadsTo":
+      return `${showFormula(claim.from)} ~> ${showFormula(claim.to)}`;
+  }
+};
+
+/** `sync order.pay = payment.capture = warehouse.reserve`. */
+export const showSync = ({ ports }: Sync): string =>
+  `sync ${ports.map(({ component, event }) => `${component.name.name}.${event.name.name}`).join(" = ")}`;

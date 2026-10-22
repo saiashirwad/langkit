@@ -1,4 +1,5 @@
-// An order, from cart to doorstep. The machine is the protocol; TypeScript decides when each event fires.
+// An order and the card payment that pays for it, in one file. Each machine is a protocol; the system says which
+// events happen together, and the checker proves what the pair can never do.
 
 brand Sku = String
 
@@ -7,6 +8,8 @@ brand PaymentId = String
 type Carrier = Post | Courier
 
 type CancelReason = ChangedMind | OutOfStock | PaymentDeclined
+
+type DeclineReason = InsufficientFunds | ChallengeFailed | CardDeclined
 
 type LineItem = { sku : Sku, quantity : Int, cents : Int }
 
@@ -17,12 +20,12 @@ type Placed = { items : [LineItem], address : Address }
 machine Order {
   event edit(items : [LineItem])
   event checkout(address : Address)
-  event pay(paymentId : PaymentId, paidAt : String)
+  sync event pay(paymentId : PaymentId, paidAt : String)
   event decline(reason : CancelReason)
   event ship(carrier : Carrier, tracking : String)
   event deliver(deliveredAt : String)
   event cancel(reason : CancelReason)
-  event refund(refundId : String)
+  sync event refund(refundId : String)
 
   initial state Cart = { items : [LineItem] }
     |> on edit -> Cart
@@ -49,3 +52,59 @@ machine Order {
 
   final state Cancelled = { reason : CancelReason, refundId : String? }
 }
+
+// The bank may ask for a 3-D Secure challenge, decline and let the customer retry, or let an authorization lapse.
+machine Payment {
+  event authorize(paymentId : PaymentId)
+  event challenge(paymentId : PaymentId, challengeUrl : String)
+  event verify
+  event decline(reason : DeclineReason)
+  event retry
+  event abandon
+  event expire
+  sync event capture(paidAt : String)
+  event refundPart(refunded : Int)
+  sync event refund(refundId : String)
+
+  initial state Pending = { cents : Int }
+    |> on authorize -> Authorized
+    |> on challenge -> Challenged
+    |> on decline -> Declined
+
+  state Challenged = { cents : Int, paymentId : PaymentId, challengeUrl : String }
+    |> on verify -> Authorized
+    |> on decline -> Declined
+    |> on expire -> Expired
+
+  state Declined = { cents : Int, reason : DeclineReason }
+    |> on retry -> Pending
+    |> on abandon -> Abandoned
+
+  state Authorized = { cents : Int, paymentId : PaymentId }
+    |> on capture -> Captured
+    |> on expire -> Expired
+
+  state Captured = { cents : Int, paymentId : PaymentId, paidAt : String }
+    |> on refundPart -> PartlyRefunded
+    |> on refund -> Refunded
+
+  state PartlyRefunded = { cents : Int, paymentId : PaymentId, paidAt : String, refunded : Int }
+    |> on refundPart -> PartlyRefunded
+    |> on refund -> Refunded
+
+  final state Refunded = { cents : Int, paymentId : PaymentId, refundId : String }
+
+  final state Expired = { cents : Int, paymentId : PaymentId }
+
+  final state Abandoned = { cents : Int, reason : DeclineReason }
+}
+
+system Checkout = { order : Order, payment : Payment }
+  |> sync order.pay = payment.capture
+  |> sync order.refund = payment.refund
+  |> sync order.decline = payment.abandon
+  |> fair order
+  |> fair payment
+  |> property paidOrdersAreCaptured = never (order is Paid | Shipped | Delivered and payment is not Captured | PartlyRefunded)
+  |> property refundsComplete = order is Refunding ~> payment is Refunded
+  |> property refundAfterDelivery = possible (order is Delivered and payment is PartlyRefunded)

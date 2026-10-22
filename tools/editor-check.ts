@@ -314,6 +314,41 @@ try {
       guest: "examples/domain/checkout.domain",
       binder: "carrier : Carrier, tracking : String }",
     },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "captured } = Checkout.pay",
+      offset: 22,
+      require: ["sync order.pay = payment.capture"],
+      guest: "examples/domain/checkout.domain",
+      binder: "pay = payment.capture",
+    },
+    {
+      consumer: "examples/typescript/shop.ts",
+      anchor: "Shop.pay({ ...checkedOut",
+      offset: 5,
+      require: [
+        "(method) pay<Order.Checkout, Payment.Authorized, Fulfilment.Waiting>(parts: {",
+        "sync order.pay = payment.capture = warehouse.reserve",
+      ],
+      guest: "examples/domain/shop.domain",
+      binder: "pay = payment.capture",
+    },
+    {
+      consumer: "examples/typescript/shop.ts",
+      anchor: "Shop.refundsNeverShip(row)",
+      offset: 5,
+      require: ["refundsNeverShip(parts: {"],
+      guest: "examples/domain/shop.domain",
+      binder: "refundsNeverShip = never",
+    },
+    {
+      consumer: "examples/typescript/shop.ts",
+      anchor: "method.last4",
+      offset: 7,
+      require: ["(property) PayMethod.Card.last4: string"],
+      guest: "examples/domain/commerce.domain",
+      binder: "last4 : String",
+    },
   ];
   for (const { consumer, anchor, offset, require, guest, binder, binderOffset = 0 } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");

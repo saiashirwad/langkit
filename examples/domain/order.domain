@@ -3,11 +3,11 @@ import { Address, CancelReason, Carrier, LineItem, OrderId, PaymentId, Placed } 
 machine Order {
   event edit(items : [LineItem])
   event checkout(address : Address, paymentId : PaymentId)
-  event pay
+  sync event pay
   event ship(carrier : Carrier, tracking : String)
   event deliver
   event cancel(reason : CancelReason)
-  event refund
+  sync event refund
 
   initial state Cart = { id : OrderId, items : [LineItem] }
     |> on edit -> Cart

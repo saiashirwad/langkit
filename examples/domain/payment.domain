@@ -1,0 +1,27 @@
+import { Cents, PaymentId, PayMethod } from "./commerce.domain"
+
+// A card payment. The bank fires decline and expire; nothing in the shop decides them.
+machine Payment {
+  event authorize(paymentId : PaymentId, method : PayMethod)
+  sync event capture
+  event decline
+  event expire
+  sync event refund
+
+  initial state Pending = { amount : Cents }
+    |> on authorize -> Authorized
+    |> on decline -> Declined
+
+  state Authorized = { amount : Cents, paymentId : PaymentId, method : PayMethod }
+    |> on capture -> Captured
+    |> on expire -> Expired
+
+  state Captured = { amount : Cents, paymentId : PaymentId, method : PayMethod }
+    |> on refund -> Refunded
+
+  final state Refunded = { amount : Cents, paymentId : PaymentId, method : PayMethod }
+
+  final state Declined = { amount : Cents }
+
+  final state Expired = { amount : Cents, paymentId : PaymentId, method : PayMethod }
+}

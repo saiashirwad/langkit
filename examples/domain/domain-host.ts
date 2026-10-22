@@ -2,33 +2,49 @@ import { type HostLanguage, type Piece, specifier, unhosted, verbatim } from "la
 import { type Binding, binding, call, data, type Json, type Module as Program, ref } from "langkit/ir";
 import { emitModule } from "langkit/javascript";
 import {
+  type Component,
   type DataType,
   type Field,
+  type Formula,
   type Machine,
   type Module,
+  type Port,
+  type Property,
   scalars,
+  showFormula,
+  showSync,
   type State,
+  type StateId,
+  type Sync,
+  type System,
   type Transition,
+  transitionsOf,
   type TypeDecl,
   type TypeKey,
+  typeKey,
 } from "./domain-model.ts";
 import { checkSource } from "./domain.ts";
-import type { CompiledMachine, Fields, Named, Shape, Types } from "./runtime.ts";
+import type { CompiledFormula, CompiledMachine, CompiledSystem, Fields, Named, Shape, Types } from "./runtime.ts";
 import { closure, fieldsOf } from "./types.ts";
 
 const runtime = new URL("./runtime.ts", import.meta.url).href;
 
-/** One file's projection: where it is, and how it prints a type. */
-type Printer = { readonly uri: string; readonly ts: (type: DataType) => string; };
+/** One file's projection: where it is, how it prints a type, and the local name of anything declared elsewhere. */
+type Printer = {
+  readonly uri: string;
+  readonly ts: (type: DataType) => string;
+  readonly local: (declared: Pick<Mentioned, "key" | "name">) => string;
+};
 
 /** `readonly LineItem[]`, `string | null`. A declared type prints as its local name in this projection. */
-const printer = (uri: string, local: ReadonlyMap<TypeKey, string>): Printer => {
+const printer = (uri: string, locals: ReadonlyMap<TypeKey, string>): Printer => {
+  const local = ({ key, name }: Pick<Mentioned, "key" | "name">) => locals.get(key) ?? name;
   const ts = (type: DataType): string => {
     switch (type.kind) {
       case "scalar":
         return scalars[type.name].ts;
       case "named":
-        return local.get(type.key) ?? type.name;
+        return local(type);
       case "list": {
         const element = ts(type.element);
         return `readonly ${
@@ -39,7 +55,7 @@ const printer = (uri: string, local: ReadonlyMap<TypeKey, string>): Printer => {
         return `${ts(type.inner)} | null`;
     }
   };
-  return { uri, ts };
+  return { uri, ts, local };
 };
 
 /** A field spread in from another file has no span here, so its name projects as plain text. */
@@ -154,7 +170,7 @@ const state = (printer: Printer, states: readonly State[], { name, data, on }: S
     fieldName(printer, field),
     `: ${printer.ts(field.type)};\n`,
   ]),
-  ...on.flatMap((transition) => method(printer, states, transition)),
+  ...on.filter(({ event }) => !event.syncOnly).flatMap((transition) => method(printer, states, transition)),
   "  }\n",
 ];
 
@@ -181,12 +197,100 @@ const machine = (printer: Printer, { name, states, initial }: Machine): readonly
   ];
 };
 
-/** Every type the projection prints, in order: what it must import, and what the runtime decodes. */
-const printed = (module: Module): readonly DataType[] => [
+const machineName = (printer: Printer, { machine }: Component): string =>
+  printer.local({ key: typeKey(machine.uri, machine.name.name), name: machine.name.name });
+
+/** `order` inside the `order.pay` port, which is where a parts key maps. */
+const componentAt = ({ component, span }: Port): Piece =>
+  verbatim(component.name.name, { start: span.start, end: span.start + component.name.name.length });
+
+/**
+ * `|> sync order.pay = payment.capture = warehouse.reserve` projects as
+ * `pay<$order extends Order.Checkout, ...>(parts: { readonly order: $order; ... }): { readonly order: ... }`.
+ * Each constraint is the union of states that handle the port's event, so a part held as a union of handling
+ * states is accepted and its result is the union of targets; an unnarrowed `Order` is refused. The method name is
+ * verbatim at `pay` in `order.pay`, so go-to-definition from TypeScript lands on the sync clause.
+ */
+const syncMethod = (printer: Printer, sync: Sync): readonly Piece[] => {
+  const ports = sync.ports.map((port) => {
+    const owner = machineName(printer, port.component);
+    const edges = transitionsOf(port.component.machine, port.event);
+    const state = (id: StateId) => `${owner}.${port.component.machine.states[id]!.name.name}`;
+    const parameter = `$${port.component.name.name}`;
+    const result = edges.reduceRight(
+      (otherwise, { from, to }) => `${parameter} extends ${state(from)} ? ${state(to)} : ${otherwise}`,
+      "never",
+    );
+    return { port, parameter, accepts: edges.map(({ from }) => state(from)).join(" | "), result };
+  });
+  return [
+    `  /** ${showSync(sync)} */\n  `,
+    verbatim(sync.name.name, sync.name.span),
+    `<${ports.map(({ parameter, accepts }) => `${parameter} extends ${accepts}`).join(", ")}>(\n    parts: { `,
+    ...ports.flatMap(({ port, parameter }): readonly Piece[] => ["readonly ", componentAt(port), `: ${parameter}; `]),
+    "},\n",
+    ...(sync.payload.length ? ["    event: ", ...object(printer, sync.payload), ",\n"] : []),
+    "  ): { ",
+    ...ports.flatMap(({ port, result }): readonly Piece[] => ["readonly ", componentAt(port), `: ${result}; `]),
+    "};\n",
+  ];
+};
+
+const components = (formula: Formula): readonly Component[] =>
+  formula.kind === "is" ? [formula.component] : [...components(formula.left), ...components(formula.right)];
+
+/** A `never` property is a predicate over just the parts its formula names, so an audit can pass two rows. */
+const predicate = (printer: Printer, system: System, property: Property): readonly Piece[] => {
+  if (property.claim.kind !== "never") return [];
+  const named = new Set(components(property.claim.formula));
+  return [
+    `  /** False when ${showFormula(property.claim.formula)}. */\n  `,
+    verbatim(property.name.name, property.name.span),
+    "(parts: { ",
+    ...system.components.filter((component) => named.has(component)).flatMap((component): readonly Piece[] => [
+      "readonly ",
+      verbatim(component.name.name, component.name.span),
+      `: ${machineName(printer, component)}; `,
+    ]),
+    "}): boolean;\n",
+  ];
+};
+
+/**
+ * `Shop.Parts` names every component; the value has one method per sync and one predicate per `never`. A `~>` or
+ * `possible` property is about runs, and a stored row has no run to test, so it projects nothing.
+ */
+const system = (printer: Printer, value: System): readonly Piece[] => [
+  `export declare namespace ${value.name.name} {\n  interface Parts {\n`,
+  ...value.components.flatMap((component): readonly Piece[] => [
+    "    readonly ",
+    verbatim(component.name.name, component.name.span),
+    `: ${machineName(printer, component)};\n`,
+  ]),
+  "  }\n}\n",
+  "export declare const ",
+  verbatim(value.name.name, value.name.span),
+  ": {\n",
+  ...value.syncs.flatMap((sync) => syncMethod(printer, sync)),
+  ...value.properties.flatMap((property) => predicate(printer, value, property)),
+  "};\n",
+];
+
+/** A declaration another file owns, which the projection names and so must import. */
+type Mentioned = { readonly key: TypeKey; readonly uri: string; readonly name: string; };
+
+/** Every type the runtime decodes: a system's parts decode their own payloads. */
+const decoded = (module: Module): readonly DataType[] => [
   ...module.types.flatMap((type) => fieldsOf(type).map(({ type }) => type)),
   ...module.machines.flatMap(({ events, states }) =>
     [...events.flatMap(({ payload }) => payload), ...states.flatMap(({ data }) => data)].map(({ type }) => type)
   ),
+];
+
+/** Every type the projection prints, so every one it must import. */
+const printed = (module: Module): readonly DataType[] => [
+  ...decoded(module),
+  ...module.systems.flatMap(({ syncs }) => syncs.flatMap(({ payload }) => payload.map(({ type }) => type))),
 ];
 
 const namedIn = (type: DataType): readonly Extract<DataType, { readonly kind: "named"; }>[] => {
@@ -212,20 +316,28 @@ const imports = (
 ): { readonly local: ReadonlyMap<TypeKey, string>; readonly lines: readonly string[]; } => {
   const taken = new Set([
     ...module.types.map(({ name }) => name.name),
+    ...module.systems.map(({ name }) => name.name),
     ...module.machines.flatMap(({ name, states }) => [name.name, ...states.map((state) => state.name.name)]),
     ...module.types.flatMap((type) => type.kind === "tagged" ? type.variants.map(({ name }) => name.name) : []),
   ]);
   const local = new Map<TypeKey, string>();
   const from = new Map<string, string[]>();
-  for (const { key } of printed(module).flatMap(namedIn)) {
-    const declaration = module.universe.get(key)!;
-    if (declaration.uri === module.uri || local.has(key)) continue;
-    const { name } = declaration.name;
+  const mentioned: readonly Mentioned[] = [
+    ...printed(module).flatMap(namedIn).map(({ key }) => {
+      const { uri, name } = module.universe.get(key)!;
+      return { key, uri, name: name.name };
+    }),
+    ...module.systems.flatMap(({ components }) =>
+      components.map(({ machine: { uri, name } }) => ({ key: typeKey(uri, name.name), uri, name: name.name }))
+    ),
+  ];
+  for (const { key, uri, name } of mentioned) {
+    if (uri === module.uri || local.has(key)) continue;
     let chosen = name;
     for (let n = 2; taken.has(chosen); n++) chosen = `${name}$${n}`;
     taken.add(chosen);
     local.set(key, chosen);
-    from.set(declaration.uri, [...(from.get(declaration.uri) ?? []), chosen === name ? name : `${name} as ${chosen}`]);
+    from.set(uri, [...(from.get(uri) ?? []), chosen === name ? name : `${name} as ${chosen}`]);
   }
   const lines = [...from].map(([uri, names]) =>
     `import type { ${names.sort().join(", ")} } from "${specifier(module.uri, uri)}";\n`
@@ -240,6 +352,7 @@ export const declarations = (module: Module): readonly Piece[] => {
     ...lines,
     ...module.types.flatMap((type) => typeDecl(printing, type)),
     ...module.machines.flatMap((value) => machine(printing, value)),
+    ...module.systems.flatMap((value) => system(printing, value)),
   ];
 };
 
@@ -252,10 +365,11 @@ export const compiled = (module: Module): {
   /** The local key of each of the module's own types, in written order. */
   readonly own: readonly string[];
   readonly machines: readonly CompiledMachine[];
+  readonly systems: readonly CompiledSystem[];
 } => {
   const roots = [
     ...module.types.map((type): DataType => ({ kind: "named", key: type.key, name: type.name.name })),
-    ...printed(module),
+    ...decoded(module),
   ];
   const reached = closure(module.universe, roots);
   const local = new Map<string, string>();
@@ -305,6 +419,7 @@ export const compiled = (module: Module): {
       name: name.name,
       initial: states[initial]!.name.name,
       events: Object.fromEntries(events.map((event) => [event.name.name, fields(event.payload)])),
+      syncOnly: events.filter(({ syncOnly }) => syncOnly).map(({ name }) => name.name),
       states: states.map(({ name, data, on }) => ({
         name: name.name,
         data: fields(data),
@@ -315,17 +430,48 @@ export const compiled = (module: Module): {
         })),
       })),
     })),
+    systems: module.systems.map(({ name, syncs, properties }) => ({
+      name: name.name,
+      syncs: syncs.map((sync) => ({
+        name: sync.name.name,
+        ports: sync.ports.map(({ component: { name, machine }, event }) => ({
+          component: name.name,
+          event: event.name.name,
+          handles: transitionsOf(machine, event).map(({ from }) => machine.states[from]!.name.name),
+          fields: event.payload.map((field) => field.name.name),
+        })),
+      })),
+      predicates: properties.flatMap(({ name, claim }) =>
+        claim.kind === "never" ? [{ name: name.name, bad: formula(claim.formula) }] : []
+      ),
+    })),
   };
 };
 
+const formula = (value: Formula): CompiledFormula => {
+  switch (value.kind) {
+    case "is":
+      return {
+        kind: "is",
+        component: value.component.name.name,
+        negated: value.negated,
+        states: value.states.map((id) => value.component.machine.states[id]!.name.name),
+      };
+    case "and":
+    case "or":
+      return { kind: value.kind, left: formula(value.left), right: formula(value.right) };
+  }
+};
+
 /**
- * `import { machine, named } from "./runtime.ts"; const types = {...};` then one export per declaration:
- * `const LineItem = named(types)("LineItem"); const Order = machine(types)({...});`.
+ * `import { machine, named, system } from "./runtime.ts"; const types = {...};` then one export per declaration:
+ * `const LineItem = named(types)("LineItem"); const Order = machine(types)({...}); const Shop = system({...});`.
  */
 export const program = (uri: string, module: Module): Program<undefined> => {
   const local = (name: string) => binding(name, undefined);
   const runtimeNamed = local("named");
   const runtimeMachine = local("machine");
+  const runtimeSystem = local("system");
   const types = local("types");
   const tables = compiled(module);
   const over = (definer: Binding<undefined>, table: Json) =>
@@ -333,9 +479,15 @@ export const program = (uri: string, module: Module): Program<undefined> => {
   const exported = [
     ...module.types.map(({ name }, index) => [name.name, over(runtimeNamed, tables.own[index]!)] as const),
     ...tables.machines.map((table) => [table.name, over(runtimeMachine, table)] as const),
+    ...tables.systems.map((table) =>
+      [table.name, call(undefined, ref(runtimeSystem), data(undefined, table))] as const
+    ),
   ].map(([name, value]) => ({ name, binding: local(name), value }));
   return {
-    imports: [{ from: specifier(uri, runtime), names: [["named", runtimeNamed], ["machine", runtimeMachine]] }],
+    imports: [{
+      from: specifier(uri, runtime),
+      names: [["named", runtimeNamed], ["machine", runtimeMachine], ["system", runtimeSystem]],
+    }],
     body: {
       declarations: [
         { binding: types, value: data(undefined, tables.types) },

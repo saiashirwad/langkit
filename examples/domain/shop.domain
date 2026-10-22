@@ -1,0 +1,13 @@
+import { Fulfilment } from "./fulfilment.domain"
+import { Order } from "./order.domain"
+import { Payment } from "./payment.domain"
+
+system Shop = { order : Order, payment : Payment, warehouse : Fulfilment }
+  |> sync order.checkout = payment.authorize
+  |> sync order.pay = payment.capture = warehouse.reserve
+  |> sync order.refund = payment.refund
+  |> fair order
+  |> property capturesOnlyPaid = never (payment is Captured and order is Cart | Checkout)
+  |> property refundsNeverShip = never (warehouse is Dispatched and payment is Refunded)
+  |> property canDeliver = possible (order is Delivered)
+  |> property settles = order is Paid ~> order is Delivered | Cancelled

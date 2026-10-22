@@ -144,8 +144,10 @@ const declare = (scope: Scope, items: readonly MachineItem[]) =>
         if (reserved.type.has(name.name)) {
           yield* attempt(error(name, `TypeScript cannot represent ${name.name}, a reserved type name`));
         }
-        // A state that shadows a top-level name is still the machine's state, so its clauses are checked.
-        if (scope.top.has(name.name)) yield* attempt(error(name, `Duplicate declaration: ${name.name}`));
+        // A state that shadows a type inside `namespace Order` is still the machine's state, so its clauses are checked.
+        if (scope.top.get(name.name)?.kind === "type") {
+          yield* attempt(error(name, `Duplicate declaration: ${name.name}`));
+        }
         if (states.has(name.name)) return yield* error(name, `Duplicate declaration: ${name.name}`);
       });
     for (const item of items) {
@@ -182,7 +184,7 @@ export const elaborateMachine = (scope: Scope, declaration: MachineDeclaration, 
     for (const { item, id } of declared.events.values()) {
       const { name } = item;
       const payload = yield* collect(scope, name, asEntries(item.payload), "parameter");
-      const event: Event = { id, name, payload };
+      const event: Event = { id, name, syncOnly: item.sync, payload };
       resolved.events.set(name.name, event);
       yield* facts.define({ id, name: name.name, type: showEvent(event) }, name.span, "method");
     }
