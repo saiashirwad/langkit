@@ -27,6 +27,8 @@ type HostCase = {
   readonly guestErrors: readonly GuestError[];
 };
 
+const checkoutMachine = readFileSync(join(root, "examples/machine/checkout.machine"), "utf8");
+
 const cases: readonly HostCase[] = [
   {
     language: "toy",
@@ -175,6 +177,46 @@ const cases: readonly HostCase[] = [
       source: "model User = { id : Int |> primaryKey, role : Missing }\n",
       at: "Missing",
       message: "Unknown field type: Missing",
+    }],
+  },
+  {
+    language: "machine",
+    consumer: "examples/typescript/checkout.ts",
+    output: [
+      "true true",
+      "Shipped Courier 1 Cart",
+      "{\"state\":\"Shipped\",\"items\":[{\"sku\":\"kbd-60\",\"quantity\":1,\"cents\":12900}],"
+      + "\"address\":{\"name\":\"Sai\",\"line1\":\"1 Loop Road\",\"city\":\"Bengaluru\",\"postcode\":\"560001\"},"
+      + "\"paymentId\":\"pi_1\",\"carrier\":\"Courier\",\"tracking\":\"TRK123\"} delivered 2026-10-24T12:00:00Z",
+      "cancelled: OutOfStock re_2 true",
+      "snapshot.address: expected Address, found nothing",
+      "",
+    ].join("\n"),
+    misuses: [
+      {
+        claim: "an event is callable only in the states that handle it",
+        original: "paid.ship({ carrier: \"Courier\", tracking: \"TRK123\" })",
+        replacement: "cart.ship({ carrier: \"Courier\", tracking: \"TRK123\" })",
+        code: "TS2339",
+      },
+      {
+        claim: "an event needs its whole payload",
+        original: "cart.checkout({ address })",
+        replacement: "cart.checkout({})",
+        code: "TS2741",
+      },
+      {
+        claim: "Final holds only the final states",
+        original: "receipt(refunded)",
+        replacement: "receipt(paid)",
+        code: "TS2345",
+      },
+    ],
+    guestErrors: [{
+      file: "examples/machine/checkout.machine",
+      source: checkoutMachine.replace("on ship -> Shipped", "on ship -> Shiped"),
+      at: "Shiped",
+      message: "Unknown state: Shiped",
     }],
   },
   {
