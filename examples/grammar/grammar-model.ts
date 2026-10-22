@@ -120,3 +120,13 @@ export const walk = <A>(e: Expr<A>, visit: (e: Expr<A>) => void): void => {
   visit(e);
   for (const child of children(e)) walk(child, visit);
 };
+
+/** Every literal and operator that is not a keyword: what the lexer matches by maximal munch. */
+export const symbolsOf = <A>(grammar: Grammar<A>): ReadonlySet<string> => {
+  const symbols = new Set<string>();
+  for (const rule of grammar.rules) {
+    walk(rule.body, (e) => e.t === "lit" && !e.kw && symbols.add(e.text));
+    for (const level of rule.pratt ?? []) for (const op of level.ops) if (!op.kw) symbols.add(op.text);
+  }
+  return symbols;
+};

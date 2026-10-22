@@ -1,8 +1,10 @@
+import { highlight } from "langkit/analysis";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { memoRules } from "../examples/grammar/grammar-analysis.ts";
 import { type Checked, wire } from "../examples/grammar/grammar-model.ts";
+import { tokenRules } from "../examples/grammar/grammar-tokens.ts";
 import { checkSource } from "../examples/grammar/grammar.ts";
 import { define } from "../examples/grammar/runtime.ts";
 
@@ -172,4 +174,24 @@ Pipe = precedence {
 }
 `);
   assert.ok(parse("a | b |> end").success);
+});
+
+test("token rules highlight a grammar's keywords, words, tokens and symbols, longest symbol first", () => {
+  const grammar = check(`grammar G
+skip = /\\s+/ | /#[^\\n]*/
+word = /[a-z]+/
+token Digits = /[0-9]+/
+token Text = /"[^"]*"/
+Doc = "let" name:ident ".." "." count:Digits label:Text
+`);
+  const source = "let xs .. . 42 \"hi\" # note";
+  const tokens = highlight(source, tokenRules(grammar));
+  assert.deepEqual(tokens.map(({ kind, span }) => [source.slice(span.start, span.end), kind]), [
+    ["let", "keyword"],
+    ["xs", "variable"],
+    ["..", "operator"],
+    [".", "operator"],
+    ["42", "number"],
+    ["\"hi\"", "string"],
+  ]);
 });

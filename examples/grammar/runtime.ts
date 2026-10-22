@@ -25,7 +25,7 @@ import {
   type RuleId,
   ruleId,
   type Seq,
-  walk,
+  symbolsOf,
   type Wire,
 } from "./grammar-model.ts";
 
@@ -62,11 +62,7 @@ export const define = (grammar: Wire): Parsers => {
         : reply;
     });
 
-  const symbols = new Set<string>();
-  for (const rule of grammar.rules) {
-    walk(rule.body, (e) => e.t === "lit" && !e.kw && symbols.add(e.text));
-    for (const level of rule.pratt ?? []) for (const op of level.ops) if (!op.kw) symbols.add(op.text);
-  }
+  const symbols = symbolsOf(grammar);
 
   /** Maximal munch: a symbol yields to any longer symbol of the grammar that also matches at its position. */
   const symbol = (text: string): Parser<string> => {
