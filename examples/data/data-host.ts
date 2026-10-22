@@ -20,7 +20,17 @@ export type Printer = {
   readonly local: (declared: Declared) => string;
 };
 
-/** `readonly LineItem[]`, `string | null`. A declared type prints as its local name in this projection. */
+/** Up to this bound a list projects as a union of tuples, so reading past the bound is a type error. */
+const tupleBound = 8;
+
+const tuples = (element: string, max: number): string =>
+  Array.from({ length: max + 1 }, (_, length) => `readonly [${Array(length).fill(element).join(", ")}]`)
+    .join(" | ");
+
+/**
+ * `readonly LineItem[]`, `string | null`, and `[Step; ..2]` as `readonly [] | readonly [Step] | readonly [Step,
+ * Step]`. A declared type prints as its local name in this projection.
+ */
 export const printer = (uri: string, locals: ReadonlyMap<TypeKey, string>): Printer => {
   const local = ({ key, name }: Declared) => locals.get(key) ?? name;
   const ts = (type: DataType): string => {
@@ -31,6 +41,7 @@ export const printer = (uri: string, locals: ReadonlyMap<TypeKey, string>): Prin
         return local(type);
       case "list": {
         const element = ts(type.element);
+        if (type.max <= tupleBound) return tuples(element, type.max);
         return `readonly ${
           type.element.kind === "list" || type.element.kind === "optional" ? `(${element})` : element
         }[]`;

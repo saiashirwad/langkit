@@ -414,6 +414,20 @@ const cases: readonly Case[] = [
     line: 11,
   },
   {
+    rule: "an input TypeScript cannot carry as a method",
+    source: inside("input then"),
+    message: "TypeScript cannot represent then, an input name",
+    at: "then",
+    line: 10,
+  },
+  {
+    rule: "a cell TypeScript cannot carry as a property",
+    source: inside("cell __proto__ : Feel = Straight"),
+    message: "TypeScript cannot represent __proto__, a cell name",
+    at: "__proto__",
+    line: 10,
+  },
+  {
     rule: "a signal read outside its own group",
     source: inside("cell held : [Clip] = []\n    on bar\n      [..] -> [.., clip]"),
     message: "clip may be absent here; read it inside on clip",

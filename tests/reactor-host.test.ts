@@ -1,3 +1,4 @@
+import { type Piece, project } from "langkit/host";
 import { emitModule } from "langkit/javascript";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
@@ -5,10 +6,74 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { program } from "../examples/reactor/reactor-host.ts";
+import { host, program } from "../examples/reactor/reactor-host.ts";
 import { checkSource } from "../examples/reactor/reactor.ts";
 
 const player = readFileSync(new URL("../examples/reactor/player.reactor", import.meta.url), "utf8");
+
+const hosted = (source: string) => {
+  const result = host.host(source, "file:///main.reactor");
+  return { ...result, text: project(result.declarations).text };
+};
+
+test("host: a machine projects as its cells, then its signals, then a method per input", () => {
+  const { text, diagnostics } = hosted(player);
+  assert.deepEqual(diagnostics, []);
+  const members = text.slice(text.indexOf("export interface Player {")).split("\n").filter((line) =>
+    /^  \w/.test(line)
+  );
+  assert.deepEqual(members.slice(0, 7), [
+    "  readonly root: Root | null;",
+    "  readonly shape: Shape | null;",
+    "  readonly feel: Feel | null;",
+    "  readonly steps: readonly [] | readonly [Step] | readonly [Step, Step] | readonly [Step, Step, Step];",
+    "  readonly clip: Clip | null;",
+    "  press(value: Root | Shape | Feel): Player;",
+    "  bar(): Player;",
+  ]);
+  assert.ok(text.includes("export declare const Player: {\n"), text);
+  assert.ok(text.includes("  start(): Player;\n  /** Parses a stored snapshot"), text);
+  assert.ok(text.includes("export type Feel = \"Straight\" | \"Swing\" | \"Half\";\n"), text);
+});
+
+test("host: a list bounded past 8, or not at all, projects as a readonly array", () => {
+  const source = [
+    "type Feel = Straight | Half",
+    "machine M {",
+    "  input bar",
+    "  cell some : [Feel; ..8] = []",
+    "  cell many : [Feel; ..9] = []",
+    "  cell all : [Feel] = []",
+    "}",
+    "",
+  ].join("\n");
+  const { text } = hosted(source);
+  assert.ok(text.includes("  readonly some: readonly [] | readonly [Feel] |"), text);
+  assert.ok(text.includes(`readonly [${Array(8).fill("Feel").join(", ")}];\n`), text);
+  assert.ok(text.includes("  readonly many: readonly Feel[];\n"), text);
+  assert.ok(text.includes("  readonly all: readonly Feel[];\n"), text);
+});
+
+test("host: every member is verbatim at its declaration, so go-to-definition lands on it", () => {
+  const { declarations } = hosted(player);
+  const line = (offset: number) => player.slice(player.lastIndexOf("\n", offset) + 1, player.indexOf("\n", offset));
+  const at = (name: string) =>
+    declarations.flatMap((piece: Piece) =>
+      typeof piece !== "string" && piece.text === name ? [line(piece.span.start).trim()] : []
+    );
+  assert.deepEqual(at("steps"), ["cell steps : [Step; ..3] = []"]);
+  assert.equal(at("clip").at(-1), "signal clip : Clip = on press if root, shape, feel -> { root, shape, feel }");
+  assert.deepEqual(at("press"), ["input press : Root | Shape | Feel"]);
+  assert.deepEqual(at("bar"), ["input bar"]);
+  assert.deepEqual(at("Player"), ["machine Player {"]);
+});
+
+test("host: a checked file with errors is not hosted", () => {
+  const { diagnostics, javascript, text } = hosted(player.replace("last Feel", "last Fel"));
+  assert.equal(javascript, undefined);
+  assert.equal(text, "");
+  assert.deepEqual(diagnostics.map(({ message }) => message), ["Unknown type: Fel"]);
+});
 
 const scratch = realpathSync(mkdtempSync(join(tmpdir(), "reactor-runtime-")));
 after(() => rmSync(scratch, { recursive: true, force: true }));

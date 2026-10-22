@@ -125,6 +125,9 @@ const cellType = (scope: Scope, item: G.ItemCell): Check<DataType> =>
 
 const kinds = { input: "method", cell: "property", signal: "function" } as const;
 
+/** Inputs are methods on every value: `then` would make it a thenable `await` hangs on; `toJSON` would replace the snapshot. */
+const reserved = new Set(["then", "toJSON", "constructor", "toString", "valueOf", "__proto__"]);
+
 /** An item with the entity it declared. */
 type Declaration =
   | { readonly kind: "input"; readonly item: G.ItemInput; readonly entity: Input; }
@@ -158,6 +161,9 @@ const declare = (scope: Scope, constructors: Constructors, items: readonly G.Ite
         const known = constructors.get(name.name);
         if (known?.length) {
           return yield* error(name, `${describe(known[0]!)}; ${article(item.kind)} cannot take its name`);
+        }
+        if ((item.kind === "input" ? reserved : scope.dialect.reserved.field).has(name.name)) {
+          yield* attempt(error(name, `TypeScript cannot represent ${name.name}, ${article(item.kind)} name`));
         }
         broken.add(name.name);
         const id = Symbol(name.name);

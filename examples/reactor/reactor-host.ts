@@ -1,9 +1,21 @@
-import { specifier } from "langkit/host";
+import { type HostLanguage, type Piece, specifier, unhosted, verbatim } from "langkit/host";
 import { type Binding, binding, call, data, type Json, type Module as Program, ref } from "langkit/ir";
-import { tables } from "../data/data-host.ts";
+import { emitModule } from "langkit/javascript";
+import { type Printer, printer, tables, typeDecl } from "../data/data-host.ts";
 import { type DataType, optionalOf, same } from "../data/data-model.ts";
 import type { Types } from "../data/decode.ts";
-import type { Expr, Formula, Machine, Module, Node, Pattern, Ref } from "./reactor-model.ts";
+import {
+  type Expr,
+  type Formula,
+  type Machine,
+  type Module,
+  type Node,
+  type Pattern,
+  type Ref,
+  showInput,
+  showSlot,
+} from "./reactor-model.ts";
+import { checkSource } from "./reactor.ts";
 import type {
   CompiledExpr,
   CompiledFormula,
@@ -126,6 +138,52 @@ export const declared = ({ nodes }: Machine): readonly Node[] => {
 /** A signal is absent in every tick it does not fire. */
 export const held = ({ slot }: Node): DataType => slot.kind === "signal" ? optionalOf(slot.type) : slot.type;
 
+const member = (printer: Printer, node: Node): readonly Piece[] => {
+  const { slot } = node;
+  const absent = slot.kind === "signal" ? "; null in a tick it does not fire" : "";
+  return [
+    `  /** ${showSlot(slot)}${absent} */\n  readonly `,
+    verbatim(slot.name.name, slot.name.span),
+    `: ${printer.ts(held(node))};\n`,
+  ];
+};
+
+/**
+ * `export interface Player { readonly steps: ...; press(value: Root | Shape | Feel): Player; }`, and a value of
+ * the same name that starts and parses one. Each member is verbatim at its declaration, so go-to-definition from
+ * `player.steps` lands on the cell.
+ */
+const machine = (printer: Printer, value: Machine): readonly Piece[] => {
+  const { name } = value.name;
+  return [
+    "export interface ",
+    verbatim(name, value.name.span),
+    " {\n",
+    ...declared(value).flatMap((node) => member(printer, node)),
+    ...value.inputs.flatMap((input): readonly Piece[] => [
+      `  /** ${showInput(input)} */\n  `,
+      verbatim(input.name.name, input.name.span),
+      `(${input.carries.length ? `value: ${input.carries.map(printer.ts).join(" | ")}` : ""}): ${name};\n`,
+    ]),
+    "}\n",
+    `export declare const ${name}: {\n`,
+    `  /** Starts a new ${name}: every cell at its initial value, and no signal fired. */\n`,
+    `  start(): ${name};\n`,
+    `  /** Parses a stored snapshot, the JSON of any ${name} value. Throws a TypeError naming the first bad path. */\n`,
+    `  parse(snapshot: unknown): ${name};\n`,
+    "};\n",
+  ];
+};
+
+/** A reactor file names only its own types, so the projection imports nothing. */
+export const declarations = (module: Module): readonly Piece[] => {
+  const printing = printer(module.uri, new Map());
+  return [
+    ...module.types.flatMap((type) => typeDecl(printing, type)),
+    ...module.machines.flatMap((value) => machine(printing, value)),
+  ];
+};
+
 /** The runtime tables, closed over every type the module decodes, so its JavaScript imports only runtime.ts. */
 export const compiled = (module: Module): {
   readonly types: Types;
@@ -180,4 +238,18 @@ export const program = (uri: string, module: Module): Program<undefined> => {
     },
     exports: exported.map(({ name, binding }) => [name, binding] as const),
   };
+};
+
+/** The compile path only; no host-only diagnostics, since representability is a language rule. */
+export const host: HostLanguage = {
+  extension: ".reactor",
+  host: (source, uri) => {
+    const checked = checkSource(source, { uri });
+    if (!checked.success) return unhosted(checked.errors);
+    return {
+      declarations: declarations(checked.value),
+      javascript: () => emitModule(program(uri, checked.value)),
+      diagnostics: [],
+    };
+  },
 };
