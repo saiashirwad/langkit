@@ -202,7 +202,16 @@ try {
       "restored hover must recover",
     );
   }
-  const hosted = [
+  type Hosted = {
+    readonly consumer: string;
+    readonly anchor: string;
+    readonly offset: number;
+    readonly require: readonly string[];
+    readonly guest?: string;
+    readonly binder?: string;
+    readonly binderOffset?: number;
+  };
+  const hosted: readonly Hosted[] = [
     {
       consumer: "examples/typescript/toy.ts",
       anchor: "import main",
@@ -263,8 +272,50 @@ try {
       guest: "examples/schema/blog.schema",
       binder: "title,\n      .featured",
     },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "cart.checkout(",
+      offset: 5,
+      require: [
+        "(method) Order.Cart.checkout(event: {\n    readonly address: Address;\n}): Order.Checkout",
+        "Cart |> on checkout -> Checkout",
+      ],
+      guest: "examples/machine/checkout.machine",
+      binder: "checkout -> Checkout",
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "Order.start({ items: [] })",
+      offset: 6,
+      require: ["start(data: {\n    readonly items: readonly LineItem[];\n}): Order.Cart"],
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "paid.cancel({ reason",
+      offset: 13,
+      require: ["(property) reason: CancelReason"],
+      guest: "examples/machine/checkout.machine",
+      binder: "cancel(reason : CancelReason)",
+      binderOffset: 7,
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "shipped.items.length",
+      offset: 8,
+      require: ["(property) Order.Shipped.items: readonly LineItem[]"],
+      guest: "examples/machine/checkout.machine",
+      binder: "items : [LineItem], address : Address }",
+    },
+    {
+      consumer: "examples/typescript/checkout.ts",
+      anchor: "shipped.carrier",
+      offset: 8,
+      require: ["(property) Order.Shipped.carrier: Carrier"],
+      guest: "examples/machine/checkout.machine",
+      binder: "carrier : Carrier, tracking : String }",
+    },
   ];
-  for (const { consumer, anchor, offset, require, guest, binder } of hosted) {
+  for (const { consumer, anchor, offset, require, guest, binder, binderOffset = 0 } of hosted) {
     const text = readFileSync(join(root, consumer), "utf8");
     const textDocument = { uri: pathToFileURL(join(root, consumer)).href };
     send({
@@ -278,6 +329,10 @@ try {
     const at = position(text, probe);
     const hover = observe(probe, await request("textDocument/hover", { textDocument, position: at }));
     validate(probe, hover);
+    if (guest === undefined || binder === undefined) {
+      console.log(`Real LSP ${consumer}: hover ${JSON.stringify(hover.text)}`);
+      continue;
+    }
     const definitions = await request("textDocument/definition", { textDocument, position: at });
     assert.ok(Array.isArray(definitions), `${consumer}: invalid definition result`);
     const targets = definitions.map((location: unknown) => {
@@ -286,7 +341,7 @@ try {
       record(range, `${consumer}: invalid definition range`);
       return { uri: location.targetUri ?? location.uri, start: range.start };
     });
-    const binding: Probe = { id: guest, method: "hover", anchor: binder, offset: 0, require: [] };
+    const binding: Probe = { id: guest, method: "hover", anchor: binder, offset: binderOffset, require: [] };
     assert.deepEqual(
       targets,
       [{
