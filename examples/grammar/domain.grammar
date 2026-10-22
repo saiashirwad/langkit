@@ -1,0 +1,73 @@
+grammar Domain
+
+skip = /\s+/ | /\/\/[^\r\n]*/
+word = /[a-zA-Z_][a-zA-Z_0-9]*/
+
+token Path = /"[^"\\\r\n]*"/
+
+File = imports:Import* declarations:Declaration*
+
+Import = "import" ~ "{" names:Name sepEndBy "," "}" "from" path:Path
+
+Declaration =
+  | #brand "brand" ~ name:Name "=" underlying:Name
+  | #type "type" ~ name:Name "=" body:TypeBody
+  | #machine "machine" ~ name:Name "{" items:MachineItem* "}"
+  | #system "system" ~ name:Name "=" parts:Parts clauses:SystemClause*
+
+TypeBody =
+  | #record fields:Fields
+  | #union members:Member sepBy1 "|"
+
+Member = name:Name fields:Fields?
+
+Fields = "{" Field sepEndBy "," "}"
+
+Field = name:FieldName ":" ~ type:DataType
+
+FieldName = name:(ident | "state")
+
+DataType = precedence {
+  postfix "?"
+  atom
+    | #named name:Name
+    | #list "[" element:DataType "]"
+}
+
+MachineItem =
+  | #event sync:"sync"? "event" ~ name:Name payload:("(" Field sepEndBy "," ")")?
+  | #state marker:Marker? "state" ~ name:Name entries:("=" "{" Entry sepEndBy "," "}")? on:Clause*
+
+Marker = role:("initial" | "final")
+
+Entry =
+  | #spread "..." record:Name
+  | #field field:Field
+
+Clause = "|>" ~ "on" event:Name "->" target:Name
+
+Parts = "{" components:Part sepEndBy "," "}"
+
+Part = name:Name ":" machine:Name
+
+SystemClause =
+  | #sync "|>" "sync" ~ first:Port "=" rest:Port sepBy1 "="
+  | #fair "|>" "fair" ~ component:Name
+  | #property "|>" "property" ~ name:Name "=" claim:Claim
+
+Port = component:Name "." event:Name
+
+Claim =
+  | #never "never" formula:Formula
+  | #possible "possible" formula:Formula
+  | #leadsTo from:Formula "~>" to:Formula
+
+Formula = precedence {
+  left "or"
+  left "and"
+  atom
+    | #is component:Name "is" ~ negated:"not"? states:Name sepBy1 (!"|>" "|")
+    | #group "(" inner:Formula ")"
+}
+
+Name = name:ident

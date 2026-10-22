@@ -74,6 +74,24 @@ const cases: readonly HostCase[] = [
     }],
   },
   {
+    language: "grammar (domain)",
+    consumer: "examples/typescript/domain-grammar.ts",
+    output:
+      "Shop order: Order, payment: Payment, warehouse: Fulfilment\norder.checkout = payment.authorize\norder.pay = payment.capture = warehouse.reserve\norder.refund = payment.refund\n",
+    misuses: [{
+      claim: "a sync clause's ports after the first are a non-empty tuple",
+      original: "[clause.first, ...clause.rest].map(show)",
+      replacement: "[clause.first, ...clause.rest[5]].map(show)",
+      code: "TS2488",
+    }],
+    guestErrors: [{
+      file: "examples/grammar/domain.grammar",
+      source: "grammar Domain\nFile = imports:Import*\nImport = path:ident\nUnused = name:ident\n",
+      at: "Unused",
+      message: "Unused rule: Unused is not reachable from File",
+    }],
+  },
+  {
     language: "advanced",
     consumer: "examples/typescript/advanced.ts",
     output: "The answer is:\n49\n49 10 20 2 20 true 7\n",
