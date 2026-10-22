@@ -14,7 +14,6 @@ import {
   regex,
   sepBy1,
 } from "langkit/parse";
-import { guarded } from "./runtime.ts";
 
 export type Name = { readonly name: string; readonly span: Span; };
 
@@ -207,7 +206,7 @@ const file: Parser<File> = lex.complete(parser(function*(): Generator<Parser<unk
   return { name: id, items: yield* many(item) };
 }));
 
-export const parse = (source: string): Result<File> => guarded(() => parseResult(file, source));
+export const parse = (source: string): Result<File> => parseResult(file, source);
 
 const words = /[A-Za-z_][A-Za-z0-9_]*/;
 

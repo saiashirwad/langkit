@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       parserator:
-        specifier: 0.4.0
-        version: 0.4.0
+        specifier: link:../parserator
+        version: link:../parserator
       vscode-languageserver:
         specifier: ^10.1.2
         version: 10.1.2
@@ -272,10 +272,6 @@ packages:
     resolution: {integrity: sha512-bepx0fB11GSZ+1N9eDpJWfA+NtqGyy07WwIfRFTYDaTMcBnT6yhTLUGfmZ6IJJvlEx5pi6b3uphTAWP1d7JiHw==}
     hasBin: true
 
-  parserator@0.4.0:
-    resolution: {integrity: sha512-4j/YdGD8qaDtqiOcyjUvvyKRySSu0ZOX9hi4IvegLnYv3Ev4n5B4sEw6wCbrv5tUB4SZEYaMtaIs3IRIGZCtQA==}
-    engines: {node: '>=22'}
-
   typescript@7.1.0-beta:
     resolution: {integrity: sha512-cjWjZAJDsmZzsNC5GwHNlW0YPM65jZa5oR0KyQcYX3KSVIfTvtBq//vewISyatKk4OLi5grZjHhIVE9fdrw1UQ==}
     engines: {node: '>=16.20.0'}
@@ -448,8 +444,6 @@ snapshots:
       '@dprint/linux-x64-musl': 0.62.0
       '@dprint/win32-arm64': 0.62.0
       '@dprint/win32-x64': 0.62.0
-
-  parserator@0.4.0: {}
 
   typescript@7.1.0-beta:
     optionalDependencies:

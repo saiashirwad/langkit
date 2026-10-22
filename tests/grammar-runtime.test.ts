@@ -138,7 +138,7 @@ test("deep nesting is a diagnostic at parse time, not a crash", () => {
   const parse = parser(`${header}E = #group "(" e:E ")" | #leaf n:ident`);
   const result = parse(`${"(".repeat(50_000)}x${")".repeat(50_000)}`);
   assert.ok(!result.success);
-  assert.equal(result.errors[0].message, "Nesting is too deep to parse");
+  assert.equal(result.errors[0].message, "Fatal: input nests too deeply to parse");
   assert.ok(parse("((x))").success);
 });
 

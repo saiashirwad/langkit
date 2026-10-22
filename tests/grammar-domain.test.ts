@@ -170,5 +170,5 @@ test("deeply nested types parse, and nesting past the stack is a diagnostic, not
   assert.ok(generated(nested(100)).success);
   const deep = generated(nested(50_000));
   assert.ok(!deep.success);
-  assert.equal(deep.errors[0].message, "Nesting is too deep to parse");
+  assert.equal(deep.errors[0].message, "Fatal: input nests too deeply to parse");
 });

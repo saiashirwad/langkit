@@ -8,7 +8,6 @@ import { facts, type Type } from "./grammar-facts.ts";
 import { type Checked, ruleId } from "./grammar-model.ts";
 import { derive } from "./grammar-shape.ts";
 import * as S from "./grammar-syntax.ts";
-import { guarded } from "./runtime.ts";
 
 const describe = (finding: Finding, grammar: Checked): Diagnostic => {
   const name = (id: number) => grammar.rules[id]!.name;
@@ -60,11 +59,10 @@ export const elaborate = (file: S.File): Elaborated => {
 
 const bySpan = (a: Diagnostic, b: Diagnostic): number => (a.span?.start ?? 0) - (b.span?.start ?? 0);
 
-const elaborated = (source: string): Result<Elaborated> =>
-  guarded(() => {
-    const parsed = S.parse(source);
-    return parsed.success ? { success: true, value: elaborate(parsed.value) } : parsed;
-  });
+const elaborated = (source: string): Result<Elaborated> => {
+  const parsed = S.parse(source);
+  return parsed.success ? { success: true, value: elaborate(parsed.value) } : parsed;
+};
 
 /** The compile path: syntax, names, node types, then the grammar audit. Every finding is an error. */
 export const checkSource = (source: string): Result<Checked> => {

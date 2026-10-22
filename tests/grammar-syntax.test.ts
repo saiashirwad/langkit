@@ -53,5 +53,5 @@ test("a syntax error is a diagnostic at its offset", () => {
 test("deep nesting is a diagnostic, not a crash", () => {
   const parsed = parse(`grammar G\nA = ${"(".repeat(20_000)}"a"${")".repeat(20_000)}\n`);
   assert.ok(!parsed.success);
-  assert.equal(parsed.errors[0].message, "Nesting is too deep to parse");
+  assert.equal(parsed.errors[0].message, "Fatal: input nests too deeply to parse");
 });

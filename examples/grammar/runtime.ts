@@ -20,18 +20,6 @@ import { makeParser, type Reply, replyFailure, replySuccess, runParser, type Sou
 import { memoRules } from "./grammar-analysis.ts";
 import { type Expr, type Level, type Operator, type RuleId, ruleId, type Seq, type Wire } from "./grammar-model.ts";
 
-/** Deep nesting overflows the stack of a recursive parser; the input is at fault, so it is a diagnostic. */
-export const guarded = <A>(parse: () => Result<A>): Result<A> => {
-  try {
-    return parse();
-  } catch (error) {
-    if (error instanceof RangeError && /call stack/i.test(error.message)) {
-      return { success: false, errors: [{ message: "Nesting is too deep to parse", context: [] }] };
-    }
-    throw error;
-  }
-};
-
 /** A parsed value and where its last token ended, or -1 when it consumed nothing. Node spans are built from it. */
 type Cell = { readonly v: unknown; readonly e: number; };
 const nothing: Cell = { v: undefined, e: -1 };
@@ -246,5 +234,5 @@ export const define = (grammar: Wire): Parsers => {
   });
 
   const program = lex.complete(table[0]!.map((cell) => cell.v));
-  return { parse: (source) => guarded(() => parseResult(program, source)) };
+  return { parse: (source) => parseResult(program, source) };
 };
