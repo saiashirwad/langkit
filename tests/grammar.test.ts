@@ -1,6 +1,9 @@
 import { project } from "langkit/host";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { declarations } from "../examples/grammar/grammar-host.ts";
 import { checkSource } from "../examples/grammar/grammar.ts";
@@ -415,4 +418,32 @@ Value = Decl | "(" Value ")"
     "export type Program = readonly Decl[];",
     "export type Value = Decl;",
   ]);
+});
+
+const cli = (path: string) =>
+  spawnSync(process.execPath, ["examples/grammar/grammar.ts", path], {
+    cwd: join(import.meta.dirname, ".."),
+    encoding: "utf8",
+  });
+
+test("the CLI summarizes a good grammar and exits 0", () => {
+  const result = cli("examples/grammar/domain.grammar");
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /^Domain: 20 rules, 20 keywords\n/);
+  assert.match(result.stdout, /Formula +is \| group \| binary\n/);
+});
+
+test("the CLI prints each diagnostic with its line and exits nonzero", () => {
+  const directory = mkdtempSync(join(tmpdir(), "grammar-"));
+  try {
+    const path = join(directory, "bad.grammar");
+    writeFileSync(path, "grammar G\nA = A \"x\"\n");
+    const result = cli(path);
+    assert.equal(result.status, 1);
+    assert.equal(result.stdout, "");
+    assert.ok(result.stderr.includes(`${path}: line 2, column 5: Left recursion: A -> A.`), result.stderr);
+    assert.ok(result.stderr.includes("A = A \"x\"\n    ^"), result.stderr);
+  } finally {
+    rmSync(directory, { recursive: true });
+  }
 });
