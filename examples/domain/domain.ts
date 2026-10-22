@@ -22,7 +22,7 @@ import { elaborateMachine, type MachineDeclaration } from "./machine.ts";
 import { key, lower } from "./product.ts";
 import { attempt, type Binder, error, facts, reserved, type Scope, type Type } from "./scope.ts";
 import { elaborateSystem, type SystemDeclaration } from "./system.ts";
-import { checkLimit, diagnose, fails, renderTrace, tooLarge } from "./trace.ts";
+import { checkLimit, diagnose, fails, renderTrace, tooLarge, verdict } from "./trace.ts";
 import { definitionKind, elaborateTypes, type TypeDeclaration, typeNames } from "./types.ts";
 
 const language = { extension: "domain", imports } as const;
@@ -216,22 +216,6 @@ export const checkSource = (source: string, options: ModuleOptions = {}): Result
   return result.success ? { success: true, value: result.value.root } : routed(graph.value, result.errors);
 };
 
-export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
-  const lexical = highlight(source, tokens);
-  const graph = loadModules(source, options, language);
-  if (!graph.success) return unanalyzed(graph.errors, lexical);
-  let foreign: readonly Definition<Type>[] = [];
-  const { analysis } = facts.collect(link(graph.value).map((linking) => (foreign = linking.foreign)), lexical);
-  const referenced = new Set(analysis.references.map(({ id }) => id));
-  return {
-    ...analysis,
-    diagnostics: analysis.diagnostics.map((error) => graph.value.routeDiagnostic(error)),
-    definitions: [...analysis.definitions, ...foreign.filter(({ id }) => referenced.has(id))],
-    sources: graph.value.sources,
-    dependencyUris: graph.value.dependencyUris,
-  };
-};
-
 /**
  * The editor's exploration budget, in reachable states. On a synthetic worst case 21k states explore in 6ms and
  * one `~>` takes 26ms; every other edit reuses the cached outcome.
@@ -265,6 +249,40 @@ export const verify = (module: Module, budget: number): readonly Verified[] =>
       : result.findings.map((finding) => diagnose(system, product, finding, result.states));
     return { system, outcome: result, diagnostics };
   });
+
+/**
+ * The LSP entry, called by `serve` with `{ uri, read }` from open buffers: facts from the root, diagnostics routed
+ * through the graph, a definition with `uri` for every imported name the root references, and, once the file is
+ * structurally clean, `verify` under the editor budget with each property's verdict in its hover.
+ */
+export const analyze = (source: string, options: ModuleOptions = {}): Analysis<Type> => {
+  const lexical = highlight(source, tokens);
+  const graph = loadModules(source, options, language);
+  if (!graph.success) return unanalyzed(graph.errors, lexical);
+  let linking: Linking | undefined;
+  const { result, analysis } = facts.collect(link(graph.value).map((value) => (linking = value)), lexical);
+  const referenced = new Set(analysis.references.map(({ id }) => id));
+  const verified = result.success && linking ? verify(linking.root, editorBudget) : [];
+  const verdicts = new Map(
+    verified.flatMap(({ system, outcome }) =>
+      system.properties.map(({ name }, index) => [name.span.start, verdict(outcome, index)] as const)
+    ),
+  );
+  return {
+    ...analysis,
+    diagnostics: [
+      ...analysis.diagnostics.map((error) => graph.value.routeDiagnostic(error)),
+      ...verified.flatMap(({ diagnostics }) => diagnostics),
+    ],
+    types: analysis.types.map((value) => {
+      const found = verdicts.get(value.span.start);
+      return found === undefined ? value : { ...value, type: `${value.type}\n${found}` };
+    }),
+    definitions: [...analysis.definitions, ...(linking?.foreign ?? []).filter(({ id }) => referenced.has(id))],
+    sources: graph.value.sources,
+    dependencyUris: graph.value.dependencyUris,
+  };
+};
 
 const transitions = (machine: Machine): number => machine.states.reduce((count, { on }) => count + on.length, 0);
 
