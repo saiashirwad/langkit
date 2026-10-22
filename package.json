@@ -38,7 +38,8 @@
     "domain:lsp": "node examples/domain/domain-lsp.ts --stdio",
     "domain:bench": "node --expose-gc tools/domain-bench.ts",
     "grammar": "node examples/grammar/grammar.ts",
-    "grammar:lsp": "node examples/grammar/grammar-lsp.ts --stdio"
+    "grammar:lsp": "node examples/grammar/grammar-lsp.ts --stdio",
+    "grammar:bench": "node --expose-gc tools/grammar-bench.ts"
   },
   "dependencies": {
     "parserator": "0.4.0",

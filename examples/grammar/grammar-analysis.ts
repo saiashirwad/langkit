@@ -10,12 +10,12 @@ import {
   walk,
 } from "./grammar-model.ts";
 
-export type Shadow = "always succeeds" | "same alternative" | "prefix" | "commits";
+type Shadow = "always succeeds" | "same alternative" | "prefix" | "commits";
 
 export type Finding =
   | { readonly kind: "left recursion"; readonly cycle: readonly RuleId[]; readonly sites: readonly Span[]; }
   | { readonly kind: "nullable loop"; readonly span: Span; readonly loop: "repeat" | "separated"; }
-  | { readonly kind: "shadowed"; readonly alt: Span; readonly by: Span; readonly why: Shadow; }
+  | { readonly kind: "shadowed"; readonly alt: Span; readonly why: Shadow; }
   | { readonly kind: "unused rule"; readonly rule: RuleId; }
   | { readonly kind: "unused token"; readonly name: string; readonly span: Span; };
 
@@ -36,7 +36,7 @@ const fixpoint = (grammar: Grammar<object>, step: (state: readonly boolean[], ru
 };
 
 /** Can `e` succeed without consuming input? Exact without predicates; with them, a sound over-approximation. */
-export const nullable = (e: Expr<object>, rules: readonly boolean[]): boolean => {
+const nullable = (e: Expr<object>, rules: readonly boolean[]): boolean => {
   switch (e.t) {
     case "lit":
     case "re":
@@ -65,7 +65,7 @@ export const nullableRules = (grammar: Grammar<object>): readonly boolean[] =>
   fixpoint(grammar, (state, id) => nullable(grammar.rules[id]!.body, state));
 
 /** Does `e` succeed at every input position? Exact: shadowing relies on it. */
-export const total = (e: Expr<object>, rules: readonly boolean[]): boolean => {
+const total = (e: Expr<object>, rules: readonly boolean[]): boolean => {
   switch (e.t) {
     case "lit":
     case "re":
@@ -90,7 +90,7 @@ export const total = (e: Expr<object>, rules: readonly boolean[]): boolean => {
   }
 };
 
-export const totalRules = (grammar: Grammar<object>): readonly boolean[] =>
+const totalRules = (grammar: Grammar<object>): readonly boolean[] =>
   fixpoint(grammar, (state, id) => total(grammar.rules[id]!.body, state));
 
 /** Rules `e` may call before consuming any input. */
@@ -182,7 +182,7 @@ const cycleIn = (component: readonly RuleId[], edges: readonly (readonly Site[])
   throw new Error("component without a cycle");
 };
 
-export const canon = (e: Expr<object>): string => {
+const canon = (e: Expr<object>): string => {
   switch (e.t) {
     case "lit":
       return `${e.kw ? "k" : "s"}${JSON.stringify(e.text)}`;
@@ -345,7 +345,7 @@ export const audit = (grammar: Checked): readonly Finding[] => {
           for (let i = 0; i < j; i++) {
             const why = dominates(context, e.alts[i]!, later);
             if (why) {
-              findings.push({ kind: "shadowed", alt: later.span, by: e.alts[i]!.span, why });
+              findings.push({ kind: "shadowed", alt: later.span, why });
               return;
             }
           }

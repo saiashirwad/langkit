@@ -96,7 +96,7 @@ export type Wire = Grammar<object>;
 export const wire = (grammar: Checked): Wire =>
   JSON.parse(JSON.stringify(grammar, (key, value: unknown) => key === "span" ? undefined : value)) as Wire;
 
-export const children = <A>(e: Expr<A>): readonly Expr<A>[] => {
+const children = <A>(e: Expr<A>): readonly Expr<A>[] => {
   switch (e.t) {
     case "seq":
       return e.items.map((item) => item.expr);
@@ -123,5 +123,3 @@ export const walk = <A>(e: Expr<A>, visit: (e: Expr<A>) => void): void => {
   visit(e);
   for (const child of children(e)) walk(child, visit);
 };
-
-export const isNode = <A>(seq: Seq<A>): seq is Seq<A> & { readonly node: string; } => seq.node !== undefined;
