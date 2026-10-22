@@ -3,7 +3,7 @@ import type { ImportParser } from "./advanced-modules.ts";
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*|--[^\r\n]*)*/),
-  identifier: regex(/[a-zA-Z_]\w*/),
+  identifier: /[a-zA-Z_]\w*/,
   keywords: ["import"],
 });
 const imports = parser(function*() {

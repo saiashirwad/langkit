@@ -128,7 +128,7 @@ const keywords = [
 const reserved: ReadonlySet<string> = new Set(keywords);
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
-  identifier: regex(words),
+  identifier: words,
   keywords,
 });
 const { keyword, symbol, identifier } = lex;
@@ -390,9 +390,9 @@ const expression: Parser<Expr> = recursive<Expr>((expr) => {
       }),
     );
   const operators = precedence(calls, [
-    { associativity: "left", operators: [binary("*"), binary("/")] },
-    { associativity: "left", operators: [binary("+"), binary("-")] },
-    { associativity: "left", operators: [binary(">"), binary("==")] },
+    { associativity: "left", operator: choice(binary("*"), binary("/")) },
+    { associativity: "left", operator: choice(binary("+"), binary("-")) },
+    { associativity: "left", operator: choice(binary(">"), binary("==")) },
   ]);
   return choice(binding, lambda, conditional, match, operators);
 });

@@ -136,7 +136,7 @@ const keywords = [
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
-  identifier: regex(words),
+  identifier: words,
   keywords,
 });
 
