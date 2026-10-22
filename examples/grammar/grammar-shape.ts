@@ -274,7 +274,7 @@ export const derive = (grammar: Checked): { readonly grammar: Checked; readonly 
 /** A precedence rule builds `Binary`, `Prefix` and `Postfix` nodes over itself, one interface each kind of operator. */
 const operatorVariants = (rule: Rule<Located>, id: RuleId): readonly Variant<Located>[] => {
   const self: Ty = { t: "rule", id };
-  const field = (label: string, ty: Ty): Field<Located> => ({ label, ty, span: rule.span });
+  const field = (label: string, ty: Ty): Field<Located> => ({ label, ty, derived: true, span: rule.span });
   const variant = (kind: string, assocs: readonly Assoc[], operands: readonly Field<Located>[]) => {
     const operators = rule.pratt!.filter((level) => assocs.includes(level.assoc)).flatMap((level) =>
       level.ops.map((op) => op.text)

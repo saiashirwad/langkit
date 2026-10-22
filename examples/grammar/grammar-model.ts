@@ -56,7 +56,8 @@ export type Operator<A> = A & { readonly text: string; readonly kw: boolean; };
 export type Assoc = "left" | "right" | "none" | "prefix" | "postfix";
 export type Level<A> = { readonly assoc: Assoc; readonly ops: readonly Operator<A>[]; };
 
-export type Field<A> = A & { readonly label: string; readonly ty: Ty; };
+/** `derived` marks the fields a precedence rule adds, which have no label in the grammar to point at. */
+export type Field<A> = A & { readonly label: string; readonly ty: Ty; readonly derived?: true; };
 /** One interface of the projection: the node `kind` it builds and its fields. */
 export type Variant<A> = A & {
   readonly iface: string;
