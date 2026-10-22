@@ -35,7 +35,8 @@
     "schema": "node examples/schema/schema.ts",
     "schema:lsp": "node examples/schema/schema-lsp.ts --stdio",
     "domain": "node examples/domain/domain.ts",
-    "domain:lsp": "node examples/domain/domain-lsp.ts --stdio"
+    "domain:lsp": "node examples/domain/domain-lsp.ts --stdio",
+    "domain:bench": "node --expose-gc tools/domain-bench.ts"
   },
   "dependencies": {
     "parserator": "0.4.0",
