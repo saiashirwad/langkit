@@ -84,7 +84,7 @@ const typeOnly = (printer: Printer, type: TypeDecl): readonly Piece[] => {
         ...type.members.flatMap((member, index): readonly Piece[] => [
           index ? " | " : "",
           "\"",
-          verbatim(member.name, member.span),
+          verbatim(member.name.name, member.name.span),
           "\"",
         ]),
         ";\n",
@@ -401,7 +401,7 @@ export const compiled = (module: Module): {
       case "brand":
         return { kind: "brand", name: type.name.name, scalar: type.underlying };
       case "enum":
-        return { kind: "enum", name: type.name.name, members: type.members.map((member) => member.name) };
+        return { kind: "enum", name: type.name.name, members: type.members.map(({ name }) => name.name) };
       case "tagged":
         return {
           kind: "tagged",

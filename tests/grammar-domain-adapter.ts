@@ -10,7 +10,7 @@ const dataType = (type: G.DataType): D.TypeExpr => {
     case "named":
       return { kind: "named", name: name(type.name), span: type.span };
     case "list":
-      return { kind: "list", element: dataType(type.element), span: type.span };
+      return { kind: "list", element: dataType(type.element), max: undefined, span: type.span };
     case "postfix":
       return { kind: "optional", inner: dataType(type.operand), span: type.span };
   }

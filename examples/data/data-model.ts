@@ -17,7 +17,8 @@ export type DataType =
   | { readonly kind: "scalar"; readonly name: Scalar; }
   /** A declared type, by key so a record may contain itself through a list. `name` is for printing. */
   | { readonly kind: "named"; readonly key: TypeKey; readonly name: string; }
-  | { readonly kind: "list"; readonly element: DataType; }
+  /** `[Step; ..3]`; `[Step]` has an infinite `max`, so no reader can forget a list may be bounded. */
+  | { readonly kind: "list"; readonly element: DataType; readonly max: number; }
   | { readonly kind: "optional"; readonly inner: Present; };
 
 /** `String??` would project to `string | null | null`, so an optional never wraps an optional. */
@@ -37,7 +38,10 @@ type Declared = { readonly id: symbol; readonly key: TypeKey; readonly uri: stri
  */
 export type Brand = Declared & { readonly kind: "brand"; readonly underlying: Scalar; };
 
-export type Enum = Declared & { readonly kind: "enum"; readonly members: readonly Name[]; };
+/** `id` is the member's LSP identity, which a reactor pattern like `Half` references. */
+export type EnumMember = { readonly id: symbol; readonly name: Name; };
+
+export type Enum = Declared & { readonly kind: "enum"; readonly members: readonly EnumMember[]; };
 
 export type Variant = { readonly id: symbol; readonly name: Name; readonly fields: readonly Field[]; };
 
@@ -67,7 +71,7 @@ export const showType = (type: DataType): string => {
     case "named":
       return type.name;
     case "list":
-      return `[${showType(type.element)}]`;
+      return `[${showType(type.element)}${type.max === Infinity ? "" : `; ..${type.max}`}]`;
     case "optional":
       return `${showType(type.inner)}?`;
   }
@@ -86,7 +90,7 @@ export const showTypeDecl = (type: TypeDecl, style: VariantStyle): string => {
     case "brand":
       return `brand ${type.name.name} = ${type.underlying}`;
     case "enum":
-      return `type ${type.name.name} = ${type.members.map((member) => member.name).join(" | ")}`;
+      return `type ${type.name.name} = ${type.members.map(({ name }) => name.name).join(" | ")}`;
     case "tagged":
       return `type ${type.name.name} = ${
         type.variants.map(({ name, fields }) => fields.length ? `${name.name}${payload(fields)}` : name.name)
@@ -104,15 +108,21 @@ export const same = (a: DataType, b: DataType): boolean => {
     case "named":
       return b.kind === "named" && a.key === b.key;
     case "list":
-      return b.kind === "list" && same(a.element, b.element);
+      return b.kind === "list" && a.max === b.max && same(a.element, b.element);
     case "optional":
       return b.kind === "optional" && same(a.inner, b.inner);
   }
 };
 
-/** Target accepts a value of source type: equal, or `T` into `T?`. Lists are invariant in their element. */
-export const assignable = (from: DataType, to: DataType): boolean =>
-  same(from, to) || (to.kind === "optional" && same(from, to.inner));
+/**
+ * Target accepts a value of source type: equal; `T` or `T?` into `T?`; `[T; ..n]` into `[T; ..m]` when n <= m.
+ * Lists are invariant in their element.
+ */
+export const assignable = (from: DataType, to: DataType): boolean => {
+  if (to.kind === "optional") return assignable(from.kind === "optional" ? from.inner : from, to.inner);
+  if (from.kind === "list" && to.kind === "list") return from.max <= to.max && same(from.element, to.element);
+  return same(from, to);
+};
 
 /** The fields a value of this type carries, across every variant. */
 export const fieldsOf = (type: TypeDecl): readonly Field[] => {

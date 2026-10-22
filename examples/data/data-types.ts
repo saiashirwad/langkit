@@ -3,6 +3,7 @@ import { create } from "langkit/analysis";
 import {
   type DataType,
   type Enum,
+  type EnumMember,
   type Field,
   isScalar,
   type Name,
@@ -17,12 +18,17 @@ import {
   type VariantStyle,
 } from "./data-model.ts";
 
-/** `String`, `[LineItem]`, `Address?`. A name resolves to a scalar or a declared type. */
+/** `String`, `[LineItem]`, `[Step; ..3]`, `Address?`. A name resolves to a scalar or a declared type. */
 export type TypeExpr =
   & { readonly span: Span; }
   & (
     | { readonly kind: "named"; readonly name: Name; }
-    | { readonly kind: "list"; readonly element: TypeExpr; }
+    /** `max` keeps where the bound was written, so `..0` is reported at the digits. */
+    | {
+      readonly kind: "list";
+      readonly element: TypeExpr;
+      readonly max: { readonly value: number; readonly span: Span; } | undefined;
+    }
     | { readonly kind: "optional"; readonly inner: TypeExpr; }
   );
 
@@ -151,8 +157,12 @@ export const resolveType = (scope: Scope, type: TypeExpr): Check<DataType> =>
         yield* facts.reference(binder, type.name.span);
         return { kind: "named", key: binder.key, name };
       }
-      case "list":
-        return { kind: "list", element: yield* resolveType(scope, type.element) };
+      case "list": {
+        const element = yield* resolveType(scope, type.element);
+        if (type.max === undefined) return { kind: "list", element, max: Infinity };
+        if (type.max.value < 1) return yield* error(type.max, "A bounded list holds at least one element");
+        return { kind: "list", element, max: type.max.value };
+      }
       case "optional": {
         const inner = yield* resolveType(scope, type.inner);
         if (inner.kind === "optional") return yield* error(type, "A type is optional at most once");
@@ -218,14 +228,13 @@ export const collect = (
 
 const enumeration = (declared: Omit<Enum, "kind" | "members">, members: readonly Member[]): Check<Enum> =>
   check(function*() {
-    for (const member of members) {
-      yield* facts.define(
-        { id: Symbol(member.name.name), name: member.name.name, type: declared.name.name },
-        member.name.span,
-        "enumMember",
-      );
+    const enumMembers: EnumMember[] = [];
+    for (const { name } of members) {
+      const member: EnumMember = { id: Symbol(name.name), name };
+      yield* facts.define({ id: member.id, name: name.name, type: declared.name.name }, name.span, "enumMember");
+      enumMembers.push(member);
     }
-    return { kind: "enum", ...declared, members: members.map((member) => member.name) };
+    return { kind: "enum", ...declared, members: enumMembers };
   });
 
 /**

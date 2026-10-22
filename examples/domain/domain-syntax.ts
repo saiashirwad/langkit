@@ -125,7 +125,7 @@ const dataType: Parser<TypeExpr> = parser(function*(): Generator<Parser<unknown>
       const open = yield* at(symbol("["));
       const element = yield* dataType;
       const close = yield* at(symbol("]"));
-      return { kind: "list", element, span: { start: open.span.start, end: close.span.end } };
+      return { kind: "list", element, max: undefined, span: { start: open.span.start, end: close.span.end } };
     }),
   );
   for (let mark = yield* optional(at(symbol("?"))); mark; mark = yield* optional(at(symbol("?")))) {
