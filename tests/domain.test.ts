@@ -6,12 +6,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { pathToFileURL } from "node:url";
-import { audit, finishing, reachable, unhandled } from "../examples/machine/graph.ts";
-import { host } from "../examples/machine/machine-host.ts";
-import type { Machine } from "../examples/machine/machine-model.ts";
-import { analyze, checkSource } from "../examples/machine/machine.ts";
+import { host } from "../examples/domain/domain-host.ts";
+import type { Machine, Module } from "../examples/domain/domain-model.ts";
+import { analyze, checkSource } from "../examples/domain/domain.ts";
+import { audit, finishing, reachable, unhandled } from "../examples/domain/graph.ts";
 
-const checkout = readFileSync(new URL("../examples/machine/checkout.machine", import.meta.url), "utf8");
+const checkout = readFileSync(new URL("../examples/domain/checkout.domain", import.meta.url), "utf8");
 
 const diagnose = (source: string) => {
   const result = checkSource(source);
@@ -22,21 +22,27 @@ const diagnose = (source: string) => {
   }));
 };
 
-const machineOf = (source: string): Machine => {
+const moduleOf = (source: string): Module => {
   const result = checkSource(source);
   assert.ok(result.success, result.success ? "" : result.errors.map(({ message }) => message).join("\n"));
   return result.value;
 };
 
+const machineOf = (source: string): Machine => moduleOf(source).machines[0]!;
+
 const base = [
-  "machine M",
+  "machine M {",
   "event go",
   "event done",
   "initial state Start |> on go -> Middle",
   "state Middle |> on done -> End",
   "final state End",
+  "}",
   "",
 ].join("\n");
+
+/** Appends an item to the machine's body. */
+const inside = (item: string, source = base) => source.replace(/}\n$/, `${item}\n}\n`);
 
 const edit = (original: string, replacement: string, source = base) => {
   assert.ok(source.includes(original), `${JSON.stringify(original)} is not in the source`);
@@ -65,7 +71,14 @@ const cases: readonly Case[] = [
     source: base + "type Box = { size : Strng }\n",
     message: "Unknown type: Strng",
     at: "Strng",
-    line: 7,
+    line: 8,
+  },
+  {
+    rule: "a machine used as a type",
+    source: base + "type Box = { m : M }\n",
+    message: "M is a machine, not a type",
+    at: "M",
+    line: 8,
   },
   {
     rule: "unknown record",
@@ -82,18 +95,25 @@ const cases: readonly Case[] = [
     line: 5,
   },
   {
-    rule: "duplicate declaration",
+    rule: "a state named like a top-level type",
     source: base + "type Start = Up | Down\n",
     message: "Duplicate declaration: Start",
     at: "Start",
-    line: 7,
+    line: 4,
+  },
+  {
+    rule: "a second declaration of a name",
+    source: base + "machine M { initial state Other }\n",
+    message: "Duplicate declaration: M",
+    at: "M",
+    line: 8,
   },
   {
     rule: "duplicate field",
     source: base + "type Box = { size : Int, size : Int }\n",
     message: "Duplicate field: Box.size",
     at: "size",
-    line: 7,
+    line: 8,
   },
   {
     rule: "duplicate field through a spread",
@@ -102,13 +122,13 @@ const cases: readonly Case[] = [
     at: "Box",
     line: 5,
   },
-  { rule: "duplicate event", source: base + "event go\n", message: "Duplicate event: go", at: "go", line: 7 },
+  { rule: "duplicate event", source: inside("event go"), message: "Duplicate event: go", at: "go", line: 7 },
   {
     rule: "duplicate enum member",
     source: base + "type Mode = Fast | Fast\n",
     message: "Duplicate member: Mode.Fast",
     at: "Fast",
-    line: 7,
+    line: 8,
   },
   {
     rule: "nondeterminism",
@@ -116,20 +136,6 @@ const cases: readonly Case[] = [
     message: "Start already handles go",
     at: "|> on go -> End",
     line: 4,
-  },
-  {
-    rule: "a second machine",
-    source: base + "machine Other\n",
-    message: "A .machine file declares one machine",
-    at: "Other",
-    line: 7,
-  },
-  {
-    rule: "no machine",
-    source: edit("machine M\n", ""),
-    message: "A .machine file declares one machine",
-    at: "",
-    line: 1,
   },
   {
     rule: "no initial state",
@@ -186,7 +192,7 @@ const cases: readonly Case[] = [
   },
   {
     rule: "an unreachable state",
-    source: base + "state Island |> on done -> End\n",
+    source: inside("state Island |> on done -> End"),
     message: "Unreachable state: Island; no path from Start",
     at: "Island",
     line: 7,
@@ -200,14 +206,14 @@ const cases: readonly Case[] = [
   },
   {
     rule: "a state that cannot finish",
-    source: edit("on done -> End", "on done -> End |> on go -> Loop", base + "state Loop |> on go -> Loop\n"),
+    source: edit("on done -> End", "on done -> End |> on go -> Loop", inside("state Loop |> on go -> Loop")),
     message: "Loop can never finish: no path to End",
     at: "Loop",
     line: 7,
   },
   {
     rule: "an unhandled event",
-    source: base + "event extra\n",
+    source: inside("event extra"),
     message: "No state handles extra",
     at: "extra",
     line: 7,
@@ -238,7 +244,7 @@ const cases: readonly Case[] = [
     source: base + "type string = Up | Down\n",
     message: "TypeScript cannot represent string, a reserved type name",
     at: "string",
-    line: 7,
+    line: 8,
   },
   {
     rule: "an event that is also a field",
@@ -252,26 +258,26 @@ const cases: readonly Case[] = [
     source: base + "type Box = { size : Int?? }\n",
     message: "A type is optional at most once",
     at: "Int??",
-    line: 7,
+    line: 8,
   },
 ];
 
 for (const { rule, source, message, at, line } of cases) {
-  test(`machine: ${rule} reports "${message}" at the guest text`, () => {
+  test(`domain: ${rule} reports "${message}" at the guest text`, () => {
     assert.deepEqual(diagnose(source), [{ message, at, line }]);
   });
 }
 
-test("machine: a typo in one clause is one diagnostic, not a cascade of unreachable states", () => {
+test("domain: a typo in one clause is one diagnostic, not a cascade of unreachable states", () => {
   assert.equal(diagnose(edit("-> End", "-> Edn")).length, 1);
 });
 
-test("machine: the checkout example and the base fixture are clean", () => {
+test("domain: the checkout example and the base fixture are clean", () => {
   assert.deepEqual(diagnose(checkout), []);
   assert.deepEqual(diagnose(base), []);
 });
 
-test("machine: a transition decides each target field once, and the payload wins over a carry", () => {
+test("domain: a transition decides each target field once, and the payload wins over a carry", () => {
   const { states } = machineOf(checkout);
   const fills = (state: string, event: string) =>
     states.find((value) => value.name.name === state)!.on.find((edge) => edge.event.name.name === event)!.fill
@@ -281,11 +287,12 @@ test("machine: a transition decides each target field once, and the payload wins
   assert.deepEqual(fills("Cart", "cancel"), ["reason:payload", "refundId:null"]);
 });
 
-test("machine: a spread field is the record's own field, so one binder serves every state", () => {
-  const { records, states } = machineOf(checkout);
-  const placed = records.find((record) => record.name.name === "Placed")!;
-  const paid = states.find((state) => state.name.name === "Paid")!;
-  assert.deepEqual(paid.data.slice(0, 2), placed.fields);
+test("domain: a spread field is the record's own field, so one binder serves every state", () => {
+  const { types, machines } = moduleOf(checkout);
+  const placed = types.find((type) => type.name.name === "Placed");
+  const paid = machines[0]!.states.find((state) => state.name.name === "Paid")!;
+  assert.equal(placed?.kind, "record");
+  if (placed?.kind === "record") assert.deepEqual(paid.data.slice(0, 2), placed.fields);
 });
 
 const described = (machine: Machine) =>
@@ -326,16 +333,17 @@ test("graph: finishing walks edges backwards from every final state", () => {
 });
 
 const hosted = (source: string) => {
-  const { declarations, diagnostics, javascript } = host.host(source, "file:///test.machine");
+  const { declarations, diagnostics, javascript } = host.host(source, "file:///test.domain");
   return { projection: project(declarations), diagnostics, javascript };
 };
 
 const gauge = [
-  "machine Gauge",
+  "machine Gauge {",
   "event record(samples : [Float?], ok : Bool)",
   "event reset",
   "initial state Idle = { samples : [Float?], ok : Bool } |> on record -> Idle |> on reset -> Done",
   "final state Done",
+  "}",
   "",
 ].join("\n");
 
@@ -353,7 +361,6 @@ test("host: each state projects to an interface whose methods are the legal even
       "    readonly refundId: string | null;",
       "  start(data: { readonly items: readonly LineItem[]; }): Order.Cart;",
       "  parse(snapshot: unknown): Order;",
-      "export default Order;",
     ]
   ) assert.ok(text.includes(expected), `${expected}\n---\n${text}`);
   assert.ok(!/interface Delivered \{[^}]*\(/.test(text), "a final state has no methods");
@@ -364,7 +371,7 @@ test("host: optionals, lists, payload-free events and a machine without data pro
   assert.ok(text.includes("readonly samples: readonly (number | null)[];"), text);
   assert.ok(text.includes("    reset(): Done;"), text);
   assert.ok(text.includes("  type Final = Done;"), text);
-  const { text: bare } = hosted("machine Loop\nevent tick\ninitial state On |> on tick -> On\n").projection;
+  const { text: bare } = hosted("machine Loop { event tick initial state On |> on tick -> On }\n").projection;
   assert.ok(bare.includes("  type Final = never;"), bare);
   assert.ok(bare.includes("  start(): Loop.On;"), bare);
 });
@@ -394,7 +401,7 @@ test("host: a checked file with errors is not hosted", () => {
   assert.deepEqual(diagnostics.map(({ message }) => message), ["Unknown state: Edn"]);
 });
 
-const scratch = realpathSync(mkdtempSync(join(tmpdir(), "machine-runtime-")));
+const scratch = realpathSync(mkdtempSync(join(tmpdir(), "domain-runtime-")));
 after(() => rmSync(scratch, { recursive: true, force: true }));
 
 type Instance = { readonly state: string; readonly [field: string]: unknown; };
@@ -404,12 +411,12 @@ type Runtime = {
 };
 
 let modules = 0;
-const load = async (source: string): Promise<Runtime> => {
+const load = async (source: string, name = "Order"): Promise<Runtime> => {
   const file = pathToFileURL(join(scratch, `module-${modules++}.mjs`));
   const { javascript, diagnostics } = host.host(source, file.href);
   assert.deepEqual(diagnostics, []);
   writeFileSync(file, javascript!());
-  return ((await import(file.href)) as { readonly default: Runtime; }).default;
+  return ((await import(file.href)) as Readonly<Record<string, Runtime>>)[name]!;
 };
 
 const fire = (value: Instance, event: string, payload?: unknown): Instance => {
@@ -556,7 +563,7 @@ test("runtime: JS callers cannot forge a value the types would refuse", async ()
 });
 
 test("runtime: Float, Bool, optional lists and payload-free events behave", async () => {
-  const Gauge = await load(gauge);
+  const Gauge = await load(gauge, "Gauge");
   const idle = Gauge.start({ samples: [1.5, null], ok: true });
   const next = fire(idle, "record", { samples: [2], ok: false });
   assert.deepEqual(JSON.parse(JSON.stringify(next)), { state: "Idle", samples: [2], ok: false });
@@ -573,7 +580,7 @@ const analysis = analyze(checkout);
 const at = (text: string, nth = 0) => {
   let index = -1;
   for (let seen = 0; seen <= nth; seen++) index = checkout.indexOf(text, index + 1);
-  assert.notEqual(index, -1, `${text} is not in checkout.machine`);
+  assert.notEqual(index, -1, `${text} is not in checkout.domain`);
   return index;
 };
 

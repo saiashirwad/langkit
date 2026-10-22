@@ -112,7 +112,7 @@ When a guest file imports another one, project the import as real TypeScript. ts
 | Language                      | Shows                                                                      |
 | ----------------------------- | -------------------------------------------------------------------------- |
 | [Schema](examples/schema)     | SQLite schemas and queries, with a runtime that TypeScript imports.        |
-| [Machine](examples/machine)   | State machines whose values TypeScript will only let you advance legally.  |
+| [Domain](examples/domain)     | State machines whose values TypeScript will only let you advance legally.  |
 | [Advanced](examples/advanced) | Data types, pattern matching, higher-rank types, and imports across files. |
 | [HM](examples/hm)             | Hindley–Milner inference.                                                  |
 | [Toy](examples/toy)           | The smallest end-to-end language.                                          |

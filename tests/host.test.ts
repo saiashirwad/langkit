@@ -27,7 +27,7 @@ type HostCase = {
   readonly guestErrors: readonly GuestError[];
 };
 
-const checkoutMachine = readFileSync(join(root, "examples/machine/checkout.machine"), "utf8");
+const checkoutDomain = readFileSync(join(root, "examples/domain/checkout.domain"), "utf8");
 
 const cases: readonly HostCase[] = [
   {
@@ -180,7 +180,7 @@ const cases: readonly HostCase[] = [
     }],
   },
   {
-    language: "machine",
+    language: "domain",
     consumer: "examples/typescript/checkout.ts",
     output: [
       "true true",
@@ -213,8 +213,8 @@ const cases: readonly HostCase[] = [
       },
     ],
     guestErrors: [{
-      file: "examples/machine/checkout.machine",
-      source: checkoutMachine.replace("on ship -> Shipped", "on ship -> Shiped"),
+      file: "examples/domain/checkout.domain",
+      source: checkoutDomain.replace("on ship -> Shipped", "on ship -> Shiped"),
       at: "Shiped",
       message: "Unknown state: Shiped",
     }],

@@ -18,7 +18,7 @@ import {
 
 export type Name = { readonly name: string; readonly span: Span; };
 
-/** `String`, `[LineItem]`, `Address?`. A name is resolved by the checker: scalar, enum, or record. */
+/** `String`, `[LineItem]`, `Address?`. A name resolves to a scalar or a declared type. */
 export type TypeExpr =
   & { readonly span: Span; }
   & (
@@ -29,36 +29,37 @@ export type TypeExpr =
 
 export type Field = { readonly name: Name; readonly type: TypeExpr; };
 
-/** A field list entry: a field, or `...Placed` splicing a record type's fields in place. */
+/** A field, or `...Placed` splicing a record's fields in place. */
 export type Entry =
   | { readonly kind: "field"; readonly field: Field; }
   | { readonly kind: "spread"; readonly record: Name; };
 
-/** `|> on pay -> Paid`. `span` covers the whole clause, for duplicate and data-flow diagnostics. */
+/** `|> on pay -> Paid`; `span` covers the clause and is where a trace step through it points. */
 export type On = { readonly event: Name; readonly target: Name; readonly span: Span; };
 
 export type Role = "initial" | "final" | "step";
 
+export type MachineItem =
+  | { readonly kind: "event"; readonly name: Name; readonly payload: readonly Field[]; }
+  | {
+    readonly kind: "state";
+    readonly name: Name;
+    readonly role: Role;
+    /** The `initial` or `final` keyword, so role diagnostics can point at it. */
+    readonly marker: Span | undefined;
+    readonly entries: readonly Entry[];
+    readonly on: readonly On[];
+  };
+
+/** One `.domain` file: any mix of types and machines. Every top-level name is exported. */
 export type Declaration =
-  & { readonly name: Name; }
-  & (
-    | { readonly kind: "machine"; }
-    | { readonly kind: "enum"; readonly members: readonly Name[]; }
-    | { readonly kind: "record"; readonly fields: readonly Field[]; }
-    | { readonly kind: "event"; readonly payload: readonly Field[]; }
-    | {
-      readonly kind: "state";
-      readonly role: Role;
-      /** The `initial` or `final` keyword, so role diagnostics can point at it. */
-      readonly marker: Span | undefined;
-      readonly entries: readonly Entry[];
-      readonly on: readonly On[];
-    }
-  );
+  | { readonly kind: "enum"; readonly name: Name; readonly members: readonly Name[]; }
+  | { readonly kind: "record"; readonly name: Name; readonly fields: readonly Field[]; }
+  | { readonly kind: "machine"; readonly name: Name; readonly items: readonly MachineItem[]; };
 
 const words = /[a-zA-Z_][a-zA-Z_0-9]*/;
 
-export const keywords = ["machine", "type", "event", "state", "initial", "final", "on"] as const;
+export const keywords = ["type", "machine", "event", "state", "initial", "final", "on"] as const;
 
 const lex = createLexemes({
   trivia: regex(/(?:\s|\/\/[^\r\n]*)*/),
@@ -116,22 +117,7 @@ const clause: Parser<On> = parser(function*() {
   return { event, target, span: { start: pipe.span.start, end: target.span.end } };
 });
 
-const declaration: Parser<Declaration> = choice(
-  parser(function*() {
-    yield* keyword("machine");
-    yield* commit();
-    return { kind: "machine" as const, name: yield* name };
-  }),
-  parser(function*() {
-    yield* keyword("type");
-    yield* commit();
-    const id = yield* name;
-    yield* symbol("=");
-    return yield* choice(
-      fields.map((fields) => ({ kind: "record" as const, name: id, fields })),
-      sepBy1(name, symbol("|")).map((members) => ({ kind: "enum" as const, name: id, members })),
-    );
-  }),
+const item: Parser<MachineItem> = choice(
   parser(function*() {
     yield* keyword("event");
     yield* commit();
@@ -155,6 +141,26 @@ const declaration: Parser<Declaration> = choice(
       entries: entries ?? [],
       on: yield* many(clause),
     };
+  }),
+);
+
+const declaration: Parser<Declaration> = choice(
+  parser(function*() {
+    yield* keyword("type");
+    yield* commit();
+    const id = yield* name;
+    yield* symbol("=");
+    return yield* choice(
+      fields.map((fields) => ({ kind: "record" as const, name: id, fields })),
+      sepBy1(name, symbol("|")).map((members) => ({ kind: "enum" as const, name: id, members })),
+    );
+  }),
+  parser(function*() {
+    yield* keyword("machine");
+    yield* commit();
+    const id = yield* name;
+    const items = yield* between(symbol("{"), symbol("}"), many(item));
+    return { kind: "machine" as const, name: id, items };
   }),
 );
 

@@ -1,4 +1,4 @@
-import { Order } from "../machine/checkout.machine";
+import { Order } from "../domain/checkout.domain";
 
 const address = { name: "Sai", line1: "1 Loop Road", city: "Bengaluru", postcode: "560001" };
 const keyboard = { sku: "kbd-60", quantity: 1, cents: 12900 };

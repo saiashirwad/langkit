@@ -1,4 +1,4 @@
-import type { Event, Machine, State, StateId, Transition } from "./machine-model.ts";
+import type { Event, Machine, State, StateId, Transition } from "./domain-model.ts";
 
 /** States the initial state reaches: BFS over `State.on`. */
 export const reachable = (machine: Machine): ReadonlySet<StateId> => {

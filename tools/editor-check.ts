@@ -280,7 +280,7 @@ try {
         "(method) Order.Cart.checkout(event: {\n    readonly address: Address;\n}): Order.Checkout",
         "Cart |> on checkout -> Checkout",
       ],
-      guest: "examples/machine/checkout.machine",
+      guest: "examples/domain/checkout.domain",
       binder: "checkout -> Checkout",
     },
     {
@@ -294,7 +294,7 @@ try {
       anchor: "paid.cancel({ reason",
       offset: 13,
       require: ["(property) reason: CancelReason"],
-      guest: "examples/machine/checkout.machine",
+      guest: "examples/domain/checkout.domain",
       binder: "cancel(reason : CancelReason)",
       binderOffset: 7,
     },
@@ -303,7 +303,7 @@ try {
       anchor: "shipped.items.length",
       offset: 8,
       require: ["(property) Order.Shipped.items: readonly LineItem[]"],
-      guest: "examples/machine/checkout.machine",
+      guest: "examples/domain/checkout.domain",
       binder: "items : [LineItem], address : Address }",
     },
     {
@@ -311,7 +311,7 @@ try {
       anchor: "shipped.carrier",
       offset: 8,
       require: ["(property) Order.Shipped.carrier: Carrier"],
-      guest: "examples/machine/checkout.machine",
+      guest: "examples/domain/checkout.domain",
       binder: "carrier : Carrier, tracking : String }",
     },
   ];
