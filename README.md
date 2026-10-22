@@ -113,8 +113,9 @@ When a guest file imports another one, project the import as real TypeScript. ts
 | ----------------------------- | ------------------------------------------------------------------------------------- |
 | [Schema](examples/schema)     | SQLite schemas and queries, with a runtime that TypeScript imports.                   |
 | [Domain](examples/domain)     | Types, state machines and systems, with a model checker that proves their properties. |
+| [Grammar](examples/grammar)   | Parsers and typed syntax trees from a grammar file, checked for dead rules.           |
 | [Advanced](examples/advanced) | Data types, pattern matching, higher-rank types, and imports across files.            |
 | [HM](examples/hm)             | Hindley–Milner inference.                                                             |
 | [Toy](examples/toy)           | The smallest end-to-end language.                                                     |
 
-[`examples/typescript`](examples/typescript) imports all five. Each language also has a CLI (`pnpm toy [file]`) and a language server (`pnpm toy:lsp`). [`.nvim.lua`](.nvim.lua) wires them into Neovim.
+[`examples/typescript`](examples/typescript) imports all six. Each language also has a CLI (`pnpm toy [file]`) and a language server (`pnpm toy:lsp`). [`.nvim.lua`](.nvim.lua) wires them into Neovim.
